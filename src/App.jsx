@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 
 const ROLES = { SUPERADMIN: "superadmin", SUPERVISOR: "supervisor", AUXILIAR: "auxiliar", INSTALADOR: "instalador" };
 
@@ -38,44 +39,44 @@ const USUARIOS_DEMO = [
   { id: "sa4", nombre: "Luz Toro",             rol: ROLES.SUPERADMIN, email: "luz@obra.com",     pin: "4444", cedula: "3046063039", telefono: "", banco: "", cuenta: "" },
   // Auxiliar
   { id: "ax1", nombre: "Lauren Zapata",        rol: ROLES.AUXILIAR,   email: "lauren@obra.com",  pin: "5555", cedula: "3180803364", telefono: "", banco: "", cuenta: "" },
-  // Instaladores
-  { id: "i01", nombre: "Albeiro De Jesús Sanchez Alvarez",    rol: ROLES.INSTALADOR, email: "i01@obra.com", pin: "6001", cedula: "3366950",    telefono: "", banco: "", cuenta: "" },
-  { id: "i02", nombre: "Arnovis Enrique Romero Gaviria",      rol: ROLES.INSTALADOR, email: "i02@obra.com", pin: "6002", cedula: "10889524",   telefono: "", banco: "", cuenta: "" },
-  { id: "i03", nombre: "Alejandro Caballero Navas",           rol: ROLES.INSTALADOR, email: "i03@obra.com", pin: "6003", cedula: "1041894977", telefono: "", banco: "", cuenta: "" },
-  { id: "i04", nombre: "Andrés Polo Gomez",                   rol: ROLES.INSTALADOR, email: "i04@obra.com", pin: "6004", cedula: "72238095",   telefono: "", banco: "", cuenta: "" },
-  { id: "i05", nombre: "Angie Guisela Gonzales Toro",         rol: ROLES.INSTALADOR, email: "i05@obra.com", pin: "6005", cedula: "32209550",   telefono: "", banco: "", cuenta: "" },
-  { id: "i06", nombre: "Carlos Albeiro Bedoya",               rol: ROLES.INSTALADOR, email: "i06@obra.com", pin: "6006", cedula: "98537380",   telefono: "", banco: "", cuenta: "" },
-  { id: "i07", nombre: "Claudia Marcela Uribe Lopez",         rol: ROLES.INSTALADOR, email: "i07@obra.com", pin: "6007", cedula: "1112765279", telefono: "", banco: "", cuenta: "" },
-  { id: "i08", nombre: "Claudia Patricia Higuita Muñoz",      rol: ROLES.INSTALADOR, email: "i08@obra.com", pin: "6008", cedula: "43164453",   telefono: "", banco: "", cuenta: "" },
-  { id: "i09", nombre: "Cristian Alexis Marin Gonzales",      rol: ROLES.INSTALADOR, email: "i09@obra.com", pin: "6009", cedula: "1015278020", telefono: "", banco: "", cuenta: "" },
-  { id: "i10", nombre: "Elfa Nataly Rueda Vargas",            rol: ROLES.INSTALADOR, email: "i10@obra.com", pin: "6010", cedula: "43991850",   telefono: "", banco: "", cuenta: "" },
-  { id: "i11", nombre: "Erika Baza Camacho",                  rol: ROLES.INSTALADOR, email: "i11@obra.com", pin: "6011", cedula: "1096195897", telefono: "", banco: "", cuenta: "" },
-  { id: "i12", nombre: "Emiliano De Jesus Callejas Rios",     rol: ROLES.INSTALADOR, email: "i12@obra.com", pin: "6012", cedula: "70541496",   telefono: "", banco: "", cuenta: "" },
-  { id: "i13", nombre: "Greis Pola Jaraba Correa",            rol: ROLES.INSTALADOR, email: "i13@obra.com", pin: "6013", cedula: "1045691681", telefono: "", banco: "", cuenta: "" },
-  { id: "i14", nombre: "Harrison Martinez Lopez",             rol: ROLES.INSTALADOR, email: "i14@obra.com", pin: "6014", cedula: "1053796113", telefono: "", banco: "", cuenta: "" },
-  { id: "i15", nombre: "Jose Alfredo Taborda Marin",          rol: ROLES.INSTALADOR, email: "i15@obra.com", pin: "6015", cedula: "1033337255", telefono: "", banco: "", cuenta: "" },
-  { id: "i16", nombre: "José Gabriel Mesa Martínez",          rol: ROLES.INSTALADOR, email: "i16@obra.com", pin: "6016", cedula: "98642537",   telefono: "", banco: "", cuenta: "" },
-  { id: "i17", nombre: "Jose Luis Basanta Coa",               rol: ROLES.INSTALADOR, email: "i17@obra.com", pin: "6017", cedula: "1258625",    telefono: "", banco: "", cuenta: "" },
-  { id: "i18", nombre: "Jorge Leonardo Viloria Romero",       rol: ROLES.INSTALADOR, email: "i18@obra.com", pin: "6018", cedula: "1104413901", telefono: "", banco: "", cuenta: "" },
-  { id: "i19", nombre: "Juan Carlos Cardenas Vega",           rol: ROLES.INSTALADOR, email: "i19@obra.com", pin: "6019", cedula: "1098813472", telefono: "", banco: "", cuenta: "" },
-  { id: "i20", nombre: "Juan Martin Osorio Saldarriaga",      rol: ROLES.INSTALADOR, email: "i20@obra.com", pin: "6020", cedula: "71646955",   telefono: "", banco: "", cuenta: "" },
-  { id: "i21", nombre: "Kateryn Carmona",                     rol: ROLES.INSTALADOR, email: "i21@obra.com", pin: "6021", cedula: "1214743439", telefono: "", banco: "", cuenta: "" },
-  { id: "i22", nombre: "Leder De Jesus Herrera Arrieta",      rol: ROLES.INSTALADOR, email: "i22@obra.com", pin: "6022", cedula: "1104410561", telefono: "", banco: "", cuenta: "" },
-  { id: "i23", nombre: "Leider Arturo Herrera Arrieta",       rol: ROLES.INSTALADOR, email: "i23@obra.com", pin: "6023", cedula: "1005677345", telefono: "", banco: "", cuenta: "" },
-  { id: "i24", nombre: "Leon Jaime Taborda Marin",            rol: ROLES.INSTALADOR, email: "i24@obra.com", pin: "6024", cedula: "1033339839", telefono: "", banco: "", cuenta: "" },
-  { id: "i25", nombre: "Luis Alberto Goez Goez",              rol: ROLES.INSTALADOR, email: "i25@obra.com", pin: "6025", cedula: "1152453118", telefono: "", banco: "", cuenta: "" },
-  { id: "i26", nombre: "Luis Felipe Meza Martinez",           rol: ROLES.INSTALADOR, email: "i26@obra.com", pin: "6026", cedula: "1148205348", telefono: "", banco: "", cuenta: "" },
-  { id: "i27", nombre: "Luis Fernando Aguirre Giraldo",       rol: ROLES.INSTALADOR, email: "i27@obra.com", pin: "6027", cedula: "71698074",   telefono: "", banco: "", cuenta: "" },
-  { id: "i28", nombre: "Maria Luz Dary Rincon",               rol: ROLES.INSTALADOR, email: "i28@obra.com", pin: "6028", cedula: "66916338",   telefono: "", banco: "", cuenta: "" },
-  { id: "i29", nombre: "Mario Lemus Arboleda",                rol: ROLES.INSTALADOR, email: "i29@obra.com", pin: "6029", cedula: "1001846248", telefono: "", banco: "", cuenta: "" },
-  { id: "i30", nombre: "Nelson Dario Correa Acosta",          rol: ROLES.INSTALADOR, email: "i30@obra.com", pin: "6030", cedula: "98527601",   telefono: "", banco: "", cuenta: "" },
-  { id: "i31", nombre: "Omar De Jesus Ortiz Montoya",         rol: ROLES.INSTALADOR, email: "i31@obra.com", pin: "6031", cedula: "98528420",   telefono: "", banco: "", cuenta: "" },
-  { id: "i32", nombre: "Oscar Mauricio Lopez",                rol: ROLES.INSTALADOR, email: "i32@obra.com", pin: "6032", cedula: "98538605",   telefono: "", banco: "", cuenta: "" },
-  { id: "i33", nombre: "Oved Dario Pulgarin",                 rol: ROLES.INSTALADOR, email: "i33@obra.com", pin: "6033", cedula: "98693472",   telefono: "", banco: "", cuenta: "" },
-  { id: "i34", nombre: "Steve Brahayan Alvarez Reyes",        rol: ROLES.INSTALADOR, email: "i34@obra.com", pin: "6034", cedula: "PT-1277581", telefono: "", banco: "", cuenta: "" },
-  { id: "i35", nombre: "Pedro Felix Moreno Cortes",           rol: ROLES.INSTALADOR, email: "i35@obra.com", pin: "6035", cedula: "98457089",   telefono: "", banco: "", cuenta: "" },
-  { id: "i36", nombre: "Robinson Alberto Orozco Muñoz",       rol: ROLES.INSTALADOR, email: "i36@obra.com", pin: "6036", cedula: "71386134",   telefono: "", banco: "", cuenta: "" },
-  { id: "i37", nombre: "Yefferson Sanchez Henao",             rol: ROLES.INSTALADOR, email: "i37@obra.com", pin: "6037", cedula: "1214720944", telefono: "", banco: "", cuenta: "" },
+  // Instaladores — correo: cedula@obra.com | PIN: últimos 4 dígitos cédula
+  { id: "i01", nombre: "Albeiro De Jesús Sanchez Alvarez",    rol: ROLES.INSTALADOR, email: "3366950@obra.com",    pin: "6950", cedula: "3366950",    telefono: "", banco: "", cuenta: "" },
+  { id: "i02", nombre: "Arnovis Enrique Romero Gaviria",      rol: ROLES.INSTALADOR, email: "10889524@obra.com",   pin: "9524", cedula: "10889524",   telefono: "", banco: "", cuenta: "" },
+  { id: "i03", nombre: "Alejandro Caballero Navas",           rol: ROLES.INSTALADOR, email: "1041894977@obra.com", pin: "4977", cedula: "1041894977", telefono: "", banco: "", cuenta: "" },
+  { id: "i04", nombre: "Andrés Polo Gomez",                   rol: ROLES.INSTALADOR, email: "72238095@obra.com",   pin: "8095", cedula: "72238095",   telefono: "", banco: "", cuenta: "" },
+  { id: "i05", nombre: "Angie Guisela Gonzales Toro",         rol: ROLES.INSTALADOR, email: "32209550@obra.com",   pin: "9550", cedula: "32209550",   telefono: "", banco: "", cuenta: "" },
+  { id: "i06", nombre: "Carlos Albeiro Bedoya",               rol: ROLES.INSTALADOR, email: "98537380@obra.com",   pin: "7380", cedula: "98537380",   telefono: "", banco: "", cuenta: "" },
+  { id: "i07", nombre: "Claudia Marcela Uribe Lopez",         rol: ROLES.INSTALADOR, email: "1112765279@obra.com", pin: "5279", cedula: "1112765279", telefono: "", banco: "", cuenta: "" },
+  { id: "i08", nombre: "Claudia Patricia Higuita Muñoz",      rol: ROLES.INSTALADOR, email: "43164453@obra.com",   pin: "4453", cedula: "43164453",   telefono: "", banco: "", cuenta: "" },
+  { id: "i09", nombre: "Cristian Alexis Marin Gonzales",      rol: ROLES.INSTALADOR, email: "1015278020@obra.com", pin: "8020", cedula: "1015278020", telefono: "", banco: "", cuenta: "" },
+  { id: "i10", nombre: "Elfa Nataly Rueda Vargas",            rol: ROLES.INSTALADOR, email: "43991850@obra.com",   pin: "1850", cedula: "43991850",   telefono: "", banco: "", cuenta: "" },
+  { id: "i11", nombre: "Erika Baza Camacho",                  rol: ROLES.INSTALADOR, email: "1096195897@obra.com", pin: "5897", cedula: "1096195897", telefono: "", banco: "", cuenta: "" },
+  { id: "i12", nombre: "Emiliano De Jesus Callejas Rios",     rol: ROLES.INSTALADOR, email: "70541496@obra.com",   pin: "1496", cedula: "70541496",   telefono: "", banco: "", cuenta: "" },
+  { id: "i13", nombre: "Greis Pola Jaraba Correa",            rol: ROLES.INSTALADOR, email: "1045691681@obra.com", pin: "1681", cedula: "1045691681", telefono: "", banco: "", cuenta: "" },
+  { id: "i14", nombre: "Harrison Martinez Lopez",             rol: ROLES.INSTALADOR, email: "1053796113@obra.com", pin: "6113", cedula: "1053796113", telefono: "", banco: "", cuenta: "" },
+  { id: "i15", nombre: "Jose Alfredo Taborda Marin",          rol: ROLES.INSTALADOR, email: "1033337255@obra.com", pin: "7255", cedula: "1033337255", telefono: "", banco: "", cuenta: "" },
+  { id: "i16", nombre: "José Gabriel Mesa Martínez",          rol: ROLES.INSTALADOR, email: "98642537@obra.com",   pin: "2537", cedula: "98642537",   telefono: "", banco: "", cuenta: "" },
+  { id: "i17", nombre: "Jose Luis Basanta Coa",               rol: ROLES.INSTALADOR, email: "1258625@obra.com",    pin: "8625", cedula: "1258625",    telefono: "", banco: "", cuenta: "" },
+  { id: "i18", nombre: "Jorge Leonardo Viloria Romero",       rol: ROLES.INSTALADOR, email: "1104413901@obra.com", pin: "3901", cedula: "1104413901", telefono: "", banco: "", cuenta: "" },
+  { id: "i19", nombre: "Juan Carlos Cardenas Vega",           rol: ROLES.INSTALADOR, email: "1098813472@obra.com", pin: "3472", cedula: "1098813472", telefono: "", banco: "", cuenta: "" },
+  { id: "i20", nombre: "Juan Martin Osorio Saldarriaga",      rol: ROLES.INSTALADOR, email: "71646955@obra.com",   pin: "6955", cedula: "71646955",   telefono: "", banco: "", cuenta: "" },
+  { id: "i21", nombre: "Kateryn Carmona",                     rol: ROLES.INSTALADOR, email: "1214743439@obra.com", pin: "3439", cedula: "1214743439", telefono: "", banco: "", cuenta: "" },
+  { id: "i22", nombre: "Leder De Jesus Herrera Arrieta",      rol: ROLES.INSTALADOR, email: "1104410561@obra.com", pin: "0561", cedula: "1104410561", telefono: "", banco: "", cuenta: "" },
+  { id: "i23", nombre: "Leider Arturo Herrera Arrieta",       rol: ROLES.INSTALADOR, email: "1005677345@obra.com", pin: "7345", cedula: "1005677345", telefono: "", banco: "", cuenta: "" },
+  { id: "i24", nombre: "Leon Jaime Taborda Marin",            rol: ROLES.INSTALADOR, email: "1033339839@obra.com", pin: "9839", cedula: "1033339839", telefono: "", banco: "", cuenta: "" },
+  { id: "i25", nombre: "Luis Alberto Goez Goez",              rol: ROLES.INSTALADOR, email: "1152453118@obra.com", pin: "3118", cedula: "1152453118", telefono: "", banco: "", cuenta: "" },
+  { id: "i26", nombre: "Luis Felipe Meza Martinez",           rol: ROLES.INSTALADOR, email: "1148205348@obra.com", pin: "5348", cedula: "1148205348", telefono: "", banco: "", cuenta: "" },
+  { id: "i27", nombre: "Luis Fernando Aguirre Giraldo",       rol: ROLES.INSTALADOR, email: "71698074@obra.com",   pin: "8074", cedula: "71698074",   telefono: "", banco: "", cuenta: "" },
+  { id: "i28", nombre: "Maria Luz Dary Rincon",               rol: ROLES.INSTALADOR, email: "66916338@obra.com",   pin: "6338", cedula: "66916338",   telefono: "", banco: "", cuenta: "" },
+  { id: "i29", nombre: "Mario Lemus Arboleda",                rol: ROLES.INSTALADOR, email: "1001846248@obra.com", pin: "6248", cedula: "1001846248", telefono: "", banco: "", cuenta: "" },
+  { id: "i30", nombre: "Nelson Dario Correa Acosta",          rol: ROLES.INSTALADOR, email: "98527601@obra.com",   pin: "7601", cedula: "98527601",   telefono: "", banco: "", cuenta: "" },
+  { id: "i31", nombre: "Omar De Jesus Ortiz Montoya",         rol: ROLES.INSTALADOR, email: "98528420@obra.com",   pin: "8420", cedula: "98528420",   telefono: "", banco: "", cuenta: "" },
+  { id: "i32", nombre: "Oscar Mauricio Lopez",                rol: ROLES.INSTALADOR, email: "98538605@obra.com",   pin: "8605", cedula: "98538605",   telefono: "", banco: "", cuenta: "" },
+  { id: "i33", nombre: "Oved Dario Pulgarin",                 rol: ROLES.INSTALADOR, email: "98693472@obra.com",   pin: "3472", cedula: "98693472",   telefono: "", banco: "", cuenta: "" },
+  { id: "i34", nombre: "Steve Brahayan Alvarez Reyes",        rol: ROLES.INSTALADOR, email: "PT1277581@obra.com",  pin: "7581", cedula: "PT-1277581", telefono: "", banco: "", cuenta: "" },
+  { id: "i35", nombre: "Pedro Felix Moreno Cortes",           rol: ROLES.INSTALADOR, email: "98457089@obra.com",   pin: "7089", cedula: "98457089",   telefono: "", banco: "", cuenta: "" },
+  { id: "i36", nombre: "Robinson Alberto Orozco Muñoz",       rol: ROLES.INSTALADOR, email: "71386134@obra.com",   pin: "6134", cedula: "71386134",   telefono: "", banco: "", cuenta: "" },
+  { id: "i37", nombre: "Yefferson Sanchez Henao",             rol: ROLES.INSTALADOR, email: "1214720944@obra.com", pin: "0944", cedula: "1214720944", telefono: "", banco: "", cuenta: "" },
 ];
 
 function fmt(n) {
@@ -121,16 +122,22 @@ function Badge({ color, children }) {
 }
 
 function Modal({ title, onClose, children, wide }) {
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ background: "var(--color-background-primary)", borderRadius: 16, border: "0.5px solid var(--color-border-tertiary)", minWidth: 340, maxWidth: wide ? 720 : 580, width: "94%", maxHeight: "90vh", overflowY: "auto", padding: "1.5rem" }}>
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+
+  return createPortal(
+    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
+      <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #ddd", minWidth: 340, maxWidth: wide ? 720 : 560, width: "94%", maxHeight: "88vh", overflowY: "auto", padding: "1.5rem", boxSizing: "border-box", position: "relative", zIndex: 10000 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 500 }}>{title}</h3>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 22, color: "var(--color-text-secondary)", lineHeight: 1 }}>×</button>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 500, color: "#111" }}>{title}</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 24, color: "#555", lineHeight: 1, padding: "0 4px" }}>×</button>
         </div>
-        {children}
+        <div style={{ color: "#111" }}>{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -601,15 +608,18 @@ function ObraDetalle({ obra, obras, setObras, user, calcAvanceApto, elementos, u
           <Input label="Nombre" value={tipForm.nombre} onChange={e => setTipForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Ej: Tipo A — 3 alcobas" />
           <div style={{ marginBottom: 14 }}>
             <label style={{ fontSize: 13, color: "var(--color-text-secondary)", display: "block", marginBottom: 8 }}>Elementos incluidos</label>
-            <div style={{ maxHeight: 260, overflowY: "auto", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 8, padding: 8 }}>
+            <div style={{ maxHeight: 260, overflowY: "auto", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 8, padding: 8, background: "var(--color-background-primary)" }}>
               {elementos.map(el => (
-                <label key={el.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 4px", cursor: "pointer", fontSize: 14 }}>
+                <label key={el.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", cursor: "pointer", fontSize: 14, borderRadius: 6, background: tipForm.elementoIds.includes(el.id) ? "var(--color-background-secondary)" : "transparent" }}>
                   <input type="checkbox" checked={tipForm.elementoIds.includes(el.id)}
                     onChange={e => setTipForm(f => ({ ...f, elementoIds: e.target.checked ? [...f.elementoIds, el.id] : f.elementoIds.filter(x => x !== el.id) }))} />
-                  <span style={{ flex: 1 }}>{el.nombre}</span>
+                  <span style={{ flex: 1, color: "var(--color-text-primary)" }}>{el.nombre}</span>
                   <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{el.unidad} · {fmt(el.precio)}</span>
                 </label>
               ))}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 6 }}>
+              {tipForm.elementoIds.length} elemento(s) seleccionado(s)
             </div>
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
