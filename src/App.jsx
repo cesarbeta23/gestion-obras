@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { createPortal } from "react-dom";
 
 const ROLES = { SUPERADMIN: "superadmin", SUPERVISOR: "supervisor", AUXILIAR: "auxiliar", INSTALADOR: "instalador" };
 
@@ -138,7 +137,7 @@ function Modal({ title, onClose, children, wide }) {
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = ""; };
   }, []);
-  return createPortal(
+  return (
     <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
       <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #ddd", minWidth: 340, maxWidth: wide ? 720 : 560, width: "94%", maxHeight: "88vh", overflowY: "auto", padding: "1.5rem", boxSizing: "border-box", position: "relative" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -147,8 +146,7 @@ function Modal({ title, onClose, children, wide }) {
         </div>
         <div style={{ color: "#111" }}>{children}</div>
       </div>
-    </div>,
-    document.body
+    </div>
   );
 }
 
@@ -807,19 +805,21 @@ function AptoDetalle({ apto, piso, obra, obras, setObras, user, elementos, usuar
   function guardarCambios() {
     setObras(obs => obs.map(o => {
       if (o.id !== obra.id) return o;
-      return { ...o, pisos: o.pisos.map(p => { if (p.id !== piso.id) return p; return { ...p, aptos: p.aptos.map(a => {
-        if (a.id !== apto.id) return a;
-        const newEls = a.elementos.map((el, i) => {
-          let updated = { ...el };
-          if (cantidades[i] !== undefined) updated.cantidad = cantidades[i];
-          if (pendientes[i]) { updated.completado = true; updated.instaladorId = user.id; updated.fecha = new Date().toLocaleDateString("es-CO"); }
-          return updated;
-        });
-        const allDone = newEls.every(e => e.completado);
-        if (allDone) supervisores.forEach(s => pushNotif(`🔔 ${s.nombre}: Apto ${piso.numero}${String(a.numero).padStart(2, "0")} completado en ${obra.nombre}`, "info"));
-        return { ...a, elementos: newEls };
-      })}); })
-      };
+      return { ...o, pisos: o.pisos.map(p => {
+        if (p.id !== piso.id) return p;
+        return { ...p, aptos: p.aptos.map(a => {
+          if (a.id !== apto.id) return a;
+          const newEls = a.elementos.map((el, i) => {
+            let updated = { ...el };
+            if (cantidades[i] !== undefined) updated.cantidad = cantidades[i];
+            if (pendientes[i]) { updated.completado = true; updated.instaladorId = user.id; updated.fecha = new Date().toLocaleDateString("es-CO"); }
+            return updated;
+          });
+          const allDone = newEls.every(e => e.completado);
+          if (allDone) supervisores.forEach(s => pushNotif(`🔔 ${s.nombre}: Apto ${piso.numero}${String(a.numero).padStart(2, "0")} completado en ${obra.nombre}`, "info"));
+          return { ...a, elementos: newEls };
+        })};
+      })};
     }));
     pushNotif("Elementos guardados correctamente", "success");
     setPendientes({}); setCantidades({});
