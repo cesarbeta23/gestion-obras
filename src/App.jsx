@@ -608,6 +608,7 @@ function ObraDetalle({ obra, obras, setObras, user, calcAvanceApto, elementos, u
         <Modal title={`Accesos — ${currentObra.nombre}`} onClose={() => setAccesoObraModal(false)} wide>
           {(() => {
             const solicitudesPendientes = (currentObra.solicitudes || []).filter(s => s.estado === "pendiente");
+            const instaladores = usuarios.filter(u => u.rol === ROLES.INSTALADOR);
             return (
               <div>
                 {solicitudesPendientes.length > 0 && (
@@ -622,8 +623,20 @@ function ObraDetalle({ obra, obras, setObras, user, calcAvanceApto, elementos, u
                               <div style={{ fontWeight: 500, fontSize: 14 }}>{inst?.nombre}</div>
                               <div style={{ fontSize: 12, color: "#666" }}>Solicitó el {s.fecha}</div>
                             </div>
-                            <Btn variant="success" onClick={() => aprobarSolicitud(s.userId, true)}>Aprobar</Btn>
-                            <Btn variant="danger" onClick={() => aprobarSolicitud(s.userId, false)}>Rechazar</Btn>
+                            <Btn variant="success" onClick={() => {
+                              setObras(obs => obs.map(o => {
+                                if (o.id !== obra.id) return o;
+                                return { ...o, solicitudes: (o.solicitudes||[]).map(x => x.userId===s.userId ? {...x, estado:"aprobado"} : x), instaladoresAutorizados: [...new Set([...(o.instaladoresAutorizados||[]), s.userId])] };
+                              }));
+                              pushNotif(`Acceso aprobado para ${inst?.nombre}`, "success");
+                            }}>Aprobar</Btn>
+                            <Btn variant="danger" onClick={() => {
+                              setObras(obs => obs.map(o => {
+                                if (o.id !== obra.id) return o;
+                                return { ...o, solicitudes: (o.solicitudes||[]).map(x => x.userId===s.userId ? {...x, estado:"rechazado"} : x) };
+                              }));
+                              pushNotif(`Acceso rechazado para ${inst?.nombre}`, "success");
+                            }}>Rechazar</Btn>
                           </div>
                         );
                       })}
@@ -632,7 +645,6 @@ function ObraDetalle({ obra, obras, setObras, user, calcAvanceApto, elementos, u
                 )}
                 <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 10 }}>Todos los instaladores</div>
                 <div style={{ display: "grid", gap: 8, maxHeight: 360, overflowY: "auto" }}>
-                  {instaladores.length === 0 && <p style={{ fontSize: 13, color: "#666" }}>No hay instaladores registrados.</p>}
                   {instaladores.map(inst => {
                     const autorizado = (currentObra.instaladoresAutorizados || []).includes(inst.id);
                     return (
@@ -644,8 +656,13 @@ function ObraDetalle({ obra, obras, setObras, user, calcAvanceApto, elementos, u
                           <div style={{ fontWeight: 500, fontSize: 14 }}>{inst.nombre}</div>
                           <div style={{ fontSize: 12, color: "#666" }}>C.C. {inst.cedula || "—"}</div>
                         </div>
-                        <button onClick={() => toggleAutorizado(inst.id)}
-                          style={{ background: autorizado ? "#FCEBEB" : "#EAF3DE", border: `0.5px solid ${autorizado ? "#F09595" : "#97C459"}`, color: autorizado ? "#A32D2D" : "#3B6D11", borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 13, fontWeight: 500 }}>
+                        <button onClick={() => {
+                          setObras(obs => obs.map(o => {
+                            if (o.id !== obra.id) return o;
+                            const aut = o.instaladoresAutorizados || [];
+                            return { ...o, instaladoresAutorizados: aut.includes(inst.id) ? aut.filter(id => id !== inst.id) : [...aut, inst.id] };
+                          }));
+                        }} style={{ background: autorizado ? "#FCEBEB" : "#EAF3DE", border: `0.5px solid ${autorizado ? "#F09595" : "#97C459"}`, color: autorizado ? "#A32D2D" : "#3B6D11", borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 13, fontWeight: 500 }}>
                           {autorizado ? "Revocar" : "Dar acceso"}
                         </button>
                       </div>
