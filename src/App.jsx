@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react"; // v2
 import { createPortal } from "react-dom";
 
 const ROLES = { SUPERADMIN: "superadmin", SUPERVISOR: "supervisor", AUXILIAR: "auxiliar", INSTALADOR: "instalador" };
