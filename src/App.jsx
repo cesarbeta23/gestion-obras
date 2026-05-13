@@ -1263,4 +1263,312 @@ function UsuariosView({ usuarios, setUsuarios, openModal, closeModal, modals }) 
       )}
     </div>
   );
+}// ——— REEMPLAZA desde la función ObraDetalle en adelante ———
+// Busca en VS Code con Ctrl+F: "function ObraDetalle"
+// Selecciona desde ahí hasta el final y reemplaza con esto:
+
+function ObraDetalle({ obra, obras, setObras, user, calcAvanceApto, elementos, usuarios, setSelectedApto, openModal, closeModal, modals, pushNotif }) {
+  const [editTip, setEditTip] = useState(null);
+  const [tipForm, setTipForm] = useState({ nombre: "", elementoIds: [] });
+  const [replicaSel, setReplicaSel] = useState({ reglas: [] });
+  const [replicaModal, setReplicaModal] = useState(false);
+  const [asignando, setAsignando] = useState(null);
+  const [accesoObraModal, setAccesoObraModal] = useState(false);
+  const currentObra = obras.find(o => o.id === obra.id) || obra;
+  const tipologias = currentObra.tipologias || [];
+  const numerosApto = [...new Set(currentObra.pisos?.flatMap(p => p.aptos?.map(a => String(a.numero))) || [])].sort((a, b) => Number(a) - Number(b));
+
+  function abrirNuevaTip() { setEditTip(null); setTipForm({ nombre: "", elementoIds: [] }); openModal("tipModal"); }
+  function abrirEditTip(t) { setEditTip(t.id); setTipForm({ nombre: t.nombre, elementoIds: [...t.elementoIds] }); openModal("tipModal"); }
+
+  function guardarTip() {
+    if (!tipForm.nombre) return;
+    if (editTip) {
+      const updated = tipologias.map(t => t.id === editTip ? { ...t, nombre: tipForm.nombre, elementoIds: tipForm.elementoIds } : t);
+      setObras(obs => obs.map(o => {
+        if (o.id !== obra.id) return o;
+        return {
+          ...o, tipologias: updated,
+          pisos: o.pisos.map(p => ({
+            ...p, aptos: p.aptos.map(a => {
+              if (a.tipologia !== editTip) return a;
+              const nuevosEls = tipForm.elementoIds.map(eid => {
+                const exist = a.elementos?.find(e => e.elementoId === eid);
+                return exist || { elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad: 1 };
+              });
+              return { ...a, elementos: nuevosEls };
+            })
+          }))
+        };
+      }));
+      pushNotif(`Tipología "${tipForm.nombre}" actualizada`, "success");
+    } else {
+      const t = { id: `t${Date.now()}`, nombre: tipForm.nombre, elementoIds: tipForm.elementoIds };
+      setObras(obs => obs.map(o => o.id === obra.id ? { ...o, tipologias: [...(o.tipologias||[]), t] } : o));
+      pushNotif(`Tipología "${tipForm.nombre}" creada`, "success");
+    }
+    closeModal("tipModal");
+    setEditTip(null);
+  }
+
+  function asignarTipologia(pisoId, aptoId, tipId) {
+    const tip = tipologias.find(t => t.id === tipId);
+    const nuevosEls = (tip?.elementoIds || []).map(eid => ({ elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad: 1 }));
+    setObras(obs => obs.map(o => {
+      if (o.id !== obra.id) return o;
+      return { ...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : { ...p, aptos: p.aptos.map(a => a.id !== aptoId ? a : { ...a, tipologia: tipId, elementos: nuevosEls }) }) };
+    }));
+    setAsignando(null);
+  }
+
+  function replicarEnSerie() {
+    let count = 0;
+    setObras(obs => obs.map(o => {
+      if (o.id !== obra.id) return o;
+      return {
+        ...o, pisos: o.pisos.map(p => ({
+          ...p, aptos: p.aptos.map(a => {
+            const sufijo = String(a.numero);
+            const regla = replicaSel.reglas.find(r => r.sufijo === sufijo && r.tipId);
+            if (!regla) return a;
+            const tip = tipologias.find(t => t.id === regla.tipId);
+            if (!tip) return a;
+            const nuevosEls = tip.elementoIds.map(eid => {
+              const exist = a.elementos?.find(e => e.elementoId === eid);
+              return exist || { elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad: 1 };
+            });
+            count++;
+            return { ...a, tipologia: tip.id, elementos: nuevosEls };
+          })
+        }))
+      };
+    }));
+    pushNotif(`Tipologías replicadas en ${count} apartamento(s)`, "success");
+    setReplicaModal(false);
+    setReplicaSel({ reglas: [] });
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 500 }}>{obra.nombre}</h2>
+          <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--color-text-secondary)" }}>{obra.direccion}</p>
+        </div>
+        {user.rol === ROLES.SUPERADMIN && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Btn onClick={() => setAccesoObraModal(true)}>👷 Accesos</Btn>
+            <Btn onClick={() => setReplicaModal(true)}>Replicar en serie</Btn>
+            <Btn variant="primary" onClick={abrirNuevaTip}>+ Tipología</Btn>
+          </div>
+        )}
+      </div>
+
+      {tipologias.length > 0 && (
+        <div style={{ marginBottom: 18, padding: "12px 16px", background: "var(--color-background-secondary)", borderRadius: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Tipologías</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {tipologias.map(t => (
+              <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 6, background: "#EEEDFE", border: "0.5px solid #AFA9EC", borderRadius: 20, padding: "4px 12px" }}>
+                <span style={{ fontSize: 13, color: "#534AB7" }}>{t.nombre} · {t.elementoIds?.length || 0} elem.</span>
+                {user.rol === ROLES.SUPERADMIN && (
+                  <span onClick={() => abrirEditTip(t)} style={{ cursor: "pointer", fontSize: 13, color: "#534AB7", fontWeight: 500 }}>✎</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {currentObra.pisos?.map(piso => (
+        <div key={piso.id} style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 14, fontWeight: 500, color: "var(--color-text-secondary)", marginBottom: 10, borderBottom: "0.5px solid var(--color-border-tertiary)", paddingBottom: 8 }}>
+            Piso {piso.numero}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 10 }}>
+            {piso.aptos?.map(apto => {
+              const av = calcAvanceApto(apto);
+              const tip = tipologias?.find(t => t.id === apto.tipologia);
+              return (
+                <div key={apto.id} onClick={() => apto.tipologia ? setSelectedApto(apto, piso) : null}
+                  style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: 12, cursor: apto.tipologia ? "pointer" : "default" }}
+                  onMouseEnter={e => apto.tipologia && (e.currentTarget.style.borderColor = "#AFA9EC")}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = "")}>
+                  <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 4 }}>{piso.numero}{String(apto.numero).padStart(2, "0")}</div>
+                  {tip ? (
+                    <>
+                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 6 }}>{tip.nombre}</div>
+                      <div style={{ height: 4, background: "var(--color-background-secondary)", borderRadius: 4, overflow: "hidden", marginBottom: 4 }}>
+                        <div style={{ height: "100%", width: `${av}%`, background: av === 100 ? "#639922" : "#534AB7", borderRadius: 4 }} />
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{av}%</div>
+                    </>
+                  ) : user.rol !== ROLES.INSTALADOR && user.rol !== ROLES.AUXILIAR ? (
+                    asignando === apto.id ? (
+                      <select style={{ width: "100%", fontSize: 11, marginTop: 4 }} onClick={e => e.stopPropagation()} onChange={e => e.target.value && asignarTipologia(piso.id, apto.id, e.target.value)}>
+                        <option value="">Seleccionar...</option>
+                        {tipologias?.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                      </select>
+                    ) : (
+                      <button onClick={e => { e.stopPropagation(); setAsignando(apto.id); }}
+                        style={{ fontSize: 11, color: "#534AB7", background: "#EEEDFE", border: "0.5px solid #AFA9EC", borderRadius: 6, padding: "3px 6px", cursor: "pointer", marginTop: 4 }}>
+                        + tipología
+                      </button>
+                    )
+                  ) : <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Sin asignar</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+
+      {accesoObraModal && (
+        <Modal title={`Accesos — ${currentObra.nombre}`} onClose={() => setAccesoObraModal(false)} wide>
+          {(() => {
+            const solicitudesPendientes = (currentObra.solicitudes || []).filter(s => s.estado === "pendiente");
+            const instaladores = usuarios.filter(u => u.rol === ROLES.INSTALADOR);
+            return (
+              <div>
+                {solicitudesPendientes.length > 0 && (
+                  <div style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 10, color: "#854F0B" }}>Solicitudes pendientes</div>
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {solicitudesPendientes.map(s => {
+                        const inst = usuarios.find(u => u.id === s.userId);
+                        return (
+                          <div key={s.userId} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: "#FAEEDA", border: "0.5px solid #EF9F27", borderRadius: 10 }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 500, fontSize: 14 }}>{inst?.nombre}</div>
+                              <div style={{ fontSize: 12, color: "#666" }}>Solicitó el {s.fecha}</div>
+                            </div>
+                            <Btn variant="success" onClick={() => {
+                              setObras(obs => obs.map(o => {
+                                if (o.id !== obra.id) return o;
+                                return { ...o, solicitudes: (o.solicitudes||[]).map(x => x.userId===s.userId ? {...x, estado:"aprobado"} : x), instaladoresAutorizados: [...new Set([...(o.instaladoresAutorizados||[]), s.userId])] };
+                              }));
+                              pushNotif(`Acceso aprobado para ${inst?.nombre}`, "success");
+                            }}>Aprobar</Btn>
+                            <Btn variant="danger" onClick={() => {
+                              setObras(obs => obs.map(o => {
+                                if (o.id !== obra.id) return o;
+                                return { ...o, solicitudes: (o.solicitudes||[]).map(x => x.userId===s.userId ? {...x, estado:"rechazado"} : x) };
+                              }));
+                              pushNotif(`Acceso rechazado para ${inst?.nombre}`, "success");
+                            }}>Rechazar</Btn>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 10 }}>Todos los instaladores</div>
+                <div style={{ display: "grid", gap: 8, maxHeight: 360, overflowY: "auto" }}>
+                  {instaladores.map(inst => {
+                    const autorizado = (currentObra.instaladoresAutorizados || []).includes(inst.id);
+                    return (
+                      <div key={inst.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: autorizado ? "#EAF3DE" : "#f9f9f9", border: `0.5px solid ${autorizado ? "#97C459" : "#ddd"}`, borderRadius: 10 }}>
+                        <div style={{ width: 36, height: 36, borderRadius: 50, background: autorizado ? "#C0DD97" : "#ddd", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 500, color: autorizado ? "#27500A" : "#555", flexShrink: 0 }}>
+                          {inst.nombre.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 500, fontSize: 14 }}>{inst.nombre}</div>
+                          <div style={{ fontSize: 12, color: "#666" }}>C.C. {inst.cedula || "—"}</div>
+                        </div>
+                        <button onClick={() => {
+                          setObras(obs => obs.map(o => {
+                            if (o.id !== obra.id) return o;
+                            const aut = o.instaladoresAutorizados || [];
+                            return { ...o, instaladoresAutorizados: aut.includes(inst.id) ? aut.filter(id => id !== inst.id) : [...aut, inst.id] };
+                          }));
+                        }} style={{ background: autorizado ? "#FCEBEB" : "#EAF3DE", border: `0.5px solid ${autorizado ? "#F09595" : "#97C459"}`, color: autorizado ? "#A32D2D" : "#3B6D11", borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 13, fontWeight: 500 }}>
+                          {autorizado ? "Revocar" : "Dar acceso"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
+                  <Btn onClick={() => setAccesoObraModal(false)}>Cerrar</Btn>
+                </div>
+              </div>
+            );
+          })()}
+        </Modal>
+      )}
+
+      {modals.tipModal && (
+        <Modal title={editTip ? "Editar tipología" : "Nueva tipología"} onClose={() => closeModal("tipModal")}>
+          <Input label="Nombre" value={tipForm.nombre} onChange={e => setTipForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Ej: Tipo A — 3 alcobas" />
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 13, color: "var(--color-text-secondary)", display: "block", marginBottom: 8 }}>Elementos incluidos</label>
+            <div style={{ maxHeight: 260, overflowY: "auto", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 8, padding: 8, background: "var(--color-background-primary)" }}>
+              {elementos.map(el => (
+                <label key={el.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", cursor: "pointer", fontSize: 14, borderRadius: 6, background: tipForm.elementoIds.includes(el.id) ? "var(--color-background-secondary)" : "transparent" }}>
+                  <input type="checkbox" checked={tipForm.elementoIds.includes(el.id)}
+                    onChange={e => setTipForm(f => ({ ...f, elementoIds: e.target.checked ? [...f.elementoIds, el.id] : f.elementoIds.filter(x => x !== el.id) }))} />
+                  <span style={{ flex: 1, color: "var(--color-text-primary)" }}>{el.nombre}</span>
+                  <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{el.unidad} · {fmt(el.precio)}</span>
+                </label>
+              ))}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 6 }}>
+              {tipForm.elementoIds.length} elemento(s) seleccionado(s)
+            </div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+            <Btn onClick={() => closeModal("tipModal")}>Cancelar</Btn>
+            <Btn variant="primary" onClick={guardarTip}>{editTip ? "Guardar cambios" : "Crear"}</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {replicaModal && (
+        <Modal title="Replicar tipologías por número de apartamento" onClose={() => setReplicaModal(false)} wide>
+          <p style={{ fontSize: 13, color: "var(--color-text-secondary)", margin: "0 0 16px" }}>
+            Asigna una tipología a cada número de apartamento. Se aplicará en todos los pisos automáticamente.
+          </p>
+          <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
+            {numerosApto.map(sufijo => {
+              const regla = replicaSel.reglas.find(r => r.sufijo === sufijo);
+              const tipId = regla?.tipId || "";
+              const cantidad = currentObra.pisos?.reduce((n, p) => n + (p.aptos?.filter(a => String(a.numero) === sufijo).length || 0), 0);
+              return (
+                <div key={sufijo} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: tipId ? "#EEEDFE" : "var(--color-background-secondary)", border: `0.5px solid ${tipId ? "#AFA9EC" : "var(--color-border-tertiary)"}`, borderRadius: 10 }}>
+                  <div style={{ minWidth: 80 }}>
+                    <div style={{ fontWeight: 500, fontSize: 14, color: tipId ? "#534AB7" : "var(--color-text-primary)" }}>Apto ×{sufijo}</div>
+                    <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{cantidad} apto(s)</div>
+                  </div>
+                  <select style={{ flex: 1 }} value={tipId}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setReplicaSel(r => {
+                        const nuevas = r.reglas.filter(x => x.sufijo !== sufijo);
+                        if (val) nuevas.push({ sufijo, tipId: val });
+                        return { reglas: nuevas };
+                      });
+                    }}>
+                    <option value="">— Sin asignar —</option>
+                    {tipologias.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                  </select>
+                  {tipId && <span style={{ fontSize: 18, color: "#534AB7" }}>✓</span>}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
+              {replicaSel.reglas.filter(r => r.tipId).length} número(s) asignado(s)
+            </span>
+            <div style={{ display: "flex", gap: 10 }}>
+              <Btn onClick={() => setReplicaModal(false)}>Cancelar</Btn>
+              <Btn variant="primary" disabled={!replicaSel.reglas.filter(r => r.tipId).length} onClick={replicarEnSerie}>
+                Aplicar en toda la obra
+              </Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
 }
