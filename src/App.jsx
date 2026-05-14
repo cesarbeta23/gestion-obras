@@ -295,6 +295,8 @@ function Header({ user, logout, view, setView, selectedObra, setSelectedObra, se
 
 function ObrasView({ obras, setObras, updateObra, saveObra, user, usuarios, calcAvanceObra, setSelectedObra, openModal, closeModal, modals, pushNotif }) {
   const [form, setForm] = useState({nombre:"",direccion:"",coordinadorId:"",pisos:1,aptosPorPiso:1});
+  const [editObra, setEditObra] = useState(null);
+  const [editObraForm, setEditObraForm] = useState({});
   const [accesoModal, setAccesoModal] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const superadmins = usuarios.filter(u=>u.rol===ROLES.SUPERADMIN);
@@ -310,7 +312,12 @@ function ObrasView({ obras, setObras, updateObra, saveObra, user, usuarios, calc
     closeModal("nuevaObra");
   }
 
-  async function eliminarObra(obraId) {
+  async function editarObra() {
+    if (!editObraForm.nombre) return;
+    await updateObra(editObra, o => ({ ...o, nombre: editObraForm.nombre, direccion: editObraForm.direccion, coordinadorId: editObraForm.coordinadorId }));
+    pushNotif("Obra actualizada", "success");
+    setEditObra(null);
+  }
     await dbDelete("obras", obraId);
     setObras(obs=>obs.filter(o=>o.id!==obraId));
     setConfirmDelete(null);
@@ -356,7 +363,7 @@ function ObrasView({ obras, setObras, updateObra, saveObra, user, usuarios, calc
                 <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
                   {pends>0&&user.rol===ROLES.SUPERADMIN&&<span onClick={e=>{e.stopPropagation();setAccesoModal(obra.id);}} style={{background:"#FAEEDA",color:"#854F0B",border:"1px solid #EF9F27",borderRadius:20,padding:"3px 10px",fontSize:12,cursor:"pointer",fontWeight:500}}>{pends} solicitud{pends>1?"es":""}</span>}
                   <Badge color="green">{obra.estado}</Badge>
-                  {user.rol===ROLES.SUPERADMIN&&<button onClick={e=>{e.stopPropagation();setAccesoModal(obra.id);}} style={{background:"#E6F1FB",border:"1px solid #85B7EB",color:"#185FA5",borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:12,fontWeight:500}}>👷 Accesos</button>}
+                  {user.rol===ROLES.SUPERADMIN&&<button onClick={e=>{e.stopPropagation();setEditObraForm({nombre:obra.nombre,direccion:obra.direccion,coordinadorId:obra.coordinadorId||""});setEditObra(obra.id);}} style={{background:"#E6F1FB",border:"1px solid #85B7EB",color:"#185FA5",borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:12,fontWeight:500}}>✎ Editar</button>}
                   {user.rol===ROLES.SUPERADMIN&&<button onClick={e=>{e.stopPropagation();setConfirmDelete(obra.id);}} style={{background:"#FCEBEB",border:"1px solid #F09595",color:"#A32D2D",borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:12,fontWeight:500}}>🗑 Eliminar</button>}
                 </div>
               </div>
@@ -386,6 +393,19 @@ function ObrasView({ obras, setObras, updateObra, saveObra, user, usuarios, calc
           })}
         </div>
       )}
+
+      {editObra&&<Modal title="Editar obra" onClose={()=>setEditObra(null)}>
+        <Input label="Nombre de la obra" value={editObraForm.nombre} onChange={e=>setEditObraForm(f=>({...f,nombre:e.target.value}))}/>
+        <Input label="Dirección" value={editObraForm.direccion} onChange={e=>setEditObraForm(f=>({...f,direccion:e.target.value}))}/>
+        <Select label="Coordinador responsable" value={editObraForm.coordinadorId} onChange={e=>setEditObraForm(f=>({...f,coordinadorId:e.target.value}))}>
+          <option value="">— Sin asignar —</option>
+          {superadmins.map(s=><option key={s.id} value={s.id}>{s.nombre}</option>)}
+        </Select>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:8}}>
+          <Btn onClick={()=>setEditObra(null)}>Cancelar</Btn>
+          <Btn variant="primary" onClick={editarObra}>Guardar cambios</Btn>
+        </div>
+      </Modal>}
 
       {confirmDelete&&<Modal title="Confirmar eliminación" onClose={()=>setConfirmDelete(null)}>
         <p style={{fontSize:14,color:"#333",marginBottom:20}}>¿Estás seguro de que deseas eliminar esta obra? Se perderán todos los datos de pisos, apartamentos y avances. Esta acción no se puede deshacer.</p>
@@ -862,6 +882,14 @@ function AptoDetalle({ apto, piso, obra, obras, updateObra, user, elementos, usu
 function ElementosView({ elementos, setElementos, openModal, closeModal, modals }) {
   const [form,setForm]=useState({nombre:"",unidad:"und",precio:0});
   const [editId,setEditId]=useState(null);
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState(null);
+
+  async function eliminarUsuario(id) {
+    await dbDelete("usuarios", id);
+    setUsuarios(us => us.filter(u => u.id !== id));
+    setConfirmDeleteUser(null);
+  }
+
   async function guardar(){
     if(!form.nombre)return;
     const el=editId?{...elementos.find(e=>e.id===editId),...form,precio:Number(form.precio)}:{id:`e${Date.now()}`,...form,precio:Number(form.precio)};
@@ -1097,8 +1125,17 @@ function UsuariosView({ usuarios, setUsuarios, openModal, closeModal, modals }) 
           </div>
           <Badge color={rolColor[u.rol]}>{rolLabel[u.rol]}</Badge>
           <Btn onClick={()=>editar(u)}>Editar</Btn>
+          <Btn variant="danger" onClick={()=>setConfirmDeleteUser(u.id)}>Eliminar</Btn>
         </div>)}
       </div>
+      {confirmDeleteUser&&<Modal title="Eliminar usuario" onClose={()=>setConfirmDeleteUser(null)}>
+        <p style={{fontSize:14,color:"#333",marginBottom:20}}>¿Estás seguro de que deseas eliminar a <strong>{usuarios.find(u=>u.id===confirmDeleteUser)?.nombre}</strong>? Esta acción no se puede deshacer.</p>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+          <Btn onClick={()=>setConfirmDeleteUser(null)}>Cancelar</Btn>
+          <Btn variant="danger" onClick={()=>eliminarUsuario(confirmDeleteUser)}>Sí, eliminar</Btn>
+        </div>
+      </Modal>}
+
       {modals.userModal&&<Modal title={editId?"Editar usuario":"Nuevo usuario"} onClose={()=>closeModal("userModal")} wide>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 16px"}}>
           <Input label="Nombre completo" value={form.nombre} onChange={e=>setForm(f=>({...f,nombre:e.target.value}))}/>
