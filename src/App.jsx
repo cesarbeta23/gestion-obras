@@ -883,14 +883,6 @@ function AptoDetalle({ apto, piso, obra, obras, updateObra, user, elementos, usu
 function ElementosView({ elementos, setElementos, openModal, closeModal, modals }) {
   const [form,setForm]=useState({nombre:"",unidad:"und",precio:0});
   const [editId,setEditId]=useState(null);
-  const [confirmDeleteUser, setConfirmDeleteUser] = useState(null);
-
-  async function eliminarUsuario(id) {
-    await dbDelete("usuarios", id);
-    setUsuarios(us => us.filter(u => u.id !== id));
-    setConfirmDeleteUser(null);
-  }
-
   async function guardar(){
     if(!form.nombre)return;
     const el=editId?{...elementos.find(e=>e.id===editId),...form,precio:Number(form.precio)}:{id:`e${Date.now()}`,...form,precio:Number(form.precio)};
@@ -1097,6 +1089,13 @@ function HistorialLiquidaciones({ liquidaciones, user, usuarios }) {
 function UsuariosView({ usuarios, setUsuarios, openModal, closeModal, modals }) {
   const empty={nombre:"",email:"",rol:ROLES.INSTALADOR,pin:"",cedula:"",telefono:"",banco:"",cuenta:""};
   const [form,setForm]=useState(empty);
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState(null);
+
+  async function eliminarUsuario(id) {
+    await dbDelete("usuarios", id);
+    setUsuarios(us => us.filter(u => u.id !== id));
+    setConfirmDeleteUser(null);
+  }
   const [editId,setEditId]=useState(null);
   const rolColor={superadmin:"purple",supervisor:"blue",auxiliar:"amber",instalador:"green"};
   const rolLabel={superadmin:"Superadmin",supervisor:"Supervisor",auxiliar:"Auxiliar",instalador:"Instalador"};
