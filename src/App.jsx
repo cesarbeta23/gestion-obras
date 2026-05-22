@@ -318,7 +318,6 @@ function ObrasView({ obras, setObras, updateObra, saveObra, user, usuarios, calc
     pushNotif("Obra actualizada", "success");
     setEditObra(null);
   }
-  async function eliminarObra(obraId) {
     await dbDelete("obras", obraId);
     setObras(obs=>obs.filter(o=>o.id!==obraId));
     setConfirmDelete(null);
@@ -611,9 +610,18 @@ function ObraDetalle({ obra, obras, updateObra, user, calcAvanceApto, elementos,
                     <div style={{fontWeight:500,fontSize:14,marginBottom:2}}>{apto.nombre||`${piso.numero}${String(apto.numero).padStart(2,"0")}`}</div>
                     {instNombre&&<div style={{fontSize:11,color:"#534AB7",marginBottom:4}}>👷 {instNombre}</div>}
                     {tip?(<>
-                      <div style={{fontSize:11,color:"#777",marginBottom:6}}>{tip.nombre}</div>
+                      <div style={{fontSize:11,color:"#777",marginBottom:4}}>{tip.nombre}</div>
                       <div style={{height:4,background:"#f0f0f0",borderRadius:4,overflow:"hidden",marginBottom:4}}><div style={{height:"100%",width:`${av}%`,background:av===100?"#639922":"#534AB7",borderRadius:4}}/></div>
-                      <div style={{fontSize:11,color:"#777"}}>{av}%</div>
+                      <div style={{fontSize:11,color:"#777",marginBottom:4}}>{av}%</div>
+                      {user.rol!==ROLES.INSTALADOR&&user.rol!==ROLES.AUXILIAR&&(
+                        <div style={{display:"flex",gap:4,flexWrap:"wrap"}} onClick={e=>e.stopPropagation()}>
+                          <select style={{fontSize:10,padding:"2px 4px",border:"1px solid #ddd",borderRadius:4,flex:1}} defaultValue="" onChange={e=>{if(e.target.value)asignarTipologia(piso.id,apto.id,e.target.value);}}>
+                            <option value="">Cambiar...</option>
+                            {tipologias?.filter(t=>t.id!==apto.tipologia).map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}
+                          </select>
+                          <button onClick={e=>{e.stopPropagation();updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p2=>p2.id!==piso.id?p2:{...p2,aptos:p2.aptos.map(a2=>a2.id!==apto.id?a2:{...a2,tipologia:"",elementos:[]})})}))})} style={{fontSize:10,background:"#FCEBEB",border:"1px solid #F09595",color:"#A32D2D",borderRadius:4,padding:"2px 5px",cursor:"pointer"}}>✕</button>
+                        </div>
+                      )}
                     </>):user.rol!==ROLES.AUXILIAR?(
                       asignando===apto.id?<select style={{width:"100%",fontSize:11,marginTop:4}} onClick={e=>e.stopPropagation()} onChange={e=>e.target.value&&asignarTipologia(piso.id,apto.id,e.target.value)}><option value="">Seleccionar...</option>{tipologias?.map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}</select>
                       :<button onClick={e=>{e.stopPropagation();setAsignando(apto.id);}} style={{fontSize:11,color:"#534AB7",background:"#EEEDFE",border:"1px solid #AFA9EC",borderRadius:6,padding:"3px 6px",cursor:"pointer",marginTop:4}}>+ tipología</button>
@@ -762,11 +770,11 @@ function AptoDetalle({ apto, piso, obra, obras, updateObra, user, elementos, usu
   const tieneAcceso = user.rol!==ROLES.INSTALADOR || currentApto.elementos?.some(el=>el.instaladorId===user.id) || !currentApto.elementos?.some(el=>el.completado);
 
   function togglePendiente(idx){
-    if(user.rol!==ROLES.INSTALADOR)return;
     const el=currentApto.elementos[idx];
-    if(el.completado&&el.instaladorId!==user.id)return;
     if(el.completado)return;
-    setPendientes(p=>{const c={...p};if(c[idx]!==undefined)delete c[idx];else c[idx]=true;return c;});
+    if(user.rol===ROLES.INSTALADOR||user.rol===ROLES.SUPERADMIN||user.rol===ROLES.SUPERVISOR){
+      setPendientes(p=>{const c={...p};if(c[idx]!==undefined)delete c[idx];else c[idx]=true;return c;});
+    }
   }
 
   async function guardarCambios() {
@@ -826,7 +834,7 @@ function AptoDetalle({ apto, piso, obra, obras, updateObra, user, elementos, usu
           const elem=elementos.find(e=>e.id===el.elementoId);
           const inst=usuarios.find(u=>u.id===el.instaladorId);
           const esPend=!!pendientes[idx], marcado=el.completado||esPend;
-          const canToggle=user.rol===ROLES.INSTALADOR&&!el.completado;
+  const canToggle = !el.completado && (user.rol===ROLES.INSTALADOR||user.rol===ROLES.SUPERADMIN||user.rol===ROLES.SUPERVISOR);
           const cantActual=cantidades[idx]??el.cantidad??1;
           const precio=getPrecio(el.elementoId,obra.id,corteActual.label);
           return (
@@ -872,7 +880,7 @@ function AptoDetalle({ apto, piso, obra, obras, updateObra, user, elementos, usu
         </div>}
       </div>
 
-      {user.rol===ROLES.INSTALADOR&&<div style={{position:"sticky",bottom:0,background:"#fff",borderTop:"1px solid #eee",padding:"14px 0 4px",display:"flex",justifyContent:"flex-end",gap:10}}>
+      {(user.rol===ROLES.INSTALADOR||user.rol===ROLES.SUPERADMIN||user.rol===ROLES.SUPERVISOR)&&<div style={{position:"sticky",bottom:0,background:"#fff",borderTop:"1px solid #eee",padding:"14px 0 4px",display:"flex",justifyContent:"flex-end",gap:10}}>
         {hayPendientes&&<span style={{fontSize:14,color:"#777",alignSelf:"center"}}>Listo para guardar</span>}
         <Btn variant="primary" disabled={!hayPendientes} onClick={guardarCambios} style={{padding:"10px 28px",fontSize:15}}>Guardar</Btn>
       </div>}
@@ -883,6 +891,14 @@ function AptoDetalle({ apto, piso, obra, obras, updateObra, user, elementos, usu
 function ElementosView({ elementos, setElementos, openModal, closeModal, modals }) {
   const [form,setForm]=useState({nombre:"",unidad:"und",precio:0});
   const [editId,setEditId]=useState(null);
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState(null);
+
+  async function eliminarUsuario(id) {
+    await dbDelete("usuarios", id);
+    setUsuarios(us => us.filter(u => u.id !== id));
+    setConfirmDeleteUser(null);
+  }
+
   async function guardar(){
     if(!form.nombre)return;
     const el=editId?{...elementos.find(e=>e.id===editId),...form,precio:Number(form.precio)}:{id:`e${Date.now()}`,...form,precio:Number(form.precio)};
@@ -1089,13 +1105,6 @@ function HistorialLiquidaciones({ liquidaciones, user, usuarios }) {
 function UsuariosView({ usuarios, setUsuarios, openModal, closeModal, modals }) {
   const empty={nombre:"",email:"",rol:ROLES.INSTALADOR,pin:"",cedula:"",telefono:"",banco:"",cuenta:""};
   const [form,setForm]=useState(empty);
-  const [confirmDeleteUser, setConfirmDeleteUser] = useState(null);
-
-  async function eliminarUsuario(id) {
-    await dbDelete("usuarios", id);
-    setUsuarios(us => us.filter(u => u.id !== id));
-    setConfirmDeleteUser(null);
-  }
   const [editId,setEditId]=useState(null);
   const rolColor={superadmin:"purple",supervisor:"blue",auxiliar:"amber",instalador:"green"};
   const rolLabel={superadmin:"Superadmin",supervisor:"Supervisor",auxiliar:"Auxiliar",instalador:"Instalador"};
