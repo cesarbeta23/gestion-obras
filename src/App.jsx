@@ -620,7 +620,7 @@ function ObraDetalle({ obra, obras, updateObra, user, calcAvanceApto, elementos,
                             <option value="">Cambiar...</option>
                             {tipologias?.filter(t=>t.id!==apto.tipologia).map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}
                           </select>
-                          <button onClick={e=>{e.stopPropagation();updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p2=>p2.id!==piso.id?p2:{...p2,aptos:p2.aptos.map(a2=>a2.id!==apto.id?a2:{...a2,tipologia:"",elementos:[]})})})});}} style={{fontSize:10,background:"#FCEBEB",border:"1px solid #F09595",color:"#A32D2D",borderRadius:4,padding:"2px 5px",cursor:"pointer"}}>✕</button>
+                          <button onClick={e=>{ e.stopPropagation(); updateObra(obra.id, o=>({...o, pisos: o.pisos.map(p2=> p2.id!==piso.id ? p2 : {...p2, aptos: p2.aptos.map(a2=> a2.id!==apto.id ? a2 : {...a2, tipologia:"", elementos:[]})})})); }} style={{fontSize:10,background:"#FCEBEB",border:"1px solid #F09595",color:"#A32D2D",borderRadius:4,padding:"2px 5px",cursor:"pointer"}}>✕</button>
                         </div>
                       )}
                     </>):user.rol!==ROLES.AUXILIAR?(
