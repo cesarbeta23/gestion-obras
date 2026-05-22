@@ -318,6 +318,7 @@ function ObrasView({ obras, setObras, updateObra, saveObra, user, usuarios, calc
     pushNotif("Obra actualizada", "success");
     setEditObra(null);
   }
+  async function eliminarObra(obraId) {
     await dbDelete("obras", obraId);
     setObras(obs=>obs.filter(o=>o.id!==obraId));
     setConfirmDelete(null);
