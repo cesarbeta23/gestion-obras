@@ -459,6 +459,7 @@ function ObraDetalle({obra,obras,updateObra,user,calcAvanceApto,elementos,usuari
     await updateObra(obra.id, o=>({...o, pisos:o.pisos.map(p=>p.id!==pisoId?p:{...p, aptos:p.aptos.map(a=>a.id!==aptoId?a:{...a, instaladorAsignado:instaladorId||null})})}));
     pushNotif(instaladorId?"Instalador asignado":"Instalador removido","success");
   }
+  async function asignarTipologia(pisoId,aptoId,tipId){
     const tip=tipologias.find(t=>t.id===tipId);
     const nuevosEls=(tip?.elementoIds||[]).map(eid=>({elementoId:eid,completado:false,instaladorId:null,fecha:null,cantidad:1}));
     await updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>p.id!==pisoId?p:{...p,aptos:p.aptos.map(a=>a.id!==aptoId?a:{...a,tipologia:tipId,elementos:nuevosEls})})}));
@@ -585,7 +586,7 @@ function ObraDetalle({obra,obras,updateObra,user,calcAvanceApto,elementos,usuari
                             <option value="">Cambiar...</option>
                             {tipologias?.filter(t=>t.id!==apto.tipologia).map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}
                           </select>
-                         <button onClick={e=>{ e.stopPropagation(); const o2=obras.find(x=>x.id===obra.id); if(!o2)return; updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>p.id!==piso.id?p:{...p,aptos:p.aptos.map(a=>a.id!==apto.id?a:{...a,tipologia:"",elementos:[]})})})); }} style={{fontSize:9,background:C.redL,border:"1px solid #FECACA",color:C.red,borderRadius:4,padding:"2px 5px",cursor:"pointer"}}>✕</button>
+                          <button onClick={e=>{e.stopPropagation();updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>p.id!==piso.id?p:{...p,aptos:p.aptos.map(a=>a.id!==apto.id?a:{...a,tipologia:"",elementos:[]})})})});}} style={{fontSize:9,background:C.redL,border:`1px solid #FECACA`,color:C.red,borderRadius:4,padding:"2px 5px",cursor:"pointer"}}>✕</button>
                         </div>
                       )}
                     </>):user.rol!==ROLES.AUXILIAR?(
