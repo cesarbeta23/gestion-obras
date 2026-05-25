@@ -466,6 +466,10 @@ function ObraDetalle({obra,obras,updateObra,user,calcAvanceApto,elementos,usuari
     setAsignando(null);
   }
 
+  function quitarTipologiaApto(pisoId, aptoId) {
+    updateObra(obra.id, o => ({...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : {...p, aptos: p.aptos.map(a => a.id !== aptoId ? a : {...a, tipologia: "", elementos: []})})}));
+  }
+
   async function replicarEnSerie(){
     let count=0;
     await updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>({...p,aptos:p.aptos.map(a=>{const regla=replicaSel.reglas.find(r=>r.sufijo===String(a.numero)&&r.tipId);if(!regla)return a;const tip=tipologias.find(t=>t.id===regla.tipId);if(!tip)return a;count++;return{...a,tipologia:tip.id,elementos:tip.elementoIds.map(eid=>a.elementos?.find(e=>e.elementoId===eid)||{elementoId:eid,completado:false,instaladorId:null,fecha:null,cantidad:1})};})}))}));
@@ -586,7 +590,7 @@ function ObraDetalle({obra,obras,updateObra,user,calcAvanceApto,elementos,usuari
                             <option value="">Cambiar...</option>
                             {tipologias?.filter(t=>t.id!==apto.tipologia).map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}
                           </select>
-                          <button onClick={e=>{e.stopPropagation();updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>p.id!==piso.id?p:{...p,aptos:p.aptos.map(a=>a.id!==apto.id?a:{...a,tipologia:"",elementos:[]})})})});}} style={{fontSize:9,background:C.redL,border:`1px solid #FECACA`,color:C.red,borderRadius:4,padding:"2px 5px",cursor:"pointer"}}>✕</button>
+                          <button onClick={e=>{e.stopPropagation();quitarTipologiaApto(piso.id,apto.id);}} style={{fontSize:9,background:C.redL,border:"1px solid #FECACA",color:C.red,borderRadius:4,padding:"2px 5px",cursor:"pointer"}}>✕</button>
                         </div>
                       )}
                     </>):user.rol!==ROLES.AUXILIAR?(
