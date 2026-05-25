@@ -29,7 +29,7 @@ function badge(type){
 const ROLES={SUPERADMIN:"superadmin",SUPERVISOR:"supervisor",AUXILIAR:"auxiliar",INSTALADOR:"instalador"};
 const ELEMENTOS_DEFAULT=[
   {id:"e1",nombre:"Puerta principal",unidad:"und",precio:55000},{id:"e2",nombre:"Puerta habitación",unidad:"und",precio:55000},
-  {id:"e3",nombre:"Chapa puerta principal",unidad:"und",precio:10000},{id:"e4",nombre:"Moldura puerta principal",unidad:"und",precio:10000},
+  {id:"e3",nombre:"Chapa puerta principal",unidad:"und",precio:10000},  {id:"e4",nombre:"Moldura puerta principal",unidad:"und",precio:10000},
   {id:"e19",nombre:"Chapa WC principal",unidad:"und",precio:10000},{id:"e20",nombre:"Moldura WC principal",unidad:"und",precio:10000},
   {id:"e21",nombre:"Chapa WC social",unidad:"und",precio:10000},{id:"e22",nombre:"Moldura WC social",unidad:"und",precio:10000},
   {id:"e23",nombre:"Chapa alcoba 2",unidad:"und",precio:10000},{id:"e24",nombre:"Moldura alcoba 2",unidad:"und",precio:10000},
@@ -119,6 +119,7 @@ function Modal({title,onClose,children,wide}){
     </div>
   );
 }
+// Orden correcto: Nombres primero, apellidos después
 function Input({label,...props}){return<div style={{marginBottom:14}}>{label&&<label style={{fontSize:12,color:C.gray500,display:"block",marginBottom:4,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.04em"}}>{label}</label>}<input style={inputSt}{...props}/></div>;}
 function Select({label,children,...props}){return<div style={{marginBottom:14}}>{label&&<label style={{fontSize:12,color:C.gray500,display:"block",marginBottom:4,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.04em"}}>{label}</label>}<select style={selectSt}{...props}>{children}</select></div>;}
 function Btn({children,onClick,variant="default",disabled,style:st={}}){const v=btnV[variant]||btnV.default;return<button onClick={onClick} disabled={disabled} style={{...v,borderRadius:8,padding:"8px 16px",cursor:disabled?"not-allowed":"pointer",fontSize:14,fontWeight:500,opacity:disabled?0.45:1,fontFamily:"system-ui",...st}}>{children}</button>;}
@@ -165,7 +166,25 @@ export default function App(){
     }catch{pushNotif("Error conectando","error");}
     setLoading(false);
   }
-  useEffect(()=>{loadAll();},[]);
+  useEffect(()=>{
+    loadAll();
+    const channel = supaRealtime();
+    return ()=>{ channel.unsubscribe(); };
+  },[]);
+
+  function supaRealtime(){
+    const{createClient}=window.supabase||{};
+    try{
+      const client=window._supaClient||(window._supaClient=window.supabase.createClient(SUPA_URL,SUPA_KEY));
+      const channel=client.channel("db-changes")
+        .on("postgres_changes",{event:"*",schema:"public",table:"obras"},()=>dbGet("obras").then(o=>setObras(o.map(ob=>({...ob,tipologias:ob.tipologias||[],pisos:ob.pisos||[],instaladoresAutorizados:ob.instaladores_autorizados||[],solicitudes:ob.solicitudes||[],preciosOverride:ob.precios_override||{},coordinadorId:ob.coordinador_id||""})))))
+        .on("postgres_changes",{event:"*",schema:"public",table:"usuarios"},()=>dbGet("usuarios").then(u=>setUsuarios(u)))
+        .on("postgres_changes",{event:"*",schema:"public",table:"elementos"},()=>dbGet("elementos").then(e=>setElementos(e)))
+        .on("postgres_changes",{event:"*",schema:"public",table:"liquidaciones"},()=>dbGet("liquidaciones").then(l=>setLiquidaciones(l)))
+        .subscribe();
+      return channel;
+    }catch(e){console.warn("Realtime no disponible",e);return{unsubscribe:()=>{}};}
+  }
 
   async function saveObra(o){await dbUpsert("obras",{id:o.id,nombre:o.nombre,direccion:o.direccion,estado:o.estado,tipologias:o.tipologias||[],pisos:o.pisos||[],instaladores_autorizados:o.instaladoresAutorizados||[],solicitudes:o.solicitudes||[],precios_override:o.preciosOverride||{},coordinador_id:o.coordinadorId||""});}
   async function updateObra(obraId,updater){setObras(obs=>{const updated=obs.map(o=>o.id===obraId?updater(o):o);const obra=updated.find(o=>o.id===obraId);if(obra)saveObra(obra);return updated;});}
@@ -436,7 +455,10 @@ function ObraDetalle({obra,obras,updateObra,user,calcAvanceApto,elementos,usuari
     pushNotif("Tipología guardada","success");closeModal("tipModal");setEditTip(null);
   }
 
-  async function asignarTipologia(pisoId,aptoId,tipId){
+  async function asignarInstaladorApto(pisoId, aptoId, instaladorId){
+    await updateObra(obra.id, o=>({...o, pisos:o.pisos.map(p=>p.id!==pisoId?p:{...p, aptos:p.aptos.map(a=>a.id!==aptoId?a:{...a, instaladorAsignado:instaladorId||null})})}));
+    pushNotif(instaladorId?"Instalador asignado":"Instalador removido","success");
+  }
     const tip=tipologias.find(t=>t.id===tipId);
     const nuevosEls=(tip?.elementoIds||[]).map(eid=>({elementoId:eid,completado:false,instaladorId:null,fecha:null,cantidad:1}));
     await updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>p.id!==pisoId?p:{...p,aptos:p.aptos.map(a=>a.id!==aptoId?a:{...a,tipologia:tipId,elementos:nuevosEls})})}));
@@ -460,21 +482,50 @@ function ObraDetalle({obra,obras,updateObra,user,calcAvanceApto,elementos,usuari
   }
 
   if(user.rol===ROLES.INSTALADOR){
-    const misAptos=currentObra.pisos?.flatMap(p=>p.aptos?.filter(a=>a.elementos?.some(el=>el.instaladorId===user.id))||[])||[];
+    const misAptos=currentObra.pisos?.flatMap(p=>p.aptos?.filter(a=>a.instaladorAsignado===user.id)||[])||[];
+    const aptosDisponibles=currentObra.pisos?.flatMap(p=>p.aptos?.filter(a=>!a.instaladorAsignado&&a.tipologia)||[])||[];
+
+    async function tomarApto(pisoId, aptoId){
+      await updateObra(obra.id, o=>({...o, pisos:o.pisos.map(p=>p.id!==pisoId?p:{...p, aptos:p.aptos.map(a=>a.id!==aptoId?a:{...a, instaladorAsignado:user.id})})}));
+      pushNotif("Apartamento tomado","success");
+    }
+
     return(
       <div>
         <div style={{marginBottom:18}}><h2 style={{margin:0,fontSize:20,fontWeight:700,color:C.black}}>{obra.nombre}</h2><p style={{margin:"4px 0 0",fontSize:13,color:C.gray500}}>{obra.direccion}</p></div>
-        {misAptos.length===0&&<div style={{textAlign:"center",padding:"3rem",color:C.gray400,background:C.white,borderRadius:12,border:`1px solid ${C.gray200}`}}><p>No tienes apartamentos asignados aún.</p></div>}
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:10}}>
-          {misAptos.map(apto=>{const piso=currentObra.pisos?.find(p=>p.aptos?.some(a=>a.id===apto.id));const av=calcAvanceApto(apto);const tip=tipologias?.find(t=>t.id===apto.tipologia);
-            return<div key={apto.id} onClick={()=>piso&&setSelectedApto(apto,piso)} style={{...card,cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.borderColor=C.orange} onMouseLeave={e=>e.currentTarget.style.borderColor=C.gray200}>
-              <div style={{fontWeight:700,fontSize:14,marginBottom:4}}>{apto.nombre||apto.id}</div>
-              {tip&&<div style={{fontSize:11,color:C.gray500,marginBottom:6}}>{tip.nombre}</div>}
-              <div style={{height:5,background:C.gray100,borderRadius:10,overflow:"hidden",marginBottom:4}}><div style={{height:"100%",width:`${av}%`,background:av===100?C.green:C.orange,borderRadius:10}}/></div>
-              <div style={{fontSize:11,color:C.gray400,fontWeight:600}}>{av}%</div>
-            </div>;
-          })}
-        </div>
+
+        {misAptos.length>0&&<>
+          <div style={{fontSize:12,fontWeight:700,color:C.gray500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Mis apartamentos</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:10,marginBottom:24}}>
+            {misAptos.map(apto=>{
+              const piso=currentObra.pisos?.find(p=>p.aptos?.some(a=>a.id===apto.id));
+              const av=calcAvanceApto(apto);const tip=tipologias?.find(t=>t.id===apto.tipologia);
+              return<div key={apto.id} onClick={()=>piso&&setSelectedApto(apto,piso)} style={{...card,cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.borderColor=C.orange} onMouseLeave={e=>e.currentTarget.style.borderColor=C.gray200}>
+                <div style={{fontWeight:700,fontSize:14,marginBottom:4}}>{apto.nombre||apto.id}</div>
+                {tip&&<div style={{fontSize:11,color:C.gray500,marginBottom:6}}>{tip.nombre}</div>}
+                <div style={{height:5,background:C.gray100,borderRadius:10,overflow:"hidden",marginBottom:4}}><div style={{height:"100%",width:`${av}%`,background:av===100?C.green:C.orange,borderRadius:10}}/></div>
+                <div style={{fontSize:11,color:C.gray400,fontWeight:600}}>{av}%</div>
+              </div>;
+            })}
+          </div>
+        </>}
+
+        {aptosDisponibles.length>0&&<>
+          <div style={{fontSize:12,fontWeight:700,color:C.gray500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Apartamentos disponibles</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:10}}>
+            {aptosDisponibles.map(apto=>{
+              const piso=currentObra.pisos?.find(p=>p.aptos?.some(a=>a.id===apto.id));
+              const tip=tipologias?.find(t=>t.id===apto.tipologia);
+              return<div key={apto.id} style={{...card,background:C.gray50,border:`1px dashed ${C.gray300}`}}>
+                <div style={{fontWeight:700,fontSize:14,marginBottom:4,color:C.gray500}}>{apto.nombre||apto.id}</div>
+                {tip&&<div style={{fontSize:11,color:C.gray400,marginBottom:8}}>{tip.nombre}</div>}
+                <button onClick={()=>piso&&tomarApto(piso.id,apto.id)} style={{...badge("orange"),cursor:"pointer",fontSize:11,width:"100%",textAlign:"center"}}>Tomar apto</button>
+              </div>;
+            })}
+          </div>
+        </>}
+
+        {misAptos.length===0&&aptosDisponibles.length===0&&<div style={{textAlign:"center",padding:"3rem",color:C.gray400,background:C.white,borderRadius:12,border:`1px solid ${C.gray200}`}}><p>No hay apartamentos disponibles aún.</p></div>}
       </div>
     );
   }
@@ -534,7 +585,7 @@ function ObraDetalle({obra,obras,updateObra,user,calcAvanceApto,elementos,usuari
                             <option value="">Cambiar...</option>
                             {tipologias?.filter(t=>t.id!==apto.tipologia).map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}
                           </select>
-                         <button onClick={e=>{e.stopPropagation();updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>p.id!==piso.id?p:{...p,aptos:p.aptos.map(a=>a.id!==apto.id?a:{...a,tipologia:"",elementos:[]})})}));}} style={{fontSize:9,background:C.redL,border:`1px solid #FECACA`,color:C.red,borderRadius:4,padding:"2px 5px",cursor:"pointer"}}>✕</button>
+                          <button onClick={e=>{e.stopPropagation();updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>p.id!==piso.id?p:{...p,aptos:p.aptos.map(a=>a.id!==apto.id?a:{...a,tipologia:"",elementos:[]})})})});}} style={{fontSize:9,background:C.redL,border:`1px solid #FECACA`,color:C.red,borderRadius:4,padding:"2px 5px",cursor:"pointer"}}>✕</button>
                         </div>
                       )}
                     </>):user.rol!==ROLES.AUXILIAR?(
@@ -1084,7 +1135,7 @@ function UsuariosView({usuarios,setUsuarios,openModal,closeModal,modals}){
 
       {modals.userModal&&<Modal title={editId?"Editar usuario":"Nuevo usuario"} onClose={()=>closeModal("userModal")} wide>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 16px"}}>
-          <Input label="Nombre completo" value={form.nombre} onChange={e=>setForm(f=>({...f,nombre:e.target.value}))}/>
+          <Input label="Nombre completo (nombres y apellidos)" value={form.nombre} onChange={e=>setForm(f=>({...f,nombre:e.target.value}))} placeholder="Ej: Yarlinton Arboleda Lemus"/>
           <Input label="Correo" type="email" value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))}/>
           <Input label="Cédula" value={form.cedula} onChange={e=>setForm(f=>({...f,cedula:e.target.value}))}/>
           <Input label="Teléfono" value={form.telefono} onChange={e=>setForm(f=>({...f,telefono:e.target.value}))}/>
