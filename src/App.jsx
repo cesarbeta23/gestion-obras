@@ -459,7 +459,6 @@ function ObraDetalle({obra,obras,updateObra,user,calcAvanceApto,elementos,usuari
     await updateObra(obra.id, o=>({...o, pisos:o.pisos.map(p=>p.id!==pisoId?p:{...p, aptos:p.aptos.map(a=>a.id!==aptoId?a:{...a, instaladorAsignado:instaladorId||null})})}));
     pushNotif(instaladorId?"Instalador asignado":"Instalador removido","success");
   }
-  async function asignarTipologia(pisoId,aptoId,tipId){
     const tip=tipologias.find(t=>t.id===tipId);
     const nuevosEls=(tip?.elementoIds||[]).map(eid=>({elementoId:eid,completado:false,instaladorId:null,fecha:null,cantidad:1}));
     await updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>p.id!==pisoId?p:{...p,aptos:p.aptos.map(a=>a.id!==aptoId?a:{...a,tipologia:tipId,elementos:nuevosEls})})}));
@@ -469,7 +468,6 @@ function ObraDetalle({obra,obras,updateObra,user,calcAvanceApto,elementos,usuari
   function quitarTipologiaApto(pisoId, aptoId) {
     updateObra(obra.id, o => ({...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : {...p, aptos: p.aptos.map(a => a.id !== aptoId ? a : {...a, tipologia: "", elementos: []})})}));
   }
-
   async function replicarEnSerie(){
     let count=0;
     await updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>({...p,aptos:p.aptos.map(a=>{const regla=replicaSel.reglas.find(r=>r.sufijo===String(a.numero)&&r.tipId);if(!regla)return a;const tip=tipologias.find(t=>t.id===regla.tipId);if(!tip)return a;count++;return{...a,tipologia:tip.id,elementos:tip.elementoIds.map(eid=>a.elementos?.find(e=>e.elementoId===eid)||{elementoId:eid,completado:false,instaladorId:null,fecha:null,cantidad:1})};})}))}));
