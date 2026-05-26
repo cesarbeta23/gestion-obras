@@ -2,346 +2,421 @@ import { useState, useEffect } from "react";
 
 const SUPA_URL = "https://kboumpkcrdeuteiiodjp.supabase.co";
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtib3VtcGtjcmRldXRlaWlvZGpwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2ODA2MTQsImV4cCI6MjA5NDI1NjYxNH0.gTjqSnxI8F7ozcLSWB2rCDexP7ubgX1fwG2uOM3L0rI";
-const H = { "Content-Type":"application/json","apikey":SUPA_KEY,"Authorization":`Bearer ${SUPA_KEY}`,"Prefer":"return=representation" };
-async function dbGet(t){const r=await fetch(`${SUPA_URL}/rest/v1/${t}?select=*`,{headers:H});return r.json();}
-async function dbUpsert(t,d){await fetch(`${SUPA_URL}/rest/v1/${t}`,{method:"POST",headers:{...H,"Prefer":"resolution=merge-duplicates,return=minimal"},body:JSON.stringify(d)});}
-async function dbDelete(t,id){await fetch(`${SUPA_URL}/rest/v1/${t}?id=eq.${id}`,{method:"DELETE",headers:H});}
+const H = { "Content-Type": "application/json", "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}`, "Prefer": "return=representation" };
+const dbGet = async t => (await fetch(`${SUPA_URL}/rest/v1/${t}?select=*`, { headers: H })).json();
+const dbUpsert = async (t, d) => fetch(`${SUPA_URL}/rest/v1/${t}`, { method: "POST", headers: { ...H, "Prefer": "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(d) });
+const dbDel = async (t, id) => fetch(`${SUPA_URL}/rest/v1/${t}?id=eq.${id}`, { method: "DELETE", headers: H });
 
-// ─── TOKENS ───────────────────────────────────────────────
-const C={orange:"#F97316",orangeD:"#EA6A0A",orangeL:"#FFF7ED",orangeMid:"#FED7AA",black:"#111",gray900:"#1C1C1E",gray800:"#2C2C2E",gray700:"#3A3A3C",gray500:"#636366",gray400:"#8E8E93",gray300:"#C7C7CC",gray200:"#D1D1D6",gray100:"#F2F2F7",gray50:"#F9F9FB",white:"#FFFFFF",green:"#22C55E",greenL:"#DCFCE7",greenD:"#15803D",red:"#EF4444",redL:"#FEE2E2",amber:"#F59E0B",amberL:"#FEF3C7"};
-const card={background:C.white,border:`1px solid ${C.gray200}`,borderRadius:12,padding:"1rem 1.25rem",boxShadow:"0 1px 4px rgba(0,0,0,0.06)"};
-const inputSt={width:"100%",boxSizing:"border-box",padding:"9px 12px",border:`1px solid ${C.gray200}`,borderRadius:8,fontSize:14,fontFamily:"system-ui",outline:"none",color:C.black,background:C.white};
-const selectSt={...inputSt,background:C.white};
-const btnV={
-  primary:{background:C.orange,border:`1px solid ${C.orange}`,color:C.white},
-  default:{background:C.white,border:`1px solid ${C.gray200}`,color:C.black},
-  danger:{background:C.redL,border:"1px solid #FECACA",color:C.red},
-  success:{background:C.greenL,border:"1px solid #BBF7D0",color:C.greenD},
-  amber:{background:C.amberL,border:"1px solid #FDE68A",color:"#B45309"},
+const ROLES = { SA: "superadmin", SV: "supervisor", AX: "auxiliar", IN: "instalador" };
+
+const C = {
+  or: "#F97316", orD: "#EA6A0A", orL: "#FFF7ED", orM: "#FED7AA",
+  bk: "#111", g9: "#1C1C1E", g8: "#2C2C2E", g5: "#636366", g4: "#8E8E93",
+  g3: "#C7C7CC", g2: "#D1D1D6", g1: "#F2F2F7", g0: "#F9F9FB", wh: "#FFFFFF",
+  gn: "#22C55E", gnL: "#DCFCE7", gnD: "#15803D", rd: "#EF4444", rdL: "#FEE2E2",
+  am: "#F59E0B", amL: "#FEF3C7"
 };
-function badge(type){
-  const m={green:{bg:C.greenL,c:C.greenD,b:"#BBF7D0"},orange:{bg:C.orangeL,c:C.orangeD,b:C.orangeMid},amber:{bg:C.amberL,c:"#B45309",b:"#FDE68A"},red:{bg:C.redL,c:C.red,b:"#FECACA"},gray:{bg:C.gray100,c:C.gray500,b:C.gray200}};
-  const v=m[type]||m.gray;
-  return{background:v.bg,color:v.c,border:`1px solid ${v.b}`,borderRadius:20,padding:"3px 10px",fontSize:12,fontWeight:500,display:"inline-block"};
+
+const card = { background: C.wh, border: `1px solid ${C.g2}`, borderRadius: 12, padding: "1rem 1.25rem", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" };
+const iSt = { width: "100%", boxSizing: "border-box", padding: "9px 12px", border: `1px solid ${C.g2}`, borderRadius: 8, fontSize: 14, fontFamily: "system-ui", color: C.bk, background: C.wh };
+const bV = {
+  primary: { background: C.or, border: `1px solid ${C.or}`, color: C.wh },
+  default: { background: C.wh, border: `1px solid ${C.g2}`, color: C.bk },
+  danger: { background: C.rdL, border: "1px solid #FECACA", color: C.rd },
+  success: { background: C.gnL, border: "1px solid #BBF7D0", color: C.gnD },
+  amber: { background: C.amL, border: "1px solid #FDE68A", color: "#B45309" },
+};
+
+const fmt = n => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n || 0);
+const lbl = () => ({ fontSize: 12, color: C.g5, display: "block", marginBottom: 4, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" });
+
+function bdg(t) {
+  const m = { green: { bg: C.gnL, c: C.gnD, b: "#BBF7D0" }, orange: { bg: C.orL, c: C.orD, b: C.orM }, amber: { bg: C.amL, c: "#B45309", b: "#FDE68A" }, red: { bg: C.rdL, c: C.rd, b: "#FECACA" }, gray: { bg: C.g1, c: C.g5, b: C.g2 } };
+  const v = m[t] || m.gray;
+  return { background: v.bg, color: v.c, border: `1px solid ${v.b}`, borderRadius: 20, padding: "3px 10px", fontSize: 12, fontWeight: 500, display: "inline-block" };
 }
 
-// ─── ROLES / DATOS ────────────────────────────────────────
-const ROLES={SUPERADMIN:"superadmin",SUPERVISOR:"supervisor",AUXILIAR:"auxiliar",INSTALADOR:"instalador"};
-const ELEMENTOS_DEFAULT=[
-  {id:"e1",nombre:"Puerta principal",unidad:"und",precio:55000},{id:"e2",nombre:"Puerta habitación",unidad:"und",precio:55000},
-  {id:"e3",nombre:"Chapa puerta principal",unidad:"und",precio:10000},  {id:"e4",nombre:"Moldura puerta principal",unidad:"und",precio:10000},
-  {id:"e19",nombre:"Chapa WC principal",unidad:"und",precio:10000},{id:"e20",nombre:"Moldura WC principal",unidad:"und",precio:10000},
-  {id:"e21",nombre:"Chapa WC social",unidad:"und",precio:10000},{id:"e22",nombre:"Moldura WC social",unidad:"und",precio:10000},
-  {id:"e23",nombre:"Chapa alcoba 2",unidad:"und",precio:10000},{id:"e24",nombre:"Moldura alcoba 2",unidad:"und",precio:10000},
-  {id:"e25",nombre:"Chapa alcoba 3",unidad:"und",precio:10000},{id:"e26",nombre:"Moldura alcoba 3",unidad:"und",precio:10000},
-  {id:"e5",nombre:"Closet alcoba principal",unidad:"und",precio:150000},{id:"e6",nombre:"Closet alcoba 2",unidad:"und",precio:120000},
-  {id:"e7",nombre:"Closet alcoba 3",unidad:"und",precio:120000},{id:"e8",nombre:"Mueble WC principal",unidad:"und",precio:25000},
-  {id:"e9",nombre:"Mueble WC social",unidad:"und",precio:25000},{id:"e10",nombre:"Vestier enfrentado",unidad:"und",precio:110000},
-  {id:"e11",nombre:"Vestier en L",unidad:"und",precio:110000},{id:"e12",nombre:"Vestier en U",unidad:"und",precio:150000},
-  {id:"e13",nombre:"Mueble alto cocina",unidad:"und",precio:0},{id:"e14",nombre:"Mueble bajo cocina",unidad:"und",precio:0},
-  {id:"e15",nombre:"Mueble isla",unidad:"und",precio:0},{id:"e16",nombre:"Mueble lavadero",unidad:"und",precio:30000},
-  {id:"e17",nombre:"Zócalo",unidad:"ml",precio:2500},
-];
-const USUARIOS_DEFAULT=[
-  {id:"sa1",nombre:"César Betancur",rol:ROLES.SUPERADMIN,email:"cesar@obra.com",pin:"1111",cedula:"3113410458",telefono:"",banco:"",cuenta:""},
-  {id:"sa2",nombre:"Sandra Marin",rol:ROLES.SUPERADMIN,email:"sandra@obra.com",pin:"2222",cedula:"3006903514",telefono:"",banco:"",cuenta:""},
-  {id:"sa3",nombre:"Andres Londoño",rol:ROLES.SUPERADMIN,email:"andres@obra.com",pin:"3333",cedula:"3189180703",telefono:"",banco:"",cuenta:""},
-  {id:"sa4",nombre:"Luz Toro",rol:ROLES.SUPERADMIN,email:"luz@obra.com",pin:"4444",cedula:"3046063039",telefono:"",banco:"",cuenta:""},
-  {id:"ax1",nombre:"Lauren Zapata",rol:ROLES.AUXILIAR,email:"lauren@obra.com",pin:"5555",cedula:"3180803364",telefono:"",banco:"",cuenta:""},
-  {id:"i01",nombre:"Albeiro De Jesús Sanchez Alvarez",rol:ROLES.INSTALADOR,email:"3366950@obra.com",pin:"6950",cedula:"3366950",telefono:"",banco:"",cuenta:""},
-  {id:"i02",nombre:"Arnovis Enrique Romero Gaviria",rol:ROLES.INSTALADOR,email:"10889524@obra.com",pin:"9524",cedula:"10889524",telefono:"",banco:"",cuenta:""},
-  {id:"i03",nombre:"Alejandro Caballero Navas",rol:ROLES.INSTALADOR,email:"1041894977@obra.com",pin:"4977",cedula:"1041894977",telefono:"",banco:"",cuenta:""},
-  {id:"i04",nombre:"Andrés Polo Gomez",rol:ROLES.INSTALADOR,email:"72238095@obra.com",pin:"8095",cedula:"72238095",telefono:"",banco:"",cuenta:""},
-  {id:"i05",nombre:"Angie Guisela Gonzales Toro",rol:ROLES.INSTALADOR,email:"32209550@obra.com",pin:"9550",cedula:"32209550",telefono:"",banco:"",cuenta:""},
-  {id:"i06",nombre:"Carlos Albeiro Bedoya",rol:ROLES.INSTALADOR,email:"98537380@obra.com",pin:"7380",cedula:"98537380",telefono:"",banco:"",cuenta:""},
-  {id:"i07",nombre:"Claudia Marcela Uribe Lopez",rol:ROLES.INSTALADOR,email:"1112765279@obra.com",pin:"5279",cedula:"1112765279",telefono:"",banco:"",cuenta:""},
-  {id:"i08",nombre:"Claudia Patricia Higuita Muñoz",rol:ROLES.INSTALADOR,email:"43164453@obra.com",pin:"4453",cedula:"43164453",telefono:"",banco:"",cuenta:""},
-  {id:"i09",nombre:"Cristian Alexis Marin Gonzales",rol:ROLES.INSTALADOR,email:"1015278020@obra.com",pin:"8020",cedula:"1015278020",telefono:"",banco:"",cuenta:""},
-  {id:"i10",nombre:"Elfa Nataly Rueda Vargas",rol:ROLES.INSTALADOR,email:"43991850@obra.com",pin:"1850",cedula:"43991850",telefono:"",banco:"",cuenta:""},
-  {id:"i11",nombre:"Erika Baza Camacho",rol:ROLES.INSTALADOR,email:"1096195897@obra.com",pin:"5897",cedula:"1096195897",telefono:"",banco:"",cuenta:""},
-  {id:"i12",nombre:"Emiliano De Jesus Callejas Rios",rol:ROLES.INSTALADOR,email:"70541496@obra.com",pin:"1496",cedula:"70541496",telefono:"",banco:"",cuenta:""},
-  {id:"i13",nombre:"Greis Pola Jaraba Correa",rol:ROLES.INSTALADOR,email:"1045691681@obra.com",pin:"1681",cedula:"1045691681",telefono:"",banco:"",cuenta:""},
-  {id:"i14",nombre:"Harrison Martinez Lopez",rol:ROLES.INSTALADOR,email:"1053796113@obra.com",pin:"6113",cedula:"1053796113",telefono:"",banco:"",cuenta:""},
-  {id:"i15",nombre:"Jose Alfredo Taborda Marin",rol:ROLES.INSTALADOR,email:"1033337255@obra.com",pin:"7255",cedula:"1033337255",telefono:"",banco:"",cuenta:""},
-  {id:"i16",nombre:"José Gabriel Mesa Martínez",rol:ROLES.INSTALADOR,email:"98642537@obra.com",pin:"2537",cedula:"98642537",telefono:"",banco:"",cuenta:""},
-  {id:"i17",nombre:"Jose Luis Basanta Coa",rol:ROLES.INSTALADOR,email:"1258625@obra.com",pin:"8625",cedula:"1258625",telefono:"",banco:"",cuenta:""},
-  {id:"i18",nombre:"Jorge Leonardo Viloria Romero",rol:ROLES.INSTALADOR,email:"1104413901@obra.com",pin:"3901",cedula:"1104413901",telefono:"",banco:"",cuenta:""},
-  {id:"i19",nombre:"Juan Carlos Cardenas Vega",rol:ROLES.INSTALADOR,email:"1098813472@obra.com",pin:"3472",cedula:"1098813472",telefono:"",banco:"",cuenta:""},
-  {id:"i20",nombre:"Juan Martin Osorio Saldarriaga",rol:ROLES.INSTALADOR,email:"71646955@obra.com",pin:"6955",cedula:"71646955",telefono:"",banco:"",cuenta:""},
-  {id:"i21",nombre:"Kateryn Carmona",rol:ROLES.INSTALADOR,email:"1214743439@obra.com",pin:"3439",cedula:"1214743439",telefono:"",banco:"",cuenta:""},
-  {id:"i22",nombre:"Leder De Jesus Herrera Arrieta",rol:ROLES.INSTALADOR,email:"1104410561@obra.com",pin:"0561",cedula:"1104410561",telefono:"",banco:"",cuenta:""},
-  {id:"i23",nombre:"Leider Arturo Herrera Arrieta",rol:ROLES.INSTALADOR,email:"1005677345@obra.com",pin:"7345",cedula:"1005677345",telefono:"",banco:"",cuenta:""},
-  {id:"i24",nombre:"Leon Jaime Taborda Marin",rol:ROLES.INSTALADOR,email:"1033339839@obra.com",pin:"9839",cedula:"1033339839",telefono:"",banco:"",cuenta:""},
-  {id:"i25",nombre:"Luis Alberto Goez Goez",rol:ROLES.INSTALADOR,email:"1152453118@obra.com",pin:"3118",cedula:"1152453118",telefono:"",banco:"",cuenta:""},
-  {id:"i26",nombre:"Luis Felipe Meza Martinez",rol:ROLES.INSTALADOR,email:"1148205348@obra.com",pin:"5348",cedula:"1148205348",telefono:"",banco:"",cuenta:""},
-  {id:"i27",nombre:"Luis Fernando Aguirre Giraldo",rol:ROLES.INSTALADOR,email:"71698074@obra.com",pin:"8074",cedula:"71698074",telefono:"",banco:"",cuenta:""},
-  {id:"i28",nombre:"Maria Luz Dary Rincon",rol:ROLES.INSTALADOR,email:"66916338@obra.com",pin:"6338",cedula:"66916338",telefono:"",banco:"",cuenta:""},
-  {id:"i29",nombre:"Mario Lemus Arboleda",rol:ROLES.INSTALADOR,email:"1001846248@obra.com",pin:"6248",cedula:"1001846248",telefono:"",banco:"",cuenta:""},
-  {id:"i30",nombre:"Nelson Dario Correa Acosta",rol:ROLES.INSTALADOR,email:"98527601@obra.com",pin:"7601",cedula:"98527601",telefono:"",banco:"",cuenta:""},
-  {id:"i31",nombre:"Omar De Jesus Ortiz Montoya",rol:ROLES.INSTALADOR,email:"98528420@obra.com",pin:"8420",cedula:"98528420",telefono:"",banco:"",cuenta:""},
-  {id:"i32",nombre:"Oscar Mauricio Lopez",rol:ROLES.INSTALADOR,email:"98538605@obra.com",pin:"8605",cedula:"98538605",telefono:"",banco:"",cuenta:""},
-  {id:"i33",nombre:"Oved Dario Pulgarin",rol:ROLES.INSTALADOR,email:"98693472@obra.com",pin:"3472",cedula:"98693472",telefono:"",banco:"",cuenta:""},
-  {id:"i34",nombre:"Steve Brahayan Alvarez Reyes",rol:ROLES.INSTALADOR,email:"PT1277581@obra.com",pin:"7581",cedula:"PT-1277581",telefono:"",banco:"",cuenta:""},
-  {id:"i35",nombre:"Pedro Felix Moreno Cortes",rol:ROLES.INSTALADOR,email:"98457089@obra.com",pin:"7089",cedula:"98457089",telefono:"",banco:"",cuenta:""},
-  {id:"i36",nombre:"Robinson Alberto Orozco Muñoz",rol:ROLES.INSTALADOR,email:"71386134@obra.com",pin:"6134",cedula:"71386134",telefono:"",banco:"",cuenta:""},
-  {id:"i37",nombre:"Yefferson Sanchez Henao",rol:ROLES.INSTALADOR,email:"1214720944@obra.com",pin:"0944",cedula:"1214720944",telefono:"",banco:"",cuenta:""},
-];
-
-const fmt=n=>new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0}).format(n||0);
-
-function getCorteFechas(){
-  const hoy=new Date(),y=hoy.getFullYear(),m=hoy.getMonth();
-  const cortes=[];
-  [-2,-1,0,1].forEach(d=>{
-    const mm=m+d,yr=mm<0?y-1:mm>11?y+1:y,mr=((mm%12)+12)%12;
-    const dias=new Date(yr,mr+1,0).getDate();
-    cortes.push({label:`1–13 ${new Date(yr,mr,13).toLocaleString("es-CO",{month:"long",year:"numeric"})}`,desde:new Date(yr,mr,1),hasta:new Date(yr,mr,13)});
-    cortes.push({label:`14–${Math.min(28,dias)} ${new Date(yr,mr,Math.min(28,dias)).toLocaleString("es-CO",{month:"long",year:"numeric"})}`,desde:new Date(yr,mr,14),hasta:new Date(yr,mr,Math.min(28,dias))});
+function getCorteFechas() {
+  const h = new Date(), y = h.getFullYear(), m = h.getMonth();
+  const r = [];
+  [-2, -1, 0, 1].forEach(d => {
+    const mm = m + d, yr = mm < 0 ? y - 1 : mm > 11 ? y + 1 : y, mr = ((mm % 12) + 12) % 12;
+    const dias = new Date(yr, mr + 1, 0).getDate();
+    r.push({ label: `1–13 ${new Date(yr, mr, 13).toLocaleString("es-CO", { month: "long", year: "numeric" })}`, desde: new Date(yr, mr, 1), hasta: new Date(yr, mr, 13) });
+    r.push({ label: `14–${Math.min(28, dias)} ${new Date(yr, mr, Math.min(28, dias)).toLocaleString("es-CO", { month: "long", year: "numeric" })}`, desde: new Date(yr, mr, 14), hasta: new Date(yr, mr, Math.min(28, dias)) });
   });
-  return cortes.sort((a,b)=>b.desde-a.desde).slice(0,10);
+  return r.sort((a, b) => b.desde - a.desde).slice(0, 10);
 }
-function fechaDentroCorte(fs,desde,hasta){if(!fs)return false;const[d,m,y]=fs.split("/").map(Number);const f=new Date(y,m-1,d);return f>=desde&&f<=hasta;}
 
-// ─── UI COMPONENTS ────────────────────────────────────────
-function Badge({color,children}){const m={green:"green",orange:"orange",amber:"amber",coral:"red",gray:"gray",purple:"gray",blue:"gray"};return<span style={badge(m[color]||"gray")}>{children}</span>;}
+function enCorte(fs, d, h) {
+  if (!fs) return false;
+  const [dd, mm, yy] = fs.split("/").map(Number);
+  const f = new Date(yy, mm - 1, dd);
+  return f >= d && f <= h;
+}
 
-function Modal({title,onClose,children,wide}){
-  useEffect(()=>{document.body.style.overflow="hidden";return()=>{document.body.style.overflow="";};},[]);
-  return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
-      <div style={{background:C.white,borderRadius:16,border:`1px solid ${C.gray200}`,maxWidth:wide?720:560,width:"94%",maxHeight:"88vh",overflowY:"auto",padding:"1.5rem",boxSizing:"border-box",boxShadow:"0 16px 48px rgba(0,0,0,0.18)"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-          <h3 style={{margin:0,fontSize:16,fontWeight:600,color:C.black}}>{title}</h3>
-          <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:24,color:C.gray400,lineHeight:1}}>×</button>
+// ── UI Primitives ─────────────────────────────────────────
+function Modal({ title, onClose, children, wide }) {
+  useEffect(() => { document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = ""; }; }, []);
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
+      <div style={{ background: C.wh, borderRadius: 16, border: `1px solid ${C.g2}`, maxWidth: wide ? 720 : 560, width: "94%", maxHeight: "88vh", overflowY: "auto", padding: "1.5rem", boxSizing: "border-box", boxShadow: "0 16px 48px rgba(0,0,0,0.18)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: C.bk }}>{title}</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 24, color: C.g4 }}>×</button>
         </div>
-        <div style={{color:C.black}}>{children}</div>
+        <div style={{ color: C.bk }}>{children}</div>
       </div>
     </div>
   );
 }
-// Orden correcto: Nombres primero, apellidos después
-function Input({label,...props}){return<div style={{marginBottom:14}}>{label&&<label style={{fontSize:12,color:C.gray500,display:"block",marginBottom:4,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.04em"}}>{label}</label>}<input style={inputSt}{...props}/></div>;}
-function Select({label,children,...props}){return<div style={{marginBottom:14}}>{label&&<label style={{fontSize:12,color:C.gray500,display:"block",marginBottom:4,fontWeight:500,textTransform:"uppercase",letterSpacing:"0.04em"}}>{label}</label>}<select style={selectSt}{...props}>{children}</select></div>;}
-function Btn({children,onClick,variant="default",disabled,style:st={}}){const v=btnV[variant]||btnV.default;return<button onClick={onClick} disabled={disabled} style={{...v,borderRadius:8,padding:"8px 16px",cursor:disabled?"not-allowed":"pointer",fontSize:14,fontWeight:500,opacity:disabled?0.45:1,fontFamily:"system-ui",...st}}>{children}</button>;}
-function Notif({notifs,setNotifs}){
-  if(!notifs.length)return null;
-  return<div style={{position:"fixed",top:16,right:16,zIndex:99999,display:"flex",flexDirection:"column",gap:8,maxWidth:320}}>
-    {notifs.map(n=><div key={n.id} style={{background:n.tipo==="success"?C.greenL:C.orangeL,border:`1px solid ${n.tipo==="success"?"#BBF7D0":C.orangeMid}`,borderRadius:10,padding:"12px 16px",display:"flex",gap:10,boxShadow:"0 2px 8px rgba(0,0,0,0.1)"}}>
-      <span style={{color:n.tipo==="success"?C.greenD:C.orangeD}}>{n.tipo==="success"?"✓":"🔔"}</span>
-      <div style={{flex:1,fontSize:13,color:n.tipo==="success"?C.greenD:C.orangeD}}>{n.msg}</div>
-      <button onClick={()=>setNotifs(ns=>ns.filter(x=>x.id!==n.id))} style={{background:"none",border:"none",cursor:"pointer",fontSize:16,color:C.gray400}}>×</button>
+
+function Inp({ label, ...p }) {
+  return <div style={{ marginBottom: 14 }}>{label && <label style={lbl()}>{label}</label>}<input style={iSt} {...p} /></div>;
+}
+function Sel({ label, children, ...p }) {
+  return <div style={{ marginBottom: 14 }}>{label && <label style={lbl()}>{label}</label>}<select style={{ ...iSt, background: C.wh }} {...p}>{children}</select></div>;
+}
+function Btn({ children, onClick, variant = "default", disabled, style: s = {} }) {
+  const v = bV[variant] || bV.default;
+  return <button onClick={onClick} disabled={disabled} style={{ ...v, borderRadius: 8, padding: "8px 16px", cursor: disabled ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 500, opacity: disabled ? 0.45 : 1, fontFamily: "system-ui", ...s }}>{children}</button>;
+}
+function Toast({ items, setItems }) {
+  if (!items.length) return null;
+  return <div style={{ position: "fixed", top: 16, right: 16, zIndex: 99999, display: "flex", flexDirection: "column", gap: 8, maxWidth: 320 }}>
+    {items.map(n => <div key={n.id} style={{ background: n.t === "ok" ? C.gnL : C.orL, border: `1px solid ${n.t === "ok" ? "#BBF7D0" : C.orM}`, borderRadius: 10, padding: "12px 16px", display: "flex", gap: 10, boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}>
+      <span style={{ color: n.t === "ok" ? C.gnD : C.orD }}>{n.t === "ok" ? "✓" : "🔔"}</span>
+      <div style={{ flex: 1, fontSize: 13, color: n.t === "ok" ? C.gnD : C.orD }}>{n.msg}</div>
+      <button onClick={() => setItems(x => x.filter(i => i.id !== n.id))} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: C.g4 }}>×</button>
     </div>)}
   </div>;
 }
 
-// ─── APP ──────────────────────────────────────────────────
-export default function App(){
-  const[user,setUser]=useState(()=>{try{const s=localStorage.getItem("gob_session");return s?JSON.parse(s):null;}catch{return null;}});
-  const[obras,setObras]=useState([]);
-  const[elementos,setElementos]=useState([]);
-  const[usuarios,setUsuarios]=useState([]);
-  const[liquidaciones,setLiquidaciones]=useState([]);
-  const[loading,setLoading]=useState(true);
-  const[view,setView]=useState("obras");
-  const[selectedObra,setSelectedObra]=useState(null);
-  const[selectedPiso,setSelectedPiso]=useState(null);
-  const[selectedApto,setSelectedApto]=useState(null);
-  const[modals,setModals]=useState({});
-  const[loginData,setLoginData]=useState({email:"",pin:""});
-  const[loginError,setLoginError]=useState("");
-  const[notifs,setNotifs]=useState([]);
+// ── Datos por defecto ─────────────────────────────────────
+const ELEMENTOS_DEF = [
+  { id: "e1", nombre: "Puerta principal", unidad: "und", precio: 55000 },
+  { id: "e2", nombre: "Puerta habitación", unidad: "und", precio: 55000 },
+  { id: "e3", nombre: "Chapa puerta principal", unidad: "und", precio: 10000 },
+  { id: "e4", nombre: "Moldura puerta principal", unidad: "und", precio: 10000 },
+  { id: "e19", nombre: "Chapa WC principal", unidad: "und", precio: 10000 },
+  { id: "e20", nombre: "Moldura WC principal", unidad: "und", precio: 10000 },
+  { id: "e21", nombre: "Chapa WC social", unidad: "und", precio: 10000 },
+  { id: "e22", nombre: "Moldura WC social", unidad: "und", precio: 10000 },
+  { id: "e23", nombre: "Chapa alcoba 2", unidad: "und", precio: 10000 },
+  { id: "e24", nombre: "Moldura alcoba 2", unidad: "und", precio: 10000 },
+  { id: "e25", nombre: "Chapa alcoba 3", unidad: "und", precio: 10000 },
+  { id: "e26", nombre: "Moldura alcoba 3", unidad: "und", precio: 10000 },
+  { id: "e5", nombre: "Closet alcoba principal", unidad: "und", precio: 150000 },
+  { id: "e6", nombre: "Closet alcoba 2", unidad: "und", precio: 120000 },
+  { id: "e7", nombre: "Closet alcoba 3", unidad: "und", precio: 120000 },
+  { id: "e8", nombre: "Mueble WC principal", unidad: "und", precio: 25000 },
+  { id: "e9", nombre: "Mueble WC social", unidad: "und", precio: 25000 },
+  { id: "e10", nombre: "Vestier enfrentado", unidad: "und", precio: 110000 },
+  { id: "e11", nombre: "Vestier en L", unidad: "und", precio: 110000 },
+  { id: "e12", nombre: "Vestier en U", unidad: "und", precio: 150000 },
+  { id: "e13", nombre: "Mueble alto cocina", unidad: "und", precio: 0 },
+  { id: "e14", nombre: "Mueble bajo cocina", unidad: "und", precio: 0 },
+  { id: "e15", nombre: "Mueble isla", unidad: "und", precio: 0 },
+  { id: "e16", nombre: "Mueble lavadero", unidad: "und", precio: 30000 },
+  { id: "e17", nombre: "Zócalo", unidad: "ml", precio: 2500 },
+];
 
-  const openModal=k=>setModals(m=>({...m,[k]:true}));
-  const closeModal=k=>setModals(m=>({...m,[k]:false}));
-  const pushNotif=(msg,tipo="info")=>{const id=Date.now();setNotifs(ns=>[...ns,{id,msg,tipo}]);setTimeout(()=>setNotifs(ns=>ns.filter(x=>x.id!==id)),5000);};
+const USUARIOS_DEF = [
+  { id: "sa1", nombre: "César Betancur", rol: ROLES.SA, email: "cesar@obra.com", pin: "1111", cedula: "3113410458", telefono: "", banco: "", cuenta: "" },
+  { id: "sa2", nombre: "Sandra Marin", rol: ROLES.SA, email: "sandra@obra.com", pin: "2222", cedula: "3006903514", telefono: "", banco: "", cuenta: "" },
+  { id: "sa3", nombre: "Andres Londoño", rol: ROLES.SA, email: "andres@obra.com", pin: "3333", cedula: "3189180703", telefono: "", banco: "", cuenta: "" },
+  { id: "sa4", nombre: "Luz Toro", rol: ROLES.SA, email: "luz@obra.com", pin: "4444", cedula: "3046063039", telefono: "", banco: "", cuenta: "" },
+  { id: "ax1", nombre: "Lauren Zapata", rol: ROLES.AX, email: "lauren@obra.com", pin: "5555", cedula: "3180803364", telefono: "", banco: "", cuenta: "" },
+  { id: "i01", nombre: "Albeiro De Jesús Sanchez Alvarez", rol: ROLES.IN, email: "3366950@obra.com", pin: "6950", cedula: "3366950", telefono: "", banco: "", cuenta: "" },
+  { id: "i02", nombre: "Arnovis Enrique Romero Gaviria", rol: ROLES.IN, email: "10889524@obra.com", pin: "9524", cedula: "10889524", telefono: "", banco: "", cuenta: "" },
+  { id: "i03", nombre: "Alejandro Caballero Navas", rol: ROLES.IN, email: "1041894977@obra.com", pin: "4977", cedula: "1041894977", telefono: "", banco: "", cuenta: "" },
+  { id: "i04", nombre: "Andrés Polo Gomez", rol: ROLES.IN, email: "72238095@obra.com", pin: "8095", cedula: "72238095", telefono: "", banco: "", cuenta: "" },
+  { id: "i05", nombre: "Angie Guisela Gonzales Toro", rol: ROLES.IN, email: "32209550@obra.com", pin: "9550", cedula: "32209550", telefono: "", banco: "", cuenta: "" },
+  { id: "i06", nombre: "Carlos Albeiro Bedoya", rol: ROLES.IN, email: "98537380@obra.com", pin: "7380", cedula: "98537380", telefono: "", banco: "", cuenta: "" },
+  { id: "i07", nombre: "Claudia Marcela Uribe Lopez", rol: ROLES.IN, email: "1112765279@obra.com", pin: "5279", cedula: "1112765279", telefono: "", banco: "", cuenta: "" },
+  { id: "i08", nombre: "Claudia Patricia Higuita Muñoz", rol: ROLES.IN, email: "43164453@obra.com", pin: "4453", cedula: "43164453", telefono: "", banco: "", cuenta: "" },
+  { id: "i09", nombre: "Cristian Alexis Marin Gonzales", rol: ROLES.IN, email: "1015278020@obra.com", pin: "8020", cedula: "1015278020", telefono: "", banco: "", cuenta: "" },
+  { id: "i10", nombre: "Elfa Nataly Rueda Vargas", rol: ROLES.IN, email: "43991850@obra.com", pin: "1850", cedula: "43991850", telefono: "", banco: "", cuenta: "" },
+  { id: "i11", nombre: "Erika Baza Camacho", rol: ROLES.IN, email: "1096195897@obra.com", pin: "5897", cedula: "1096195897", telefono: "", banco: "", cuenta: "" },
+  { id: "i12", nombre: "Emiliano De Jesus Callejas Rios", rol: ROLES.IN, email: "70541496@obra.com", pin: "1496", cedula: "70541496", telefono: "", banco: "", cuenta: "" },
+  { id: "i13", nombre: "Greis Pola Jaraba Correa", rol: ROLES.IN, email: "1045691681@obra.com", pin: "1681", cedula: "1045691681", telefono: "", banco: "", cuenta: "" },
+  { id: "i14", nombre: "Harrison Martinez Lopez", rol: ROLES.IN, email: "1053796113@obra.com", pin: "6113", cedula: "1053796113", telefono: "", banco: "", cuenta: "" },
+  { id: "i15", nombre: "Jose Alfredo Taborda Marin", rol: ROLES.IN, email: "1033337255@obra.com", pin: "7255", cedula: "1033337255", telefono: "", banco: "", cuenta: "" },
+  { id: "i16", nombre: "José Gabriel Mesa Martínez", rol: ROLES.IN, email: "98642537@obra.com", pin: "2537", cedula: "98642537", telefono: "", banco: "", cuenta: "" },
+  { id: "i17", nombre: "Jose Luis Basanta Coa", rol: ROLES.IN, email: "1258625@obra.com", pin: "8625", cedula: "1258625", telefono: "", banco: "", cuenta: "" },
+  { id: "i18", nombre: "Jorge Leonardo Viloria Romero", rol: ROLES.IN, email: "1104413901@obra.com", pin: "3901", cedula: "1104413901", telefono: "", banco: "", cuenta: "" },
+  { id: "i19", nombre: "Juan Carlos Cardenas Vega", rol: ROLES.IN, email: "1098813472@obra.com", pin: "3472", cedula: "1098813472", telefono: "", banco: "", cuenta: "" },
+  { id: "i20", nombre: "Juan Martin Osorio Saldarriaga", rol: ROLES.IN, email: "71646955@obra.com", pin: "6955", cedula: "71646955", telefono: "", banco: "", cuenta: "" },
+  { id: "i21", nombre: "Kateryn Carmona", rol: ROLES.IN, email: "1214743439@obra.com", pin: "3439", cedula: "1214743439", telefono: "", banco: "", cuenta: "" },
+  { id: "i22", nombre: "Leder De Jesus Herrera Arrieta", rol: ROLES.IN, email: "1104410561@obra.com", pin: "0561", cedula: "1104410561", telefono: "", banco: "", cuenta: "" },
+  { id: "i23", nombre: "Leider Arturo Herrera Arrieta", rol: ROLES.IN, email: "1005677345@obra.com", pin: "7345", cedula: "1005677345", telefono: "", banco: "", cuenta: "" },
+  { id: "i24", nombre: "Leon Jaime Taborda Marin", rol: ROLES.IN, email: "1033339839@obra.com", pin: "9839", cedula: "1033339839", telefono: "", banco: "", cuenta: "" },
+  { id: "i25", nombre: "Luis Alberto Goez Goez", rol: ROLES.IN, email: "1152453118@obra.com", pin: "3118", cedula: "1152453118", telefono: "", banco: "", cuenta: "" },
+  { id: "i26", nombre: "Luis Felipe Meza Martinez", rol: ROLES.IN, email: "1148205348@obra.com", pin: "5348", cedula: "1148205348", telefono: "", banco: "", cuenta: "" },
+  { id: "i27", nombre: "Luis Fernando Aguirre Giraldo", rol: ROLES.IN, email: "71698074@obra.com", pin: "8074", cedula: "71698074", telefono: "", banco: "", cuenta: "" },
+  { id: "i28", nombre: "Maria Luz Dary Rincon", rol: ROLES.IN, email: "66916338@obra.com", pin: "6338", cedula: "66916338", telefono: "", banco: "", cuenta: "" },
+  { id: "i29", nombre: "Mario Lemus Arboleda", rol: ROLES.IN, email: "1001846248@obra.com", pin: "6248", cedula: "1001846248", telefono: "", banco: "", cuenta: "" },
+  { id: "i30", nombre: "Nelson Dario Correa Acosta", rol: ROLES.IN, email: "98527601@obra.com", pin: "7601", cedula: "98527601", telefono: "", banco: "", cuenta: "" },
+  { id: "i31", nombre: "Omar De Jesus Ortiz Montoya", rol: ROLES.IN, email: "98528420@obra.com", pin: "8420", cedula: "98528420", telefono: "", banco: "", cuenta: "" },
+  { id: "i32", nombre: "Oscar Mauricio Lopez", rol: ROLES.IN, email: "98538605@obra.com", pin: "8605", cedula: "98538605", telefono: "", banco: "", cuenta: "" },
+  { id: "i33", nombre: "Oved Dario Pulgarin", rol: ROLES.IN, email: "98693472@obra.com", pin: "3472", cedula: "98693472", telefono: "", banco: "", cuenta: "" },
+  { id: "i34", nombre: "Steve Brahayan Alvarez Reyes", rol: ROLES.IN, email: "PT1277581@obra.com", pin: "7581", cedula: "PT-1277581", telefono: "", banco: "", cuenta: "" },
+  { id: "i35", nombre: "Pedro Felix Moreno Cortes", rol: ROLES.IN, email: "98457089@obra.com", pin: "7089", cedula: "98457089", telefono: "", banco: "", cuenta: "" },
+  { id: "i36", nombre: "Robinson Alberto Orozco Muñoz", rol: ROLES.IN, email: "71386134@obra.com", pin: "6134", cedula: "71386134", telefono: "", banco: "", cuenta: "" },
+  { id: "i37", nombre: "Yefferson Sanchez Henao", rol: ROLES.IN, email: "1214720944@obra.com", pin: "0944", cedula: "1214720944", telefono: "", banco: "", cuenta: "" },
+];
 
-  async function loadAll(){
+// ── APP ───────────────────────────────────────────────────
+export default function App() {
+  const [user, setUser] = useState(() => { try { const s = localStorage.getItem("gs"); return s ? JSON.parse(s) : null; } catch { return null; } });
+  const [obras, setObras] = useState([]);
+  const [elems, setElems] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [liqs, setLiqs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [view, setView] = useState("obras");
+  const [selObra, setSelObra] = useState(null);
+  const [selPiso, setSelPiso] = useState(null);
+  const [selApto, setSelApto] = useState(null);
+  const [modals, setModals] = useState({});
+  const [login, setLogin] = useState({ email: "", pin: "" });
+  const [loginErr, setLoginErr] = useState("");
+  const [toasts, setToasts] = useState([]);
+
+  const openM = k => setModals(m => ({ ...m, [k]: true }));
+  const closeM = k => setModals(m => ({ ...m, [k]: false }));
+  const toast = (msg, t = "info") => { const id = Date.now(); setToasts(x => [...x, { id, msg, t }]); setTimeout(() => setToasts(x => x.filter(i => i.id !== id)), 5000); };
+
+  const mapObra = ob => ({
+    ...ob,
+    tipologias: ob.tipologias || [],
+    pisos: ob.pisos || [],
+    instaladoresAutorizados: ob.instaladores_autorizados || [],
+    aptosHabilitados: ob.aptos_habilitados || {},
+    solicitudes: ob.solicitudes || [],
+    preciosOverride: ob.precios_override || {},
+    coordinadorId: ob.coordinador_id || ""
+  });
+
+  async function loadAll() {
     setLoading(true);
-    try{
-      const[u,e,o,l]=await Promise.all([dbGet("usuarios"),dbGet("elementos"),dbGet("obras"),dbGet("liquidaciones")]);
-      if(!u.length){await Promise.all(USUARIOS_DEFAULT.map(x=>dbUpsert("usuarios",x)));setUsuarios(USUARIOS_DEFAULT);}else setUsuarios(u);
-      if(!e.length){await Promise.all(ELEMENTOS_DEFAULT.map(x=>dbUpsert("elementos",x)));setElementos(ELEMENTOS_DEFAULT);}else setElementos(e);
-      setObras(o.map(ob=>({...ob,tipologias:ob.tipologias||[],pisos:ob.pisos||[],instaladoresAutorizados:ob.instaladores_autorizados||[],solicitudes:ob.solicitudes||[],preciosOverride:ob.precios_override||{},coordinadorId:ob.coordinador_id||""})));
-      setLiquidaciones(l);
-    }catch{pushNotif("Error conectando","error");}
+    try {
+      const [u, e, o, l] = await Promise.all([dbGet("usuarios"), dbGet("elementos"), dbGet("obras"), dbGet("liquidaciones")]);
+      if (!u.length) { await Promise.all(USUARIOS_DEF.map(x => dbUpsert("usuarios", x))); setUsers(USUARIOS_DEF); } else setUsers(u);
+      if (!e.length) { await Promise.all(ELEMENTOS_DEF.map(x => dbUpsert("elementos", x))); setElems(ELEMENTOS_DEF); } else setElems(e);
+      setObras(o.map(mapObra));
+      setLiqs(l);
+    } catch (e) { toast("Error conectando", "error"); }
     setLoading(false);
   }
-  useEffect(()=>{
-    loadAll();
-    const channel = supaRealtime();
-    return ()=>{ channel.unsubscribe(); };
-  },[]);
+  useEffect(() => { loadAll(); }, []);
 
-  function supaRealtime(){
-    const{createClient}=window.supabase||{};
-    try{
-      const client=window._supaClient||(window._supaClient=window.supabase.createClient(SUPA_URL,SUPA_KEY));
-      const channel=client.channel("db-changes")
-        .on("postgres_changes",{event:"*",schema:"public",table:"obras"},()=>dbGet("obras").then(o=>setObras(o.map(ob=>({...ob,tipologias:ob.tipologias||[],pisos:ob.pisos||[],instaladoresAutorizados:ob.instaladores_autorizados||[],solicitudes:ob.solicitudes||[],preciosOverride:ob.precios_override||{},coordinadorId:ob.coordinador_id||""})))))
-        .on("postgres_changes",{event:"*",schema:"public",table:"usuarios"},()=>dbGet("usuarios").then(u=>setUsuarios(u)))
-        .on("postgres_changes",{event:"*",schema:"public",table:"elementos"},()=>dbGet("elementos").then(e=>setElementos(e)))
-        .on("postgres_changes",{event:"*",schema:"public",table:"liquidaciones"},()=>dbGet("liquidaciones").then(l=>setLiquidaciones(l)))
-        .subscribe();
-      return channel;
-    }catch(e){console.warn("Realtime no disponible",e);return{unsubscribe:()=>{}};}
+  const saveObra = async o => dbUpsert("obras", {
+    id: o.id, nombre: o.nombre, direccion: o.direccion, estado: o.estado,
+    tipologias: o.tipologias || [], pisos: o.pisos || [],
+    instaladores_autorizados: o.instaladoresAutorizados || [],
+    aptos_habilitados: o.aptosHabilitados || {},
+    solicitudes: o.solicitudes || [],
+    precios_override: o.preciosOverride || {},
+    coordinador_id: o.coordinadorId || ""
+  });
+
+  const updateObra = (id, fn) => setObras(obs => {
+    const updated = obs.map(o => o.id === id ? fn(o) : o);
+    const obra = updated.find(o => o.id === id);
+    if (obra) saveObra(obra);
+    return updated;
+  });
+
+  function doLogin() {
+    const u = users.find(x => x.email === login.email && x.pin === login.pin);
+    if (u) { setUser(u); localStorage.setItem("gs", JSON.stringify(u)); setLoginErr(""); }
+    else setLoginErr("Correo o PIN incorrecto");
   }
+  function doLogout() { setUser(null); localStorage.removeItem("gs"); }
 
-  async function saveObra(o){await dbUpsert("obras",{id:o.id,nombre:o.nombre,direccion:o.direccion,estado:o.estado,tipologias:o.tipologias||[],pisos:o.pisos||[],instaladores_autorizados:o.instaladoresAutorizados||[],solicitudes:o.solicitudes||[],precios_override:o.preciosOverride||{},coordinador_id:o.coordinadorId||""});}
-  async function updateObra(obraId,updater){setObras(obs=>{const updated=obs.map(o=>o.id===obraId?updater(o):o);const obra=updated.find(o=>o.id===obraId);if(obra)saveObra(obra);return updated;});}
+  const getPrecio = (eid, oid, corteLabel) => {
+    const o = obras.find(x => x.id === oid);
+    const k = `${corteLabel}__${eid}`;
+    if (o?.preciosOverride?.[k] !== undefined) return o.preciosOverride[k];
+    return elems.find(e => e.id === eid)?.precio || 0;
+  };
 
-  function login(){const u=usuarios.find(x=>x.email===loginData.email&&x.pin===loginData.pin);if(u){setUser(u);localStorage.setItem("gob_session",JSON.stringify(u));setLoginError("");}else setLoginError("Correo o PIN incorrecto");}
-  function logout(){setUser(null);localStorage.removeItem("gob_session");}
+  const avanceObra = o => { let t = 0, c = 0; o.pisos?.forEach(p => p.aptos?.forEach(a => a.elementos?.forEach(e => { t++; if (e.completado) c++; }))); return t === 0 ? 0 : Math.round(c / t * 100); };
+  const avanceApto = a => { const t = a.elementos?.length || 0, c = a.elementos?.filter(e => e.completado).length || 0; return t === 0 ? 0 : Math.round(c / t * 100); };
 
-  function getPrecio(elementoId,obraId,corteLabel){const o=obras.find(x=>x.id===obraId);const k=`${corteLabel}__${elementoId}`;if(o?.preciosOverride?.[k]!==undefined)return o.preciosOverride[k];return elementos.find(e=>e.id===elementoId)?.precio||0;}
+  if (loading) return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16, fontFamily: "system-ui", background: C.bk }}>
+      <div style={{ width: 60, height: 60, background: C.or, borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28 }}>🏗️</div>
+      <p style={{ color: C.wh, fontSize: 16 }}>Cargando...</p>
+    </div>
+  );
+  if (!user) return <LoginScreen login={login} setLogin={setLogin} doLogin={doLogin} err={loginErr} />;
 
-  function calcAvanceObra(obra){let t=0,c=0;obra.pisos?.forEach(p=>p.aptos?.forEach(a=>a.elementos?.forEach(el=>{t++;if(el.completado)c++;})));return t===0?0:Math.round(c/t*100);}
-  function calcAvanceApto(apto){const t=apto.elementos?.length||0,c=apto.elementos?.filter(e=>e.completado).length||0;return t===0?0:Math.round(c/t*100);}
+  const sh = { obras, setObras, updateObra, saveObra, elems, setElems, users, setUsers, liqs, setLiqs, openM, closeM, modals, toast, user, getPrecio, avanceApto };
 
-  if(loading)return<div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16,fontFamily:"system-ui",background:C.black}}><div style={{width:60,height:60,background:C.orange,borderRadius:16,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28}}>🏗️</div><p style={{color:C.white,fontSize:16}}>Cargando...</p></div>;
-  if(!user)return<LoginScreen loginData={loginData} setLoginData={setLoginData} login={login} error={loginError}/>;
-
-  const shared={obras,setObras,updateObra,saveObra,elementos,setElementos,usuarios,setUsuarios,openModal,closeModal,modals,pushNotif,user,liquidaciones,setLiquidaciones,loadAll,getPrecio};
-
-  return(
-    <div style={{fontFamily:"system-ui,sans-serif",maxWidth:920,margin:"0 auto",padding:"1rem",background:C.gray50,minHeight:"100vh"}}>
-      <Notif notifs={notifs} setNotifs={setNotifs}/>
-      <Header user={user} logout={logout} view={view} setView={setView} selectedObra={selectedObra} setSelectedObra={setSelectedObra} setSelectedPiso={setSelectedPiso} setSelectedApto={setSelectedApto} usuarios={usuarios}/>
-      {view==="obras"&&<ObrasView{...shared}calcAvanceObra={calcAvanceObra}setSelectedObra={o=>{setSelectedObra(o);setView("obra_detalle");}}/>}
-      {view==="obra_detalle"&&selectedObra&&<ObraDetalle{...shared}obra={obras.find(o=>o.id===selectedObra.id)||selectedObra}calcAvanceApto={calcAvanceApto}setSelectedApto={(a,p)=>{setSelectedApto(a);setSelectedPiso(p);setView("apto_detalle");}}/>}
-      {view==="apto_detalle"&&selectedApto&&selectedObra&&<AptoDetalle{...shared}apto={selectedApto}piso={selectedPiso}obra={obras.find(o=>o.id===selectedObra.id)}calcAvanceApto={calcAvanceApto}/>}
-      {view==="elementos"&&user.rol===ROLES.SUPERADMIN&&<ElementosView{...shared}/>}
-      {view==="liquidacion"&&<LiquidacionView{...shared}calcAvanceObra={calcAvanceObra}/>}
-      {view==="usuarios"&&user.rol===ROLES.SUPERADMIN&&<UsuariosView{...shared}/>}
+  return (
+    <div style={{ fontFamily: "system-ui,sans-serif", maxWidth: 920, margin: "0 auto", padding: "1rem", background: C.g0, minHeight: "100vh" }}>
+      <Toast items={toasts} setItems={setToasts} />
+      <Header user={user} doLogout={doLogout} view={view} setView={setView} selObra={selObra} setSelObra={setSelObra} setSelPiso={setSelPiso} setSelApto={setSelApto} />
+      {view === "obras" && <Obras {...sh} avanceObra={avanceObra} goObra={o => { setSelObra(o); setView("obra"); }} />}
+      {view === "obra" && selObra && <Obra {...sh} obra={obras.find(o => o.id === selObra.id) || selObra} goApto={(a, p) => { setSelApto(a); setSelPiso(p); setView("apto"); }} />}
+      {view === "apto" && selApto && selObra && <Apto {...sh} apto={selApto} piso={selPiso} obra={obras.find(o => o.id === selObra.id)} />}
+      {view === "elems" && user.rol === ROLES.SA && <Elementos {...sh} />}
+      {view === "liqs" && <Liquidacion {...sh} avanceObra={avanceObra} />}
+      {view === "users" && user.rol === ROLES.SA && <Usuarios {...sh} />}
     </div>
   );
 }
 
-function LoginScreen({loginData,setLoginData,login,error}){
-  return(
-    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:`linear-gradient(135deg,${C.black} 0%,${C.gray800} 100%)`,fontFamily:"system-ui"}}>
-      <div style={{background:C.white,borderRadius:20,padding:"2.5rem",width:360,boxShadow:"0 24px 64px rgba(0,0,0,0.4)"}}>
-        <div style={{textAlign:"center",marginBottom:32}}>
-          <div style={{width:64,height:64,background:C.orange,borderRadius:18,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",fontSize:30}}>🏗️</div>
-          <h2 style={{margin:0,fontSize:22,fontWeight:700,color:C.black}}>Gestión de Obras</h2>
-          <p style={{margin:"8px 0 0",fontSize:14,color:C.gray500}}>Ingresa con tu correo y PIN</p>
+function LoginScreen({ login, setLogin, doLogin, err }) {
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${C.bk} 0%,${C.g8} 100%)`, fontFamily: "system-ui" }}>
+      <div style={{ background: C.wh, borderRadius: 20, padding: "2.5rem", width: 360, boxShadow: "0 24px 64px rgba(0,0,0,0.4)" }}>
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <div style={{ width: 64, height: 64, background: C.or, borderRadius: 18, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", fontSize: 30 }}>🏗️</div>
+          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: C.bk }}>Gestión de Obras</h2>
+          <p style={{ margin: "8px 0 0", fontSize: 14, color: C.g5 }}>Ingresa con tu correo y PIN</p>
         </div>
-        <Input label="Correo" type="email" placeholder="cedula@obra.com" value={loginData.email} onChange={e=>setLoginData(d=>({...d,email:e.target.value}))}/>
-        <Input label="PIN" type="password" placeholder="••••" value={loginData.pin} onChange={e=>setLoginData(d=>({...d,pin:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&login()}/>
-        {error&&<p style={{color:C.red,fontSize:13,margin:"-8px 0 12px"}}>{error}</p>}
-        <button onClick={login} style={{...btnV.primary,width:"100%",padding:"12px",fontSize:15,borderRadius:10,fontWeight:600,fontFamily:"system-ui",cursor:"pointer"}}>Ingresar</button>
+        <Inp label="Correo" type="email" placeholder="cedula@obra.com" value={login.email} onChange={e => setLogin(d => ({ ...d, email: e.target.value }))} />
+        <Inp label="PIN" type="password" placeholder="••••" value={login.pin} onChange={e => setLogin(d => ({ ...d, pin: e.target.value }))} onKeyDown={e => e.key === "Enter" && doLogin()} />
+        {err && <p style={{ color: C.rd, fontSize: 13, margin: "-8px 0 12px" }}>{err}</p>}
+        <button onClick={doLogin} style={{ ...bV.primary, width: "100%", padding: "12px", fontSize: 15, borderRadius: 10, fontWeight: 600, fontFamily: "system-ui", cursor: "pointer" }}>Ingresar</button>
       </div>
     </div>
   );
 }
 
-function Header({user,logout,view,setView,selectedObra,setSelectedObra,setSelectedPiso,setSelectedApto}){
-  const rolLabel={superadmin:"Superadmin",supervisor:"Supervisor",auxiliar:"Auxiliar",instalador:"Instalador"};
-  const nav=[{key:"obras",label:"Obras",roles:[ROLES.SUPERADMIN,ROLES.SUPERVISOR,ROLES.AUXILIAR,ROLES.INSTALADOR]},{key:"elementos",label:"Elementos",roles:[ROLES.SUPERADMIN]},{key:"liquidacion",label:"Liquidación",roles:[ROLES.SUPERADMIN,ROLES.SUPERVISOR,ROLES.AUXILIAR,ROLES.INSTALADOR]},{key:"usuarios",label:"Usuarios",roles:[ROLES.SUPERADMIN]}];
-  return(
-    <div style={{marginBottom:20}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,padding:"12px 18px",background:C.black,borderRadius:12,boxShadow:"0 2px 8px rgba(0,0,0,0.15)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:12}}>
-          <div style={{width:38,height:38,background:C.orange,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🏗️</div>
+function Header({ user, doLogout, view, setView, selObra, setSelObra, setSelPiso, setSelApto }) {
+  const rL = { superadmin: "Superadmin", supervisor: "Supervisor", auxiliar: "Auxiliar", instalador: "Instalador" };
+  const nav = [
+    { k: "obras", l: "Obras", r: [ROLES.SA, ROLES.SV, ROLES.AX, ROLES.IN] },
+    { k: "elems", l: "Elementos", r: [ROLES.SA] },
+    { k: "liqs", l: "Liquidación", r: [ROLES.SA, ROLES.SV, ROLES.AX, ROLES.IN] },
+    { k: "users", l: "Usuarios", r: [ROLES.SA] }
+  ];
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, padding: "12px 18px", background: C.bk, borderRadius: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 38, height: 38, background: C.or, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🏗️</div>
           <div>
-            <div style={{fontWeight:600,fontSize:15,color:C.white}}>{user.nombre}</div>
-            <span style={{...badge("orange"),fontSize:11,padding:"2px 8px"}}>{rolLabel[user.rol]}</span>
+            <div style={{ fontWeight: 600, fontSize: 15, color: C.wh }}>{user.nombre}</div>
+            <span style={{ ...bdg("orange"), fontSize: 11, padding: "2px 8px" }}>{rL[user.rol]}</span>
           </div>
         </div>
-        <button onClick={logout} style={{background:"transparent",border:`1px solid ${C.gray700}`,color:C.gray300,borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:13,fontFamily:"system-ui"}}>Salir</button>
+        <button onClick={doLogout} style={{ background: "transparent", border: `1px solid ${C.g8}`, color: C.g3, borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 13, fontFamily: "system-ui" }}>Salir</button>
       </div>
-      {(view==="obra_detalle"||view==="apto_detalle")&&(
-        <div style={{fontSize:13,color:C.gray500,marginBottom:8,display:"flex",gap:6,alignItems:"center",padding:"0 4px"}}>
-          <span style={{cursor:"pointer",color:C.orange,fontWeight:600}} onClick={()=>{setView("obras");setSelectedObra(null);setSelectedPiso(null);setSelectedApto(null);}}>Obras</span>
-          {selectedObra&&<><span style={{color:C.gray300}}>›</span><span style={{cursor:"pointer",color:view==="apto_detalle"?C.orange:C.black,fontWeight:500}} onClick={()=>{setView("obra_detalle");setSelectedPiso(null);setSelectedApto(null);}}>{selectedObra.nombre}</span></>}
-          {view==="apto_detalle"&&<><span style={{color:C.gray300}}>›</span><span style={{color:C.black}}>Apartamento</span></>}
+      {(view === "obra" || view === "apto") && (
+        <div style={{ fontSize: 13, color: C.g5, marginBottom: 8, display: "flex", gap: 6, alignItems: "center", padding: "0 4px" }}>
+          <span style={{ cursor: "pointer", color: C.or, fontWeight: 600 }} onClick={() => { setView("obras"); setSelObra(null); setSelPiso(null); setSelApto(null); }}>Obras</span>
+          {selObra && <><span style={{ color: C.g3 }}>›</span><span style={{ cursor: "pointer", color: view === "apto" ? C.or : C.bk, fontWeight: 500 }} onClick={() => { setView("obra"); setSelPiso(null); setSelApto(null); }}>{selObra.nombre}</span></>}
+          {view === "apto" && <><span style={{ color: C.g3 }}>›</span><span style={{ color: C.bk }}>Apartamento</span></>}
         </div>
       )}
-      <div style={{display:"flex",gap:4,borderBottom:`2px solid ${C.gray200}`,paddingBottom:0,background:C.white,borderRadius:"8px 8px 0 0",padding:"4px 4px 0"}}>
-        {nav.filter(n=>n.roles.includes(user.rol)).map(n=>(
-          <button key={n.key} onClick={()=>setView(n.key)} style={{background:"transparent",color:view===n.key?C.orange:C.gray500,border:"none",borderBottom:view===n.key?`2.5px solid ${C.orange}`:"2.5px solid transparent",borderRadius:0,padding:"10px 16px",cursor:"pointer",fontSize:14,fontWeight:view===n.key?600:400,marginBottom:-2,transition:"color 0.15s",fontFamily:"system-ui"}}>{n.label}</button>
+      <div style={{ display: "flex", gap: 4, borderBottom: `2px solid ${C.g2}`, background: C.wh, borderRadius: "8px 8px 0 0", padding: "4px 4px 0" }}>
+        {nav.filter(n => n.r.includes(user.rol)).map(n => (
+          <button key={n.k} onClick={() => setView(n.k)} style={{ background: "transparent", color: view === n.k ? C.or : C.g5, border: "none", borderBottom: view === n.k ? `2.5px solid ${C.or}` : "2.5px solid transparent", borderRadius: 0, padding: "10px 16px", cursor: "pointer", fontSize: 14, fontWeight: view === n.k ? 600 : 400, marginBottom: -2, fontFamily: "system-ui" }}>{n.l}</button>
         ))}
       </div>
     </div>
   );
 }
 
-function ObrasView({obras,setObras,updateObra,saveObra,user,usuarios,calcAvanceObra,setSelectedObra,openModal,closeModal,modals,pushNotif}){
-  const[form,setForm]=useState({nombre:"",direccion:"",coordinadorId:"",pisos:1,aptosPorPiso:1});
-  const[accesoModal,setAccesoModal]=useState(null);
-  const[confirmDelete,setConfirmDelete]=useState(null);
-  const[editObra,setEditObra]=useState(null);
-  const[editObraForm,setEditObraForm]=useState({nombre:"",direccion:"",coordinadorId:""});
-  const superadmins=usuarios.filter(u=>u.rol===ROLES.SUPERADMIN);
-  const instaladores=usuarios.filter(u=>u.rol===ROLES.INSTALADOR);
+// ── OBRAS ─────────────────────────────────────────────────
+function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra, goObra, openM, closeM, modals, toast }) {
+  const [form, setForm] = useState({ nombre: "", direccion: "", coordinadorId: "", pisos: 1, aptos: 1 });
+  const [accM, setAccM] = useState(null);
+  const [delM, setDelM] = useState(null);
+  const [editM, setEditM] = useState(null);
+  const [editF, setEditF] = useState({});
+  const SAs = users.filter(u => u.rol === ROLES.SA);
 
-  async function crearObra(){
-    if(!form.nombre)return;
-    const pisos=Array.from({length:Number(form.pisos)},(_,pi)=>({id:`p${Date.now()}${pi}`,numero:pi+1,aptos:Array.from({length:Number(form.aptosPorPiso)},(_,ai)=>({id:`a${Date.now()}${pi}${ai}`,numero:ai+1,nombre:`${pi+1}${String(ai+1).padStart(2,"0")}`,tipologia:"",elementos:[]}))}));
-    const nueva={id:`obra${Date.now()}`,nombre:form.nombre,direccion:form.direccion,coordinadorId:form.coordinadorId,pisos,estado:"activa",tipologias:[],instaladoresAutorizados:[],solicitudes:[],preciosOverride:{}};
-    await saveObra(nueva);setObras(obs=>[...obs,nueva]);setForm({nombre:"",direccion:"",coordinadorId:"",pisos:1,aptosPorPiso:1});closeModal("nuevaObra");
-  }
-  async function editarObra(){
-    if(!editObraForm.nombre)return;
-    await updateObra(editObra,o=>({...o,nombre:editObraForm.nombre,direccion:editObraForm.direccion,coordinadorId:editObraForm.coordinadorId}));
-    pushNotif("Obra actualizada","success");setEditObra(null);
-  }
-  async function eliminarObra(obraId){
-    await dbDelete("obras",obraId);setObras(obs=>obs.filter(o=>o.id!==obraId));setConfirmDelete(null);pushNotif("Obra eliminada","success");
-  }
-  async function solicitarAcceso(obraId){
-    await updateObra(obraId,o=>{if((o.solicitudes||[]).find(s=>s.userId===user.id))return o;return{...o,solicitudes:[...(o.solicitudes||[]),{userId:user.id,fecha:new Date().toLocaleDateString("es-CO"),estado:"pendiente"}]};});
-    pushNotif("Solicitud enviada","success");
+  async function crear() {
+    if (!form.nombre) return;
+    const pisos = Array.from({ length: Number(form.pisos) }, (_, pi) => ({
+      id: `p${Date.now()}${pi}`, numero: pi + 1,
+      aptos: Array.from({ length: Number(form.aptos) }, (_, ai) => ({
+        id: `a${Date.now()}${pi}${ai}`, numero: ai + 1,
+        nombre: `${pi + 1}${String(ai + 1).padStart(2, "0")}`,
+        tipologia: "", elementos: [], instaladorAsignado: null
+      }))
+    }));
+    const n = { id: `o${Date.now()}`, nombre: form.nombre, direccion: form.direccion, coordinadorId: form.coordinadorId, pisos, estado: "activa", tipologias: [], instaladoresAutorizados: [], aptosHabilitados: {}, solicitudes: [], preciosOverride: {} };
+    await saveObra(n); setObras(x => [...x, n]); setForm({ nombre: "", direccion: "", coordinadorId: "", pisos: 1, aptos: 1 }); closeM("nObra");
+    toast("Obra creada", "ok");
   }
 
-  const obrasVisibles=obras.filter(o=>user.rol!==ROLES.INSTALADOR||(o.instaladoresAutorizados||[]).includes(user.id));
-  const obrasSinAcceso=user.rol===ROLES.INSTALADOR?obras.filter(o=>!(o.instaladoresAutorizados||[]).includes(user.id)):[];
+  async function editar() {
+    if (!editF.nombre) return;
+    await updateObra(editM, o => ({ ...o, ...editF }));
+    toast("Obra actualizada", "ok"); setEditM(null);
+  }
 
-  return(
+  async function eliminar(id) {
+    await dbDel("obras", id); setObras(x => x.filter(o => o.id !== id)); setDelM(null); toast("Obra eliminada", "ok");
+  }
+
+  async function solicitar(oid) {
+    updateObra(oid, o => {
+      if ((o.solicitudes || []).find(s => s.userId === user.id)) return o;
+      return { ...o, solicitudes: [...(o.solicitudes || []), { userId: user.id, fecha: new Date().toLocaleDateString("es-CO"), estado: "pendiente" }] };
+    });
+    toast("Solicitud enviada", "ok");
+  }
+
+  const visibles = obras.filter(o => user.rol !== ROLES.IN || (o.instaladoresAutorizados || []).includes(user.id));
+  const sinAcceso = user.rol === ROLES.IN ? obras.filter(o => !(o.instaladoresAutorizados || []).includes(user.id)) : [];
+
+  return (
     <div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-        <h2 style={{margin:0,fontSize:20,fontWeight:700,color:C.black}}>Obras</h2>
-        {user.rol===ROLES.SUPERADMIN&&<Btn variant="primary" onClick={()=>openModal("nuevaObra")}>+ Nueva obra</Btn>}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>Obras</h2>
+        {user.rol === ROLES.SA && <Btn variant="primary" onClick={() => openM("nObra")}>+ Nueva obra</Btn>}
       </div>
-      {obrasVisibles.length===0&&user.rol!==ROLES.INSTALADOR&&(
-        <div style={{textAlign:"center",padding:"4rem",color:C.gray400,background:C.white,borderRadius:12,border:`1px solid ${C.gray200}`}}>
-          <div style={{fontSize:48,marginBottom:12}}>🏢</div><p style={{fontSize:16}}>No hay obras registradas</p>
-          {user.rol===ROLES.SUPERADMIN&&<Btn variant="primary" onClick={()=>openModal("nuevaObra")}>Crear primera obra</Btn>}
+
+      {visibles.length === 0 && user.rol !== ROLES.IN && (
+        <div style={{ textAlign: "center", padding: "4rem", color: C.g4, background: C.wh, borderRadius: 12, border: `1px solid ${C.g2}` }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>🏢</div>
+          <p>No hay obras</p>
+          {user.rol === ROLES.SA && <Btn variant="primary" onClick={() => openM("nObra")}>Crear primera obra</Btn>}
         </div>
       )}
-      <div style={{display:"grid",gap:14,marginBottom:24}}>
-        {obrasVisibles.map(obra=>{
-          const av=calcAvanceObra(obra),totalAptos=obra.pisos?.reduce((a,p)=>a+(p.aptos?.length||0),0)||0;
-          const coord=usuarios.find(u=>u.id===obra.coordinadorId);
-          const pends=(obra.solicitudes||[]).filter(s=>s.estado==="pendiente").length;
-          return(
-            <div key={obra.id} style={{...card,cursor:"pointer",transition:"border-color 0.15s,box-shadow 0.15s"}}
-              onMouseEnter={e=>{e.currentTarget.style.borderColor=C.orange;e.currentTarget.style.boxShadow=`0 4px 20px rgba(249,115,22,0.12)`;}}
-              onMouseLeave={e=>{e.currentTarget.style.borderColor=C.gray200;e.currentTarget.style.boxShadow="0 1px 4px rgba(0,0,0,0.06)";}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}} onClick={()=>setSelectedObra(obra)}>
+
+      <div style={{ display: "grid", gap: 14, marginBottom: 24 }}>
+        {visibles.map(o => {
+          const av = avanceObra(o), tot = o.pisos?.reduce((a, p) => a + (p.aptos?.length || 0), 0) || 0;
+          const coord = users.find(u => u.id === o.coordinadorId);
+          const pend = (o.solicitudes || []).filter(s => s.estado === "pendiente").length;
+          return (
+            <div key={o.id} style={{ ...card, cursor: "pointer", transition: "border-color .15s,box-shadow .15s" }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = C.or; e.currentTarget.style.boxShadow = `0 4px 20px rgba(249,115,22,.12)`; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = C.g2; e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,.06)"; }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }} onClick={() => goObra(o)}>
                 <div>
-                  <div style={{fontWeight:700,fontSize:17,marginBottom:2,color:C.black}}>{obra.nombre}</div>
-                  <div style={{fontSize:13,color:C.gray500}}>{obra.direccion}</div>
-                  {coord&&<div style={{fontSize:12,color:C.orange,marginTop:3,fontWeight:600}}>👤 {coord.nombre}</div>}
+                  <div style={{ fontWeight: 700, fontSize: 17, marginBottom: 2, color: C.bk }}>{o.nombre}</div>
+                  <div style={{ fontSize: 13, color: C.g5 }}>{o.direccion}</div>
+                  {coord && <div style={{ fontSize: 12, color: C.or, marginTop: 3, fontWeight: 600 }}>👤 {coord.nombre}</div>}
                 </div>
-                <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-                  {pends>0&&user.rol===ROLES.SUPERADMIN&&<span onClick={e=>{e.stopPropagation();setAccesoModal(obra.id);}} style={{...badge("amber"),cursor:"pointer"}}>{pends} sol.</span>}
-                  <span style={badge("green")}>{obra.estado}</span>
-                  {user.rol===ROLES.SUPERADMIN&&<>
-                    <button onClick={e=>{e.stopPropagation();setEditObraForm({nombre:obra.nombre,direccion:obra.direccion,coordinadorId:obra.coordinadorId||""});setEditObra(obra.id);}} style={{...badge("gray"),cursor:"pointer",border:`1px solid ${C.gray200}`}}>✎</button>
-                    <button onClick={e=>{e.stopPropagation();setAccesoModal(obra.id);}} style={{...badge("gray"),cursor:"pointer",border:`1px solid ${C.gray200}`}}>👷</button>
-                    <button onClick={e=>{e.stopPropagation();setConfirmDelete(obra.id);}} style={{...badge("red"),cursor:"pointer"}}>🗑</button>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  {pend > 0 && user.rol === ROLES.SA && <span onClick={e => { e.stopPropagation(); setAccM(o.id); }} style={{ ...bdg("amber"), cursor: "pointer" }}>{pend} sol.</span>}
+                  <span style={bdg("green")}>{o.estado}</span>
+                  {user.rol === ROLES.SA && <>
+                    <button onClick={e => { e.stopPropagation(); setEditF({ nombre: o.nombre, direccion: o.direccion, coordinadorId: o.coordinadorId || "" }); setEditM(o.id); }} style={{ ...bdg("gray"), cursor: "pointer" }}>✎</button>
+                    <button onClick={e => { e.stopPropagation(); setAccM(o.id); }} style={{ ...bdg("gray"), cursor: "pointer" }}>👷</button>
+                    <button onClick={e => { e.stopPropagation(); setDelM(o.id); }} style={{ ...bdg("red"), cursor: "pointer" }}>🗑</button>
                   </>}
                 </div>
               </div>
-              <div style={{display:"flex",gap:20,marginTop:16,fontSize:13,alignItems:"center"}} onClick={()=>setSelectedObra(obra)}>
-                <span style={{color:C.gray500,fontWeight:500}}>{obra.pisos?.length||0} pisos · {totalAptos} aptos</span>
-                <div style={{flex:1}}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                    <span style={{color:C.gray400,fontSize:11,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em"}}>Avance</span>
-                    <span style={{fontWeight:700,fontSize:14,color:av===100?C.green:C.orange}}>{av}%</span>
+              <div style={{ display: "flex", gap: 20, marginTop: 16, fontSize: 13, alignItems: "center" }} onClick={() => goObra(o)}>
+                <span style={{ color: C.g5, fontWeight: 500 }}>{o.pisos?.length || 0} pisos · {tot} aptos</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                    <span style={{ color: C.g4, fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".06em" }}>Avance</span>
+                    <span style={{ fontWeight: 700, fontSize: 14, color: av === 100 ? C.gn : C.or }}>{av}%</span>
                   </div>
-                  <div style={{height:8,background:C.gray100,borderRadius:10,overflow:"hidden"}}>
-                    <div style={{height:"100%",width:`${av}%`,background:av===100?C.green:C.orange,borderRadius:10,transition:"width 0.4s"}}/>
+                  <div style={{ height: 8, background: C.g1, borderRadius: 10, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${av}%`, background: av === 100 ? C.gn : C.or, borderRadius: 10, transition: "width .4s" }} />
                   </div>
                 </div>
               </div>
@@ -350,251 +425,384 @@ function ObrasView({obras,setObras,updateObra,saveObra,user,usuarios,calcAvanceO
         })}
       </div>
 
-      {user.rol===ROLES.INSTALADOR&&obrasSinAcceso.length>0&&(
+      {user.rol === ROLES.IN && sinAcceso.length > 0 && (
         <div>
-          <h3 style={{margin:"0 0 12px",fontSize:15,fontWeight:600,color:C.gray500}}>Obras disponibles — solicitar acceso</h3>
-          {obrasSinAcceso.map(obra=>{
-            const sol=obra.solicitudes?.find(s=>s.userId===user.id);
-            return<div key={obra.id} style={{...card,display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-              <div><div style={{fontWeight:600,fontSize:14}}>{obra.nombre}</div><div style={{fontSize:13,color:C.gray500}}>{obra.direccion}</div></div>
-              {!sol&&<Btn onClick={()=>solicitarAcceso(obra.id)}>Solicitar acceso</Btn>}
-              {sol?.estado==="pendiente"&&<span style={badge("amber")}>Solicitud pendiente</span>}
-              {sol?.estado==="rechazado"&&<span style={badge("red")}>Acceso denegado</span>}
+          <h3 style={{ margin: "0 0 12px", fontSize: 15, fontWeight: 600, color: C.g5 }}>Obras disponibles</h3>
+          {sinAcceso.map(o => {
+            const sol = o.solicitudes?.find(s => s.userId === user.id);
+            return <div key={o.id} style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div><div style={{ fontWeight: 600, fontSize: 14 }}>{o.nombre}</div><div style={{ fontSize: 13, color: C.g5 }}>{o.direccion}</div></div>
+              {!sol && <Btn onClick={() => solicitar(o.id)}>Solicitar acceso</Btn>}
+              {sol?.estado === "pendiente" && <span style={bdg("amber")}>Pendiente</span>}
+              {sol?.estado === "rechazado" && <span style={bdg("red")}>Denegado</span>}
             </div>;
           })}
         </div>
       )}
 
-      {editObra&&<Modal title="Editar obra" onClose={()=>setEditObra(null)}>
-        <Input label="Nombre" value={editObraForm.nombre} onChange={e=>setEditObraForm(f=>({...f,nombre:e.target.value}))}/>
-        <Input label="Dirección" value={editObraForm.direccion} onChange={e=>setEditObraForm(f=>({...f,direccion:e.target.value}))}/>
-        <Select label="Coordinador" value={editObraForm.coordinadorId} onChange={e=>setEditObraForm(f=>({...f,coordinadorId:e.target.value}))}>
-          <option value="">— Sin asignar —</option>
-          {superadmins.map(s=><option key={s.id} value={s.id}>{s.nombre}</option>)}
-        </Select>
-        <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:8}}><Btn onClick={()=>setEditObra(null)}>Cancelar</Btn><Btn variant="primary" onClick={editarObra}>Guardar cambios</Btn></div>
+      {editM && <Modal title="Editar obra" onClose={() => setEditM(null)}>
+        <Inp label="Nombre" value={editF.nombre} onChange={e => setEditF(f => ({ ...f, nombre: e.target.value }))} />
+        <Inp label="Dirección" value={editF.direccion} onChange={e => setEditF(f => ({ ...f, direccion: e.target.value }))} />
+        <Sel label="Coordinador" value={editF.coordinadorId} onChange={e => setEditF(f => ({ ...f, coordinadorId: e.target.value }))}>
+          <option value="">— Sin asignar —</option>{SAs.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+        </Sel>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn onClick={() => setEditM(null)}>Cancelar</Btn><Btn variant="primary" onClick={editar}>Guardar</Btn></div>
       </Modal>}
 
-      {confirmDelete&&<Modal title="Confirmar eliminación" onClose={()=>setConfirmDelete(null)}>
-        <p style={{fontSize:14,color:C.gray700,marginBottom:20}}>¿Estás seguro de que deseas eliminar esta obra? Se perderán todos los datos. Esta acción no se puede deshacer.</p>
-        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}><Btn onClick={()=>setConfirmDelete(null)}>Cancelar</Btn><Btn variant="danger" onClick={()=>eliminarObra(confirmDelete)}>Sí, eliminar</Btn></div>
+      {delM && <Modal title="Eliminar obra" onClose={() => setDelM(null)}>
+        <p style={{ fontSize: 14, color: C.g9, marginBottom: 20 }}>¿Eliminar esta obra? Todos los datos se perderán. Esta acción no se puede deshacer.</p>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn onClick={() => setDelM(null)}>Cancelar</Btn><Btn variant="danger" onClick={() => eliminar(delM)}>Sí, eliminar</Btn></div>
       </Modal>}
 
-      {accesoModal&&<Modal title={`Accesos — ${obras.find(o=>o.id===accesoModal)?.nombre}`} onClose={()=>setAccesoModal(null)} wide>
-        {(()=>{
-          const obra=obras.find(o=>o.id===accesoModal)||{};
-          const pends=(obra.solicitudes||[]).filter(s=>s.estado==="pendiente");
-          return<div>
-            {pends.length>0&&<div style={{marginBottom:20}}>
-              <div style={{fontSize:13,fontWeight:600,marginBottom:10,color:"#B45309"}}>Solicitudes pendientes</div>
-              {pends.map(s=>{const inst=usuarios.find(u=>u.id===s.userId);return<div key={s.userId} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",background:C.amberL,border:"1px solid #FDE68A",borderRadius:10,marginBottom:8}}>
-                <div style={{flex:1}}><div style={{fontWeight:600,fontSize:14}}>{inst?.nombre}</div><div style={{fontSize:12,color:C.gray500}}>{s.fecha}</div></div>
-                <Btn variant="success" onClick={()=>{updateObra(accesoModal,o=>({...o,solicitudes:(o.solicitudes||[]).map(x=>x.userId===s.userId?{...x,estado:"aprobado"}:x),instaladoresAutorizados:[...new Set([...(o.instaladoresAutorizados||[]),s.userId])]}));pushNotif(`Acceso aprobado para ${inst?.nombre}`,"success");}}>Aprobar</Btn>
-                <Btn variant="danger" onClick={()=>updateObra(accesoModal,o=>({...o,solicitudes:(o.solicitudes||[]).map(x=>x.userId===s.userId?{...x,estado:"rechazado"}:x)}))}>Rechazar</Btn>
-              </div>;})}
-            </div>}
-            <div style={{fontSize:13,fontWeight:600,marginBottom:10}}>Todos los instaladores</div>
-            <div style={{display:"grid",gap:8,maxHeight:360,overflowY:"auto"}}>
-              {instaladores.map(inst=>{
-                const aut=(obra.instaladoresAutorizados||[]).includes(inst.id);
-                return<div key={inst.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",background:aut?C.greenL:C.gray50,border:`1px solid ${aut?"#BBF7D0":C.gray200}`,borderRadius:10}}>
-                  <div style={{width:36,height:36,borderRadius:50,background:aut?C.green:C.gray300,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:600,color:C.white,flexShrink:0}}>{inst.nombre.split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase()}</div>
-                  <div style={{flex:1}}><div style={{fontWeight:600,fontSize:14}}>{inst.nombre}</div><div style={{fontSize:12,color:C.gray500}}>C.C. {inst.cedula||"—"}</div></div>
-                  <button onClick={()=>updateObra(accesoModal,o=>{const a=o.instaladoresAutorizados||[];return{...o,instaladoresAutorizados:a.includes(inst.id)?a.filter(id=>id!==inst.id):[...a,inst.id]};})} style={{...badge(aut?"red":"green"),cursor:"pointer"}}>{aut?"Revocar":"Dar acceso"}</button>
-                </div>;
-              })}
-            </div>
-            <div style={{display:"flex",justifyContent:"flex-end",marginTop:16}}><Btn onClick={()=>setAccesoModal(null)}>Cerrar</Btn></div>
-          </div>;
-        })()}
-      </Modal>}
+      {accM && <ModalAccesos obraId={accM} obras={obras} users={users} updateObra={updateObra} toast={toast} onClose={() => setAccM(null)} />}
 
-      {modals.nuevaObra&&<Modal title="Nueva obra" onClose={()=>closeModal("nuevaObra")}>
-        <Input label="Nombre de la obra" value={form.nombre} onChange={e=>setForm(f=>({...f,nombre:e.target.value}))} placeholder="Ej: Conjunto El Prado"/>
-        <Input label="Dirección" value={form.direccion} onChange={e=>setForm(f=>({...f,direccion:e.target.value}))}/>
-        <Select label="Coordinador responsable" value={form.coordinadorId} onChange={e=>setForm(f=>({...f,coordinadorId:e.target.value}))}>
-          <option value="">— Seleccionar —</option>
-          {superadmins.map(s=><option key={s.id} value={s.id}>{s.nombre}</option>)}
-        </Select>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Input label="Número de pisos" type="number" min="1" max="50" value={form.pisos} onChange={e=>setForm(f=>({...f,pisos:e.target.value}))}/>
-          <Input label="Aptos por piso" type="number" min="1" max="20" value={form.aptosPorPiso} onChange={e=>setForm(f=>({...f,aptosPorPiso:e.target.value}))}/>
+      {modals.nObra && <Modal title="Nueva obra" onClose={() => closeM("nObra")}>
+        <Inp label="Nombre" value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Ej: Conjunto El Prado" />
+        <Inp label="Dirección" value={form.direccion} onChange={e => setForm(f => ({ ...f, direccion: e.target.value }))} />
+        <Sel label="Coordinador responsable" value={form.coordinadorId} onChange={e => setForm(f => ({ ...f, coordinadorId: e.target.value }))}>
+          <option value="">— Seleccionar —</option>{SAs.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+        </Sel>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Inp label="Pisos" type="number" min="1" max="50" value={form.pisos} onChange={e => setForm(f => ({ ...f, pisos: e.target.value }))} />
+          <Inp label="Aptos por piso" type="number" min="1" max="20" value={form.aptos} onChange={e => setForm(f => ({ ...f, aptos: e.target.value }))} />
         </div>
-        <p style={{fontSize:12,color:C.gray400,margin:"-8px 0 14px"}}>Podrás editar aptos por piso después de crear la obra.</p>
-        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}><Btn onClick={()=>closeModal("nuevaObra")}>Cancelar</Btn><Btn variant="primary" onClick={crearObra}>Crear obra</Btn></div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn onClick={() => closeM("nObra")}>Cancelar</Btn><Btn variant="primary" onClick={crear}>Crear</Btn></div>
       </Modal>}
     </div>
   );
 }
 
-function ObraDetalle({obra,obras,updateObra,user,calcAvanceApto,elementos,usuarios,setSelectedApto,openModal,closeModal,modals,pushNotif,getPrecio}){
-  const[editTip,setEditTip]=useState(null);
-  const[tipForm,setTipForm]=useState({nombre:"",elementoIds:[]});
-  const[replicaSel,setReplicaSel]=useState({reglas:[]});
-  const[replicaModal,setReplicaModal]=useState(false);
-  const[asignando,setAsignando]=useState(null);
-  const[accesoObraModal,setAccesoObraModal]=useState(false);
-  const[vistaInstalador,setVistaInstalador]=useState(null);
-  const[editPisoModal,setEditPisoModal]=useState(null);
-  const[preciosModal,setPreciosModal]=useState(false);
-  const[preciosCorte,setPreciosCorte]=useState("");
-  const[preciosTmp,setPreciosTmp]=useState({});
-  const currentObra=obras.find(o=>o.id===obra.id)||obra;
-  const tipologias=currentObra.tipologias||[];
-  const numerosApto=[...new Set(currentObra.pisos?.flatMap(p=>p.aptos?.map(a=>String(a.numero)))||[])].sort((a,b)=>Number(a)-Number(b));
-  const cortes=getCorteFechas();
-  const instaladoresActivos=(currentObra.instaladoresAutorizados||[]).map(id=>usuarios.find(u=>u.id===id)).filter(Boolean);
+// ── Modal Accesos ─────────────────────────────────────────
+function ModalAccesos({ obraId, obras, users, updateObra, toast, onClose }) {
+  const ob = obras.find(o => o.id === obraId) || {};
+  const INs = users.filter(u => u.rol === ROLES.IN);
+  const [instSel, setInstSel] = useState(null);
+  const pends = (ob.solicitudes || []).filter(s => s.estado === "pendiente");
+  const aptosHab = ob.aptosHabilitados || {};
+  const todosAptos = ob.pisos?.flatMap(p => p.aptos?.map(a => ({ ...a, pisoNum: p.numero, pisoId: p.id })) || []) || [];
 
-  function abrirNuevaTip(){setEditTip(null);setTipForm({nombre:"",elementoIds:[]});openModal("tipModal");}
-  function abrirEditTip(t){setEditTip(t.id);setTipForm({nombre:t.nombre,elementoIds:[...t.elementoIds]});openModal("tipModal");}
-
-  async function guardarTip(){
-    if(!tipForm.nombre)return;
-    if(editTip){await updateObra(obra.id,o=>({...o,tipologias:(o.tipologias||[]).map(t=>t.id===editTip?{...t,nombre:tipForm.nombre,elementoIds:tipForm.elementoIds}:t),pisos:o.pisos.map(p=>({...p,aptos:p.aptos.map(a=>{if(a.tipologia!==editTip)return a;return{...a,elementos:tipForm.elementoIds.map(eid=>a.elementos?.find(e=>e.elementoId===eid)||{elementoId:eid,completado:false,instaladorId:null,fecha:null,cantidad:1})};})}))}));}
-    else{const t={id:`t${Date.now()}`,nombre:tipForm.nombre,elementoIds:tipForm.elementoIds};await updateObra(obra.id,o=>({...o,tipologias:[...(o.tipologias||[]),t]}));}
-    pushNotif("Tipología guardada","success");closeModal("tipModal");setEditTip(null);
+  function toggleApto(instId, aptoId) {
+    updateObra(obraId, o => {
+      const ah = { ...(o.aptosHabilitados || {}) };
+      const lista = ah[instId] || [];
+      ah[instId] = lista.includes(aptoId) ? lista.filter(x => x !== aptoId) : [...lista, aptoId];
+      return { ...o, aptosHabilitados: ah };
+    });
   }
 
-  async function asignarInstaladorApto(pisoId, aptoId, instaladorId){
-    await updateObra(obra.id, o=>({...o, pisos:o.pisos.map(p=>p.id!==pisoId?p:{...p, aptos:p.aptos.map(a=>a.id!==aptoId?a:{...a, instaladorAsignado:instaladorId||null})})}));
-    pushNotif(instaladorId?"Instalador asignado":"Instalador removido","success");
-  }
-    const tip=tipologias.find(t=>t.id===tipId);
-    const nuevosEls=(tip?.elementoIds||[]).map(eid=>({elementoId:eid,completado:false,instaladorId:null,fecha:null,cantidad:1}));
-    await updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>p.id!==pisoId?p:{...p,aptos:p.aptos.map(a=>a.id!==aptoId?a:{...a,tipologia:tipId,elementos:nuevosEls})})}));
-    setAsignando(null);
-  }
-
-  function quitarTipologiaApto(pisoId, aptoId) {
-    updateObra(obra.id, o => ({...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : {...p, aptos: p.aptos.map(a => a.id !== aptoId ? a : {...a, tipologia: "", elementos: []})})}));
-  }
-  async function replicarEnSerie(){
-    let count=0;
-    await updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>({...p,aptos:p.aptos.map(a=>{const regla=replicaSel.reglas.find(r=>r.sufijo===String(a.numero)&&r.tipId);if(!regla)return a;const tip=tipologias.find(t=>t.id===regla.tipId);if(!tip)return a;count++;return{...a,tipologia:tip.id,elementos:tip.elementoIds.map(eid=>a.elementos?.find(e=>e.elementoId===eid)||{elementoId:eid,completado:false,instaladorId:null,fecha:null,cantidad:1})};})}))}));
-    pushNotif(`Replicadas en ${count} apto(s)`,"success");setReplicaModal(false);setReplicaSel({reglas:[]});
+  function toggleInst(instId) {
+    updateObra(obraId, o => {
+      const a = o.instaladoresAutorizados || [];
+      const nuevo = a.includes(instId) ? a.filter(i => i !== instId) : [...a, instId];
+      const ah = { ...(o.aptosHabilitados || {}) };
+      if (!nuevo.includes(instId)) delete ah[instId];
+      return { ...o, instaladoresAutorizados: nuevo, aptosHabilitados: ah };
+    });
   }
 
-  async function agregarApto(pisoId){await updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>{if(p.id!==pisoId)return p;const num=p.aptos.length+1;return{...p,aptos:[...p.aptos,{id:`a${Date.now()}`,numero:num,nombre:`${p.numero}${String(num).padStart(2,"0")}`,tipologia:"",elementos:[]}]};})}));}
-  async function eliminarApto(pisoId,aptoId){await updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>p.id!==pisoId?p:{...p,aptos:p.aptos.filter(a=>a.id!==aptoId)})}));}
-  async function renombrarApto(pisoId,aptoId,nombre){await updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>p.id!==pisoId?p:{...p,aptos:p.aptos.map(a=>a.id!==aptoId?a:{...a,nombre})})}));}
+  return <Modal title={`Accesos — ${ob.nombre}`} onClose={onClose} wide>
+    {pends.length > 0 && <div style={{ marginBottom: 20 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: "#B45309" }}>Solicitudes pendientes</div>
+      {pends.map(s => {
+        const inst = users.find(u => u.id === s.userId);
+        return <div key={s.userId} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: C.amL, border: "1px solid #FDE68A", borderRadius: 10, marginBottom: 8 }}>
+          <div style={{ flex: 1 }}><div style={{ fontWeight: 600, fontSize: 14 }}>{inst?.nombre}</div><div style={{ fontSize: 12, color: C.g5 }}>{s.fecha}</div></div>
+          <Btn variant="success" onClick={() => { updateObra(obraId, o => ({ ...o, solicitudes: (o.solicitudes || []).map(x => x.userId === s.userId ? { ...x, estado: "aprobado" } : x), instaladoresAutorizados: [...new Set([...(o.instaladoresAutorizados || []), s.userId])] })); toast(`Aprobado ${inst?.nombre}`, "ok"); }}>Aprobar</Btn>
+          <Btn variant="danger" onClick={() => updateObra(obraId, o => ({ ...o, solicitudes: (o.solicitudes || []).map(x => x.userId === s.userId ? { ...x, estado: "rechazado" } : x) }))}>Rechazar</Btn>
+        </div>;
+      })}
+    </div>}
 
-  function guardarPrecios(){
-    if(!preciosCorte)return;
-    updateObra(obra.id,o=>({...o,preciosOverride:{...(o.preciosOverride||{}),...Object.fromEntries(Object.entries(preciosTmp).map(([eid,v])=>[`${preciosCorte}__${eid}`,Number(v)]))}}));
-    pushNotif("Precios guardados","success");setPreciosModal(false);setPreciosTmp({});
-  }
+    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: C.bk }}>Instaladores</div>
+    <div style={{ display: "grid", gap: 8, maxHeight: 300, overflowY: "auto", marginBottom: 16 }}>
+      {INs.map(inst => {
+        const aut = (ob.instaladoresAutorizados || []).includes(inst.id);
+        const numAptos = (aptosHab[inst.id] || []).length;
+        return <div key={inst.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: aut ? C.gnL : C.g0, border: `1px solid ${aut ? "#BBF7D0" : C.g2}`, borderRadius: 10 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 50, background: aut ? C.gn : C.g3, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 600, color: C.wh, flexShrink: 0 }}>{inst.nombre.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>{inst.nombre}</div>
+            <div style={{ fontSize: 12, color: C.g5 }}>C.C. {inst.cedula || "—"}</div>
+            {aut && <div style={{ fontSize: 11, color: C.or, fontWeight: 600 }}>{numAptos > 0 ? `${numAptos} apto(s) habilitado(s)` : "Sin aptos habilitados aún"}</div>}
+          </div>
+          {aut && <button onClick={() => setInstSel(instSel === inst.id ? null : inst.id)} style={{ ...bdg("orange"), cursor: "pointer" }}>🏠 Aptos</button>}
+          <button onClick={() => toggleInst(inst.id)} style={{ ...bdg(aut ? "red" : "green"), cursor: "pointer" }}>{aut ? "Revocar" : "Dar acceso"}</button>
+        </div>;
+      })}
+    </div>
 
-  if(user.rol===ROLES.INSTALADOR){
-    const misAptos=currentObra.pisos?.flatMap(p=>p.aptos?.filter(a=>a.instaladorAsignado===user.id)||[])||[];
-    const aptosDisponibles=currentObra.pisos?.flatMap(p=>p.aptos?.filter(a=>!a.instaladorAsignado&&a.tipologia)||[])||[];
+    {instSel && (() => {
+      const inst = users.find(u => u.id === instSel);
+      const habilitados = aptosHab[instSel] || [];
+      return <div style={{ background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 12, padding: "14px 16px", marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: C.orD }}>Aptos habilitados para {inst?.nombre.split(" ")[0]}</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(80px,1fr))", gap: 8, maxHeight: 260, overflowY: "auto" }}>
+          {todosAptos.map(a => {
+            const hab = habilitados.includes(a.id);
+            const tomado = a.instaladorAsignado && a.instaladorAsignado !== instSel;
+            return <button key={a.id} disabled={!!tomado} onClick={() => toggleApto(instSel, a.id)} style={{ padding: "8px 4px", borderRadius: 8, border: `1.5px solid ${hab ? C.or : tomado ? C.rd : C.g2}`, background: hab ? C.or : tomado ? C.rdL : C.wh, color: hab ? C.wh : tomado ? C.rd : C.bk, fontSize: 12, fontWeight: hab ? 700 : 400, cursor: tomado ? "not-allowed" : "pointer", opacity: tomado ? 0.5 : 1, textAlign: "center" }}>
+              {a.nombre || `${a.pisoNum}${String(a.numero).padStart(2, "0")}`}
+              {tomado && <div style={{ fontSize: 9 }}>ocupado</div>}
+            </button>;
+          })}
+        </div>
+        <div style={{ fontSize: 12, color: C.orD, marginTop: 8 }}>{habilitados.length} seleccionado(s)</div>
+      </div>;
+    })()}
 
-    async function tomarApto(pisoId, aptoId){
-      await updateObra(obra.id, o=>({...o, pisos:o.pisos.map(p=>p.id!==pisoId?p:{...p, aptos:p.aptos.map(a=>a.id!==aptoId?a:{...a, instaladorAsignado:user.id})})}));
-      pushNotif("Apartamento tomado","success");
+    <div style={{ display: "flex", justifyContent: "flex-end" }}><Btn onClick={onClose}>Cerrar</Btn></div>
+  </Modal>;
+}
+
+// ── OBRA DETALLE ──────────────────────────────────────────
+function Obra({ obra, obras, updateObra, user, avanceApto, elems, users, goApto, openM, closeM, modals, toast, getPrecio }) {
+  const [tipForm, setTipForm] = useState({ nombre: "", eids: [] });
+  const [editTip, setEditTip] = useState(null);
+  const [delTipId, setDelTipId] = useState(null);
+  const [repModal, setRepModal] = useState(false);
+  const [repSel, setRepSel] = useState({ reglas: [] });
+  const [asign, setAsign] = useState(null);
+  const [accModal, setAccModal] = useState(false);
+  const [pisoEditM, setPisoEditM] = useState(null);
+  const [preciosM, setPreciosM] = useState(false);
+  const [precCorte, setPrecCorte] = useState("");
+  const [precTmp, setPrecTmp] = useState({});
+  const [vistaInst, setVistaInst] = useState(null);
+
+  const cur = obras.find(o => o.id === obra.id) || obra;
+  const tips = cur.tipologias || [];
+  const nums = [...new Set(cur.pisos?.flatMap(p => p.aptos?.map(a => String(a.numero))) || [])].sort((a, b) => Number(a) - Number(b));
+  const cortes = getCorteFechas();
+  const instsActivos = (cur.instaladoresAutorizados || []).map(id => users.find(u => u.id === id)).filter(Boolean);
+  const INs = users.filter(u => u.rol === ROLES.IN);
+
+  const abrirNueva = () => { setEditTip(null); setTipForm({ nombre: "", eids: [] }); openM("tip"); };
+  const abrirEditar = t => { setEditTip(t.id); setTipForm({ nombre: t.nombre, eids: [...t.elementoIds] }); openM("tip"); };
+
+  async function guardarTip() {
+    if (!tipForm.nombre) return;
+    if (editTip) {
+      updateObra(obra.id, o => ({
+        ...o,
+        tipologias: (o.tipologias || []).map(t => t.id === editTip ? { ...t, nombre: tipForm.nombre, elementoIds: tipForm.eids } : t),
+        pisos: o.pisos.map(p => ({
+          ...p, aptos: p.aptos.map(a => {
+            if (a.tipologia !== editTip) return a;
+            return { ...a, elementos: tipForm.eids.map(eid => a.elementos?.find(e => e.elementoId === eid) || { elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad: 1 }) };
+          })
+        }))
+      }));
+    } else {
+      const t = { id: `t${Date.now()}`, nombre: tipForm.nombre, elementoIds: tipForm.eids };
+      updateObra(obra.id, o => ({ ...o, tipologias: [...(o.tipologias || []), t] }));
     }
+    toast("Tipología guardada", "ok"); closeM("tip"); setEditTip(null);
+  }
 
-    return(
+  function eliminarTip(tipId) {
+    updateObra(obra.id, o => ({
+      ...o,
+      tipologias: (o.tipologias || []).filter(t => t.id !== tipId),
+      pisos: o.pisos.map(p => ({ ...p, aptos: p.aptos.map(a => a.tipologia === tipId ? { ...a, tipologia: "", elementos: [] } : a) }))
+    }));
+    toast("Tipología eliminada", "ok"); setDelTipId(null);
+  }
+
+  async function asignarTip(pisoId, aptoId, tipId) {
+    const tip = tips.find(t => t.id === tipId);
+    const els = (tip?.elementoIds || []).map(eid => ({ elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad: 1 }));
+    updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : { ...p, aptos: p.aptos.map(a => a.id !== aptoId ? a : { ...a, tipologia: tipId, elementos: els }) }) }));
+    setAsign(null);
+  }
+
+  function quitarTip(pisoId, aptoId) {
+    updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : { ...p, aptos: p.aptos.map(a => a.id !== aptoId ? a : { ...a, tipologia: "", elementos: [] }) }) }));
+  }
+
+  async function replicar() {
+    let cnt = 0;
+    updateObra(obra.id, o => ({
+      ...o, pisos: o.pisos.map(p => ({
+        ...p, aptos: p.aptos.map(a => {
+          const reg = repSel.reglas.find(r => r.sufijo === String(a.numero) && r.tipId);
+          if (!reg) return a;
+          const tip = tips.find(t => t.id === reg.tipId);
+          if (!tip) return a;
+          cnt++;
+          return { ...a, tipologia: tip.id, elementos: tip.elementoIds.map(eid => a.elementos?.find(e => e.elementoId === eid) || { elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad: 1 }) };
+        })
+      }))
+    }));
+    toast(`Replicadas en ${cnt} apto(s)`, "ok"); setRepModal(false); setRepSel({ reglas: [] });
+  }
+
+  function asignarInst(pisoId, aptoId, instId) {
+    updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : { ...p, aptos: p.aptos.map(a => a.id !== aptoId ? a : { ...a, instaladorAsignado: instId || null }) }) }));
+    toast(instId ? "Instalador asignado" : "Instalador removido", "ok");
+  }
+
+  const agregarApto = pid => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => { if (p.id !== pid) return p; const n = p.aptos.length + 1; return { ...p, aptos: [...p.aptos, { id: `a${Date.now()}`, numero: n, nombre: `${p.numero}${String(n).padStart(2, "0")}`, tipologia: "", elementos: [], instaladorAsignado: null }] }; }) }));
+  const eliminarApto = (pid, aid) => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pid ? p : { ...p, aptos: p.aptos.filter(a => a.id !== aid) }) }));
+  const renombrarApto = (pid, aid, nom) => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pid ? p : { ...p, aptos: p.aptos.map(a => a.id !== aid ? a : { ...a, nombre: nom }) }) }));
+
+  function guardarPrecios() {
+    if (!precCorte) return;
+    updateObra(obra.id, o => ({ ...o, preciosOverride: { ...(o.preciosOverride || {}), ...Object.fromEntries(Object.entries(precTmp).map(([eid, v]) => [`${precCorte}__${eid}`, Number(v)])) } }));
+    toast("Precios guardados", "ok"); setPreciosM(false); setPrecTmp({});
+  }
+
+  // Vista instalador
+  if (user.rol === ROLES.IN) {
+    const aptosHab = (cur.aptosHabilitados || {})[user.id] || [];
+    const todosAptos = cur.pisos?.flatMap(p => p.aptos?.map(a => ({ ...a, pisoId: p.id, pisoNum: p.numero })) || []) || [];
+    const misHabilitados = todosAptos.filter(a => aptosHab.includes(a.id));
+    const misTomados = misHabilitados.filter(a => a.instaladorAsignado === user.id);
+    const disponibles = misHabilitados.filter(a => !a.instaladorAsignado && a.tipologia);
+
+    const tomar = (pisoId, aptoId) => {
+      updateObra(cur.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : { ...p, aptos: p.aptos.map(a => a.id !== aptoId ? a : { ...a, instaladorAsignado: user.id }) }) }));
+      toast("Apartamento tomado", "ok");
+    };
+    const liberar = (pisoId, aptoId) => {
+      updateObra(cur.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : { ...p, aptos: p.aptos.map(a => a.id !== aptoId ? a : { ...a, instaladorAsignado: null }) }) }));
+      toast("Apartamento liberado", "ok");
+    };
+
+    return (
       <div>
-        <div style={{marginBottom:18}}><h2 style={{margin:0,fontSize:20,fontWeight:700,color:C.black}}>{obra.nombre}</h2><p style={{margin:"4px 0 0",fontSize:13,color:C.gray500}}>{obra.direccion}</p></div>
-
-        {misAptos.length>0&&<>
-          <div style={{fontSize:12,fontWeight:700,color:C.gray500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Mis apartamentos</div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:10,marginBottom:24}}>
-            {misAptos.map(apto=>{
-              const piso=currentObra.pisos?.find(p=>p.aptos?.some(a=>a.id===apto.id));
-              const av=calcAvanceApto(apto);const tip=tipologias?.find(t=>t.id===apto.tipologia);
-              return<div key={apto.id} onClick={()=>piso&&setSelectedApto(apto,piso)} style={{...card,cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.borderColor=C.orange} onMouseLeave={e=>e.currentTarget.style.borderColor=C.gray200}>
-                <div style={{fontWeight:700,fontSize:14,marginBottom:4}}>{apto.nombre||apto.id}</div>
-                {tip&&<div style={{fontSize:11,color:C.gray500,marginBottom:6}}>{tip.nombre}</div>}
-                <div style={{height:5,background:C.gray100,borderRadius:10,overflow:"hidden",marginBottom:4}}><div style={{height:"100%",width:`${av}%`,background:av===100?C.green:C.orange,borderRadius:10}}/></div>
-                <div style={{fontSize:11,color:C.gray400,fontWeight:600}}>{av}%</div>
+        <div style={{ marginBottom: 18 }}>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>{obra.nombre}</h2>
+          <p style={{ margin: "4px 0 0", fontSize: 13, color: C.g5 }}>{obra.direccion}</p>
+        </div>
+        {misTomados.length > 0 && <>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.g5, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 10 }}>Mis apartamentos</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(130px,1fr))", gap: 10, marginBottom: 24 }}>
+            {misTomados.map(a => {
+              const av = avanceApto(a); const tip = tips.find(t => t.id === a.tipologia);
+              return <div key={a.id} onClick={() => goApto(a, cur.pisos?.find(p => p.id === a.pisoId))} style={{ ...card, cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.borderColor = C.or} onMouseLeave={e => e.currentTarget.style.borderColor = C.g2}>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{a.nombre}</div>
+                {tip && <div style={{ fontSize: 11, color: C.g5, marginBottom: 6 }}>{tip.nombre}</div>}
+                <div style={{ height: 5, background: C.g1, borderRadius: 10, overflow: "hidden", marginBottom: 4 }}>
+                  <div style={{ height: "100%", width: `${av}%`, background: av === 100 ? C.gn : C.or, borderRadius: 10 }} />
+                </div>
+                <div style={{ fontSize: 11, color: C.g4, fontWeight: 600, marginBottom: 6 }}>{av}%</div>
+                <button onClick={e => { e.stopPropagation(); liberar(a.pisoId, a.id); }} style={{ ...bdg("red"), cursor: "pointer", fontSize: 10, width: "100%", textAlign: "center" }}>Liberar</button>
               </div>;
             })}
           </div>
         </>}
-
-        {aptosDisponibles.length>0&&<>
-          <div style={{fontSize:12,fontWeight:700,color:C.gray500,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Apartamentos disponibles</div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:10}}>
-            {aptosDisponibles.map(apto=>{
-              const piso=currentObra.pisos?.find(p=>p.aptos?.some(a=>a.id===apto.id));
-              const tip=tipologias?.find(t=>t.id===apto.tipologia);
-              return<div key={apto.id} style={{...card,background:C.gray50,border:`1px dashed ${C.gray300}`}}>
-                <div style={{fontWeight:700,fontSize:14,marginBottom:4,color:C.gray500}}>{apto.nombre||apto.id}</div>
-                {tip&&<div style={{fontSize:11,color:C.gray400,marginBottom:8}}>{tip.nombre}</div>}
-                <button onClick={()=>piso&&tomarApto(piso.id,apto.id)} style={{...badge("orange"),cursor:"pointer",fontSize:11,width:"100%",textAlign:"center"}}>Tomar apto</button>
+        {disponibles.length > 0 && <>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.g5, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 10 }}>Aptos habilitados disponibles</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(130px,1fr))", gap: 10, marginBottom: 24 }}>
+            {disponibles.map(a => {
+              const tip = tips.find(t => t.id === a.tipologia);
+              return <div key={a.id} style={{ ...card, background: C.orL, border: `1px dashed ${C.or}` }}>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4, color: C.orD }}>{a.nombre}</div>
+                {tip && <div style={{ fontSize: 11, color: C.g5, marginBottom: 8 }}>{tip.nombre}</div>}
+                <button onClick={() => tomar(a.pisoId, a.id)} style={{ ...bV.primary, width: "100%", fontSize: 11, padding: "6px", borderRadius: 6, cursor: "pointer", fontFamily: "system-ui" }}>Tomar apto</button>
               </div>;
             })}
           </div>
         </>}
-
-        {misAptos.length===0&&aptosDisponibles.length===0&&<div style={{textAlign:"center",padding:"3rem",color:C.gray400,background:C.white,borderRadius:12,border:`1px solid ${C.gray200}`}}><p>No hay apartamentos disponibles aún.</p></div>}
+        {misHabilitados.length === 0 && (
+          <div style={{ textAlign: "center", padding: "3rem", color: C.g4, background: C.wh, borderRadius: 12, border: `1px solid ${C.g2}` }}>
+            <div style={{ fontSize: 40, marginBottom: 8 }}>🏠</div>
+            <p>El administrador aún no te ha habilitado apartamentos en esta obra.</p>
+          </div>
+        )}
       </div>
     );
   }
 
-  return(
+  return (
     <div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-        <div><h2 style={{margin:0,fontSize:20,fontWeight:700,color:C.black}}>{obra.nombre}</h2><p style={{margin:"4px 0 0",fontSize:13,color:C.gray500}}>{obra.direccion}</p></div>
-        {user.rol===ROLES.SUPERADMIN&&<div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          <Btn onClick={()=>{setPreciosTmp({});setPreciosCorte("");setPreciosModal(true);}}>💰 Precios</Btn>
-          <Btn onClick={()=>setAccesoObraModal(true)}>👷 Accesos</Btn>
-          <Btn onClick={()=>setReplicaModal(true)}>Replicar</Btn>
-          <Btn variant="primary" onClick={abrirNuevaTip}>+ Tipología</Btn>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>{obra.nombre}</h2>
+          <p style={{ margin: "4px 0 0", fontSize: 13, color: C.g5 }}>{obra.direccion}</p>
+        </div>
+        {user.rol === ROLES.SA && <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Btn onClick={() => { setPrecTmp({}); setPrecCorte(""); setPreciosM(true); }}>💰 Precios</Btn>
+          <Btn onClick={() => setAccModal(true)}>👷 Accesos</Btn>
+          <Btn onClick={() => setRepModal(true)}>Replicar</Btn>
+          <Btn variant="primary" onClick={abrirNueva}>+ Tipología</Btn>
         </div>}
       </div>
 
-      <div style={{display:"flex",gap:6,marginBottom:16,borderBottom:`2px solid ${C.gray200}`,paddingBottom:0}}>
-        <button onClick={()=>setVistaInstalador(null)} style={{background:"transparent",color:!vistaInstalador?C.orange:C.gray500,border:"none",borderBottom:!vistaInstalador?`2.5px solid ${C.orange}`:"2.5px solid transparent",padding:"8px 14px",cursor:"pointer",fontSize:13,fontWeight:!vistaInstalador?600:400,marginBottom:-2,fontFamily:"system-ui"}}>Vista general</button>
-        {instaladoresActivos.map(inst=><button key={inst.id} onClick={()=>setVistaInstalador(inst.id)} style={{background:"transparent",color:vistaInstalador===inst.id?C.green:C.gray500,border:"none",borderBottom:vistaInstalador===inst.id?`2.5px solid ${C.green}`:"2.5px solid transparent",padding:"8px 14px",cursor:"pointer",fontSize:13,fontWeight:vistaInstalador===inst.id?600:400,marginBottom:-2,fontFamily:"system-ui"}}>{inst.nombre.split(" ")[0]}</button>)}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, borderBottom: `2px solid ${C.g2}`, paddingBottom: 0 }}>
+        <button onClick={() => setVistaInst(null)} style={{ background: "transparent", color: !vistaInst ? C.or : C.g5, border: "none", borderBottom: !vistaInst ? `2.5px solid ${C.or}` : "2.5px solid transparent", padding: "8px 14px", cursor: "pointer", fontSize: 13, fontWeight: !vistaInst ? 600 : 400, marginBottom: -2, fontFamily: "system-ui" }}>Vista general</button>
+        {instsActivos.map(i => <button key={i.id} onClick={() => setVistaInst(i.id)} style={{ background: "transparent", color: vistaInst === i.id ? C.gn : C.g5, border: "none", borderBottom: vistaInst === i.id ? `2.5px solid ${C.gn}` : "2.5px solid transparent", padding: "8px 14px", cursor: "pointer", fontSize: 13, fontWeight: vistaInst === i.id ? 600 : 400, marginBottom: -2, fontFamily: "system-ui" }}>{i.nombre.split(" ")[0]}</button>)}
       </div>
 
-      {tipologias.length>0&&<div style={{marginBottom:18,padding:"12px 16px",background:C.white,borderRadius:10,border:`1px solid ${C.gray200}`}}>
-        <div style={{fontSize:12,fontWeight:600,marginBottom:8,color:C.gray500,textTransform:"uppercase",letterSpacing:"0.06em"}}>Tipologías</div>
-        <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-          {tipologias.map(t=><div key={t.id} style={{display:"flex",alignItems:"center",gap:6,...badge("orange")}}>
-            <span>{t.nombre} · {t.elementoIds?.length||0} elem.</span>
-            {user.rol===ROLES.SUPERADMIN&&<span onClick={()=>abrirEditTip(t)} style={{cursor:"pointer",fontWeight:700}}>✎</span>}
-          </div>)}
+      {tips.length > 0 && <div style={{ marginBottom: 18, padding: "12px 16px", background: C.wh, borderRadius: 10, border: `1px solid ${C.g2}` }}>
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: C.g5, textTransform: "uppercase", letterSpacing: ".06em" }}>Tipologías</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {tips.map(t => (
+            <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 6, ...bdg("orange") }}>
+              <span>{t.nombre} · {t.elementoIds?.length || 0} elem.</span>
+              {user.rol === ROLES.SA && <>
+                <span onClick={() => abrirEditar(t)} style={{ cursor: "pointer", fontWeight: 700 }}>✎</span>
+                <span onClick={() => setDelTipId(t.id)} style={{ cursor: "pointer", fontWeight: 700, color: C.rd, marginLeft: 2 }}>🗑</span>
+              </>}
+            </div>
+          ))}
         </div>
       </div>}
 
-      {currentObra.pisos?.map(piso=>{
-        const aptosVista=vistaInstalador?piso.aptos?.filter(a=>a.elementos?.some(el=>el.instaladorId===vistaInstalador)):piso.aptos;
-        if(vistaInstalador&&!aptosVista?.length)return null;
-        return(
-          <div key={piso.id} style={{marginBottom:20}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,borderBottom:`2px solid ${C.gray100}`,paddingBottom:8}}>
-              <div style={{fontSize:13,fontWeight:700,color:C.gray500,textTransform:"uppercase",letterSpacing:"0.06em"}}>Piso {piso.numero}</div>
-              {user.rol===ROLES.SUPERADMIN&&!vistaInstalador&&<button onClick={()=>setEditPisoModal(piso.id)} style={{...badge("gray"),cursor:"pointer",border:`1px solid ${C.gray200}`,fontSize:11}}>✎ Editar aptos</button>}
+      {cur.pisos?.map(piso => {
+        const aptosV = vistaInst ? piso.aptos?.filter(a => a.instaladorAsignado === vistaInst) : piso.aptos;
+        if (vistaInst && !aptosV?.length) return null;
+        return (
+          <div key={piso.id} style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, borderBottom: `2px solid ${C.g1}`, paddingBottom: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.g5, textTransform: "uppercase", letterSpacing: ".06em" }}>Piso {piso.numero}</div>
+              {user.rol === ROLES.SA && !vistaInst && <button onClick={() => setPisoEditM(piso.id)} style={{ ...bdg("gray"), cursor: "pointer", fontSize: 11 }}>✎ Editar aptos</button>}
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:10}}>
-              {aptosVista?.map(apto=>{
-                const av=calcAvanceApto(apto),tip=tipologias?.find(t=>t.id===apto.tipologia);
-                const instaladorApto=apto.elementos?.find(el=>el.instaladorId&&!el.esAdicional)?.instaladorId;
-                const instNombre=instaladorApto?usuarios.find(u=>u.id===instaladorApto)?.nombre?.split(" ")[0]:null;
-                return(
-                  <div key={apto.id} onClick={()=>apto.tipologia?setSelectedApto(apto,piso):null} style={{...card,cursor:apto.tipologia?"pointer":"default",padding:"10px 12px"}} onMouseEnter={e=>apto.tipologia&&(e.currentTarget.style.borderColor=C.orange)} onMouseLeave={e=>(e.currentTarget.style.borderColor=C.gray200)}>
-                    <div style={{fontWeight:700,fontSize:13,marginBottom:2}}>{apto.nombre||`${piso.numero}${String(apto.numero).padStart(2,"0")}`}</div>
-                    {instNombre&&<div style={{fontSize:10,color:C.orange,marginBottom:4,fontWeight:600}}>👷 {instNombre}</div>}
-                    {tip?(<>
-                      <div style={{fontSize:10,color:C.gray500,marginBottom:5}}>{tip.nombre}</div>
-                      <div style={{height:5,background:C.gray100,borderRadius:10,overflow:"hidden",marginBottom:4}}><div style={{height:"100%",width:`${av}%`,background:av===100?C.green:C.orange,borderRadius:10}}/></div>
-                      <div style={{fontSize:10,color:C.gray400,fontWeight:600,marginBottom:4}}>{av}%</div>
-                      {user.rol!==ROLES.AUXILIAR&&(
-                        <div style={{display:"flex",gap:3}} onClick={e=>e.stopPropagation()}>
-                          <select style={{fontSize:9,padding:"2px 3px",border:`1px solid ${C.gray200}`,borderRadius:4,flex:1,color:C.gray500}} defaultValue="" onChange={e=>{if(e.target.value)asignarTipologia(piso.id,apto.id,e.target.value);}}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(130px,1fr))", gap: 10 }}>
+              {aptosV?.map(apto => {
+                const av = avanceApto(apto);
+                const tip = tips.find(t => t.id === apto.tipologia);
+                const instAsig = apto.instaladorAsignado ? users.find(u => u.id === apto.instaladorAsignado) : null;
+                const canEnter = apto.tipologia && instAsig;
+                const habPara = Object.entries(cur.aptosHabilitados || {}).filter(([, ids]) => ids.includes(apto.id)).map(([iid]) => users.find(u => u.id === iid)?.nombre?.split(" ")[0]).filter(Boolean);
+                return (
+                  <div key={apto.id} onClick={() => canEnter ? goApto(apto, piso) : null} style={{ ...card, cursor: canEnter ? "pointer" : "default", padding: "10px 12px" }} onMouseEnter={e => canEnter && (e.currentTarget.style.borderColor = C.or)} onMouseLeave={e => (e.currentTarget.style.borderColor = C.g2)}>
+                    <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{apto.nombre || `${piso.numero}${String(apto.numero).padStart(2, "0")}`}</div>
+                    {instAsig
+                      ? <div style={{ fontSize: 10, color: C.or, marginBottom: 4, fontWeight: 700 }}>👷 {instAsig.nombre.split(" ")[0]}</div>
+                      : habPara.length > 0 && <div style={{ fontSize: 10, color: C.am, marginBottom: 4 }}>🔓 {habPara.join(", ")}</div>
+                    }
+                    {!instAsig && user.rol === ROLES.SA && apto.tipologia && (
+                      <div onClick={e => e.stopPropagation()} style={{ marginBottom: 4 }}>
+                        <select style={{ width: "100%", fontSize: 10, padding: "3px 4px", border: `1px solid ${C.g2}`, borderRadius: 6, color: C.g5 }} value="" onChange={e => { if (e.target.value) asignarInst(piso.id, apto.id, e.target.value); }}>
+                          <option value="">Asignar inst...</option>
+                          {instsActivos.map(i => <option key={i.id} value={i.id}>{i.nombre.split(" ")[0]}</option>)}
+                        </select>
+                      </div>
+                    )}
+                    {tip ? (<>
+                      <div style={{ fontSize: 10, color: C.g5, marginBottom: 5 }}>{tip.nombre}</div>
+                      <div style={{ height: 5, background: C.g1, borderRadius: 10, overflow: "hidden", marginBottom: 4 }}>
+                        <div style={{ height: "100%", width: `${av}%`, background: av === 100 ? C.gn : C.or, borderRadius: 10 }} />
+                      </div>
+                      <div style={{ fontSize: 10, color: C.g4, fontWeight: 600, marginBottom: 4 }}>{av}%</div>
+                      {user.rol !== ROLES.AX && (
+                        <div style={{ display: "flex", gap: 3 }} onClick={e => e.stopPropagation()}>
+                          <select style={{ fontSize: 9, padding: "2px 3px", border: `1px solid ${C.g2}`, borderRadius: 4, flex: 1, color: C.g5 }} defaultValue="" onChange={e => { if (e.target.value) asignarTip(piso.id, apto.id, e.target.value); }}>
                             <option value="">Cambiar...</option>
-                            {tipologias?.filter(t=>t.id!==apto.tipologia).map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}
+                            {tips.filter(t => t.id !== apto.tipologia).map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
                           </select>
-                          <button onClick={e=>{e.stopPropagation();quitarTipologiaApto(piso.id,apto.id);}} style={{fontSize:9,background:C.redL,border:"1px solid #FECACA",color:C.red,borderRadius:4,padding:"2px 5px",cursor:"pointer"}}>✕</button>
+                          <button onClick={e => { e.stopPropagation(); quitarTip(piso.id, apto.id); }} style={{ fontSize: 9, background: C.rdL, border: "1px solid #FECACA", color: C.rd, borderRadius: 4, padding: "2px 5px", cursor: "pointer" }}>✕</button>
                         </div>
                       )}
-                    </>):user.rol!==ROLES.AUXILIAR?(
-                      asignando===apto.id?<select style={{width:"100%",fontSize:10,marginTop:4,padding:"3px",border:`1px solid ${C.gray200}`,borderRadius:6}} onClick={e=>e.stopPropagation()} onChange={e=>e.target.value&&asignarTipologia(piso.id,apto.id,e.target.value)}><option value="">Seleccionar...</option>{tipologias?.map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}</select>
-                      :<button onClick={e=>{e.stopPropagation();setAsignando(apto.id);}} style={{fontSize:10,...badge("orange"),cursor:"pointer",marginTop:4}}>+ tipología</button>
-                    ):<div style={{fontSize:10,color:C.gray400}}>Sin asignar</div>}
+                    </>) : user.rol !== ROLES.AX ? (
+                      asign === apto.id
+                        ? <select style={{ width: "100%", fontSize: 10, marginTop: 4, padding: "3px", border: `1px solid ${C.g2}`, borderRadius: 6 }} onClick={e => e.stopPropagation()} onChange={e => e.target.value && asignarTip(piso.id, apto.id, e.target.value)}>
+                          <option value="">Seleccionar...</option>{tips.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                        </select>
+                        : <button onClick={e => { e.stopPropagation(); setAsign(apto.id); }} style={{ fontSize: 10, ...bdg("orange"), cursor: "pointer", marginTop: 4 }}>+ tipología</button>
+                    ) : <div style={{ fontSize: 10, color: C.g4 }}>Sin asignar</div>}
+                    {instAsig && user.rol === ROLES.SA && <button onClick={e => { e.stopPropagation(); asignarInst(piso.id, apto.id, null); }} style={{ fontSize: 9, ...bdg("red"), cursor: "pointer", marginTop: 4, width: "100%", textAlign: "center" }}>✕ Quitar instalador</button>}
                   </div>
                 );
               })}
@@ -603,449 +811,435 @@ function ObraDetalle({obra,obras,updateObra,user,calcAvanceApto,elementos,usuari
         );
       })}
 
-      {editPisoModal&&(()=>{const piso=currentObra.pisos?.find(p=>p.id===editPisoModal);return<Modal title={`Editar apartamentos — Piso ${piso?.numero}`} onClose={()=>setEditPisoModal(null)} wide>
-        <div style={{display:"grid",gap:8,marginBottom:16,maxHeight:300,overflowY:"auto"}}>
-          {piso?.aptos?.map(apto=><div key={apto.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:C.gray50,border:`1px solid ${C.gray200}`,borderRadius:8}}>
-            <input value={apto.nombre||`${piso.numero}${String(apto.numero).padStart(2,"0")}`} onChange={e=>renombrarApto(editPisoModal,apto.id,e.target.value)} style={{flex:1,padding:"5px 8px",border:`1px solid ${C.gray200}`,borderRadius:6,fontSize:14}}/>
-            <button onClick={()=>eliminarApto(editPisoModal,apto.id)} style={{...badge("red"),cursor:"pointer"}}>✕</button>
-          </div>)}
-        </div>
-        <div style={{display:"flex",justifyContent:"space-between"}}>
-          <Btn onClick={()=>agregarApto(editPisoModal)}>+ Agregar apartamento</Btn>
-          <Btn variant="primary" onClick={()=>setEditPisoModal(null)}>Listo</Btn>
-        </div>
-      </Modal>;})()||null}
-
-      {preciosModal&&<Modal title={`Precios por corte — ${obra.nombre}`} onClose={()=>setPreciosModal(false)} wide>
-        <Select label="Corte de pago" value={preciosCorte} onChange={e=>{setPreciosCorte(e.target.value);setPreciosTmp({});}}>
-          <option value="">— Seleccionar corte —</option>
-          {cortes.map((c,i)=><option key={i} value={c.label}>{c.label}</option>)}
-        </Select>
-        {preciosCorte&&<>
-          <p style={{fontSize:13,color:C.gray500,margin:"0 0 12px"}}>Modifica el precio para este corte en esta obra.</p>
-          <div style={{maxHeight:300,overflowY:"auto",display:"grid",gap:8}}>
-            {elementos.map(el=>{const k=`${preciosCorte}__${el.id}`;const ov=currentObra.preciosOverride?.[k];return<div key={el.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:C.gray50,borderRadius:8}}>
-              <div style={{flex:1,fontSize:14}}>{el.nombre} <span style={{fontSize:12,color:C.gray400}}>({fmt(el.precio)} estándar)</span></div>
-              <input type="number" min="0" placeholder={String(el.precio)} value={preciosTmp[el.id]??ov??""} onChange={e=>setPreciosTmp(t=>({...t,[el.id]:e.target.value}))} style={{width:110,padding:"5px 8px",border:`1px solid ${C.gray200}`,borderRadius:6,fontSize:13,textAlign:"right"}}/>
-            </div>;})}
-          </div>
-          <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:16}}><Btn onClick={()=>setPreciosModal(false)}>Cancelar</Btn><Btn variant="primary" onClick={guardarPrecios}>Guardar precios</Btn></div>
-        </>}
-      </Modal>}
-
-      {accesoObraModal&&<Modal title={`Accesos — ${currentObra.nombre}`} onClose={()=>setAccesoObraModal(false)} wide>
-        {(()=>{
-          const pends=(currentObra.solicitudes||[]).filter(s=>s.estado==="pendiente");
-          const instaladores=usuarios.filter(u=>u.rol===ROLES.INSTALADOR);
-          return<div>
-            {pends.length>0&&<div style={{marginBottom:20}}>
-              <div style={{fontSize:13,fontWeight:600,marginBottom:10,color:"#B45309"}}>Solicitudes pendientes</div>
-              {pends.map(s=>{const inst=usuarios.find(u=>u.id===s.userId);return<div key={s.userId} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",background:C.amberL,border:"1px solid #FDE68A",borderRadius:10,marginBottom:8}}>
-                <div style={{flex:1}}><div style={{fontWeight:600,fontSize:14}}>{inst?.nombre}</div><div style={{fontSize:12,color:C.gray500}}>{s.fecha}</div></div>
-                <Btn variant="success" onClick={()=>{updateObra(obra.id,o=>({...o,solicitudes:(o.solicitudes||[]).map(x=>x.userId===s.userId?{...x,estado:"aprobado"}:x),instaladoresAutorizados:[...new Set([...(o.instaladoresAutorizados||[]),s.userId])]}));pushNotif(`Aprobado ${inst?.nombre}`,"success");}}>Aprobar</Btn>
-                <Btn variant="danger" onClick={()=>updateObra(obra.id,o=>({...o,solicitudes:(o.solicitudes||[]).map(x=>x.userId===s.userId?{...x,estado:"rechazado"}:x)}))}>Rechazar</Btn>
-              </div>;})}
-            </div>}
-            <div style={{fontSize:13,fontWeight:600,marginBottom:10}}>Todos los instaladores</div>
-            <div style={{display:"grid",gap:8,maxHeight:360,overflowY:"auto"}}>
-              {instaladores.map(inst=>{const aut=(currentObra.instaladoresAutorizados||[]).includes(inst.id);return<div key={inst.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",background:aut?C.greenL:C.gray50,border:`1px solid ${aut?"#BBF7D0":C.gray200}`,borderRadius:10}}>
-                <div style={{width:36,height:36,borderRadius:50,background:aut?C.green:C.gray300,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:600,color:C.white,flexShrink:0}}>{inst.nombre.split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase()}</div>
-                <div style={{flex:1}}><div style={{fontWeight:600,fontSize:14}}>{inst.nombre}</div><div style={{fontSize:12,color:C.gray500}}>C.C. {inst.cedula||"—"}</div></div>
-                <button onClick={()=>updateObra(obra.id,o=>{const a=o.instaladoresAutorizados||[];return{...o,instaladoresAutorizados:a.includes(inst.id)?a.filter(id=>id!==inst.id):[...a,inst.id]};})} style={{...badge(aut?"red":"green"),cursor:"pointer"}}>{aut?"Revocar":"Dar acceso"}</button>
-              </div>;})}
+      {delTipId && <Modal title="Eliminar tipología" onClose={() => setDelTipId(null)}>
+        {(() => {
+          const tip = tips.find(t => t.id === delTipId);
+          const enUso = cur.pisos?.reduce((n, p) => n + (p.aptos?.filter(a => a.tipologia === delTipId).length || 0), 0) || 0;
+          return <>
+            <p style={{ fontSize: 14, color: C.g9, marginBottom: 8 }}>¿Eliminar la tipología <strong>{tip?.nombre}</strong>?</p>
+            {enUso > 0 && <div style={{ background: C.rdL, border: "1px solid #FECACA", borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: C.rd }}>⚠️ Esta tipología está asignada a <strong>{enUso} apartamento(s)</strong>. Se les quitará la tipología y todos sus elementos.</div>}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Btn onClick={() => setDelTipId(null)}>Cancelar</Btn>
+              <Btn variant="danger" onClick={() => eliminarTip(delTipId)}>Sí, eliminar</Btn>
             </div>
-            <div style={{display:"flex",justifyContent:"flex-end",marginTop:16}}><Btn onClick={()=>setAccesoObraModal(false)}>Cerrar</Btn></div>
-          </div>;
+          </>;
         })()}
       </Modal>}
 
-      {modals.tipModal&&<Modal title={editTip?"Editar tipología":"Nueva tipología"} onClose={()=>closeModal("tipModal")}>
-        <Input label="Nombre" value={tipForm.nombre} onChange={e=>setTipForm(f=>({...f,nombre:e.target.value}))} placeholder="Ej: Tipo A — 3 alcobas"/>
-        <div style={{marginBottom:14}}>
-          <label style={{fontSize:12,color:C.gray500,display:"block",marginBottom:8,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.04em"}}>Elementos incluidos</label>
-          <div style={{maxHeight:260,overflowY:"auto",border:`1px solid ${C.gray200}`,borderRadius:8,padding:8,background:C.white}}>
-            {elementos.map(el=><label key={el.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 8px",cursor:"pointer",fontSize:14,borderRadius:6,background:tipForm.elementoIds.includes(el.id)?C.orangeL:"transparent"}}>
-              <input type="checkbox" checked={tipForm.elementoIds.includes(el.id)} onChange={e=>setTipForm(f=>({...f,elementoIds:e.target.checked?[...f.elementoIds,el.id]:f.elementoIds.filter(x=>x!==el.id)}))}/>
-              <span style={{flex:1,color:C.black}}>{el.nombre}</span>
-              <span style={{fontSize:12,color:C.gray400}}>{el.unidad} · {fmt(el.precio)}</span>
-            </label>)}
+      {pisoEditM && (() => {
+        const p = cur.pisos?.find(x => x.id === pisoEditM);
+        return <Modal title={`Editar aptos — Piso ${p?.numero}`} onClose={() => setPisoEditM(null)} wide>
+          <div style={{ display: "grid", gap: 8, marginBottom: 16, maxHeight: 300, overflowY: "auto" }}>
+            {p?.aptos?.map(a => <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: C.g0, border: `1px solid ${C.g2}`, borderRadius: 8 }}>
+              <input value={a.nombre || ""} onChange={e => renombrarApto(pisoEditM, a.id, e.target.value)} style={{ flex: 1, padding: "5px 8px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 14 }} />
+              <button onClick={() => eliminarApto(pisoEditM, a.id)} style={{ ...bdg("red"), cursor: "pointer" }}>✕</button>
+            </div>)}
           </div>
-          <div style={{fontSize:12,color:C.gray400,marginTop:6}}>{tipForm.elementoIds.length} elemento(s) seleccionado(s)</div>
-        </div>
-        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}><Btn onClick={()=>closeModal("tipModal")}>Cancelar</Btn><Btn variant="primary" onClick={guardarTip}>{editTip?"Guardar cambios":"Crear"}</Btn></div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}><Btn onClick={() => agregarApto(pisoEditM)}>+ Agregar apto</Btn><Btn variant="primary" onClick={() => setPisoEditM(null)}>Listo</Btn></div>
+        </Modal>;
+      })() || null}
+
+      {preciosM && <Modal title={`Precios por corte — ${obra.nombre}`} onClose={() => setPreciosM(false)} wide>
+        <Sel label="Corte" value={precCorte} onChange={e => { setPrecCorte(e.target.value); setPrecTmp({}); }}>
+          <option value="">— Seleccionar —</option>{cortes.map((c, i) => <option key={i} value={c.label}>{c.label}</option>)}
+        </Sel>
+        {precCorte && <><p style={{ fontSize: 13, color: C.g5, margin: "0 0 12px" }}>Modifica el precio para este corte. Vacío = precio estándar.</p>
+          <div style={{ maxHeight: 300, overflowY: "auto", display: "grid", gap: 8 }}>
+            {elems.map(e => {
+              const k = `${precCorte}__${e.id}`; const ov = cur.preciosOverride?.[k];
+              return <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: C.g0, borderRadius: 8 }}>
+                <div style={{ flex: 1, fontSize: 14 }}>{e.nombre} <span style={{ fontSize: 12, color: C.g4 }}>({fmt(e.precio)} std)</span></div>
+                <input type="number" min="0" placeholder={String(e.precio)} value={precTmp[e.id] ?? ov ?? ""} onChange={x => setPrecTmp(t => ({ ...t, [e.id]: x.target.value }))} style={{ width: 110, padding: "5px 8px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 13, textAlign: "right" }} />
+              </div>;
+            })}
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}><Btn onClick={() => setPreciosM(false)}>Cancelar</Btn><Btn variant="primary" onClick={guardarPrecios}>Guardar</Btn></div>
+        </>}
       </Modal>}
 
-      {replicaModal&&<Modal title="Replicar tipologías por número" onClose={()=>setReplicaModal(false)} wide>
-        <p style={{fontSize:13,color:C.gray500,margin:"0 0 16px"}}>Asigna una tipología a cada número de apartamento en todos los pisos.</p>
-        <div style={{display:"grid",gap:10,marginBottom:16}}>
-          {numerosApto.map(sufijo=>{
-            const regla=replicaSel.reglas.find(r=>r.sufijo===sufijo),tipId=regla?.tipId||"";
-            const cantidad=currentObra.pisos?.reduce((n,p)=>n+(p.aptos?.filter(a=>String(a.numero)===sufijo).length||0),0);
-            return<div key={sufijo} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",background:tipId?C.orangeL:C.gray50,border:`1px solid ${tipId?C.orangeMid:C.gray200}`,borderRadius:10}}>
-              <div style={{minWidth:80}}><div style={{fontWeight:700,fontSize:14,color:tipId?C.orangeD:C.black}}>Apto ×{sufijo}</div><div style={{fontSize:12,color:C.gray400}}>{cantidad} apto(s)</div></div>
-              <select style={{flex:1,padding:"7px 10px",border:`1px solid ${C.gray200}`,borderRadius:8,fontSize:14}} value={tipId} onChange={e=>{const val=e.target.value;setReplicaSel(r=>{const n=r.reglas.filter(x=>x.sufijo!==sufijo);if(val)n.push({sufijo,tipId:val});return{reglas:n};});}}>
-                <option value="">— Sin asignar —</option>
-                {tipologias.map(t=><option key={t.id} value={t.id}>{t.nombre}</option>)}
+      {accModal && <ModalAccesos obraId={cur.id} obras={obras} users={users} updateObra={updateObra} toast={toast} onClose={() => setAccModal(false)} />}
+
+      {modals.tip && <Modal title={editTip ? "Editar tipología" : "Nueva tipología"} onClose={() => closeM("tip")}>
+        <Inp label="Nombre" value={tipForm.nombre} onChange={e => setTipForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Ej: Tipo A — 3 alcobas" />
+        <div style={{ marginBottom: 14 }}>
+          <label style={lbl()}>Elementos incluidos</label>
+          <div style={{ maxHeight: 260, overflowY: "auto", border: `1px solid ${C.g2}`, borderRadius: 8, padding: 8, background: C.wh }}>
+            {elems.map(e => <label key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", cursor: "pointer", fontSize: 14, borderRadius: 6, background: tipForm.eids.includes(e.id) ? C.orL : "transparent" }}>
+              <input type="checkbox" checked={tipForm.eids.includes(e.id)} onChange={x => setTipForm(f => ({ ...f, eids: x.target.checked ? [...f.eids, e.id] : f.eids.filter(i => i !== e.id) }))} />
+              <span style={{ flex: 1, color: C.bk }}>{e.nombre}</span>
+              <span style={{ fontSize: 12, color: C.g4 }}>{e.unidad} · {fmt(e.precio)}</span>
+            </label>)}
+          </div>
+          <div style={{ fontSize: 12, color: C.g4, marginTop: 6 }}>{tipForm.eids.length} seleccionado(s)</div>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn onClick={() => closeM("tip")}>Cancelar</Btn><Btn variant="primary" onClick={guardarTip}>{editTip ? "Guardar" : "Crear"}</Btn></div>
+      </Modal>}
+
+      {repModal && <Modal title="Replicar tipologías" onClose={() => setRepModal(false)} wide>
+        <p style={{ fontSize: 13, color: C.g5, margin: "0 0 16px" }}>Asigna tipología por número de apartamento en todos los pisos.</p>
+        <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
+          {nums.map(suf => {
+            const reg = repSel.reglas.find(r => r.sufijo === suf); const tid = reg?.tipId || "";
+            const cnt = cur.pisos?.reduce((n, p) => n + (p.aptos?.filter(a => String(a.numero) === suf).length || 0), 0);
+            return <div key={suf} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: tid ? C.orL : C.g0, border: `1px solid ${tid ? C.orM : C.g2}`, borderRadius: 10 }}>
+              <div style={{ minWidth: 80 }}><div style={{ fontWeight: 700, fontSize: 14, color: tid ? C.orD : C.bk }}>Apto ×{suf}</div><div style={{ fontSize: 12, color: C.g4 }}>{cnt} apto(s)</div></div>
+              <select style={{ flex: 1, padding: "7px 10px", border: `1px solid ${C.g2}`, borderRadius: 8, fontSize: 14 }} value={tid} onChange={e => { const v = e.target.value; setRepSel(r => { const n = r.reglas.filter(x => x.sufijo !== suf); if (v) n.push({ sufijo: suf, tipId: v }); return { reglas: n }; }); }}>
+                <option value="">— Sin asignar —</option>{tips.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
               </select>
-              {tipId&&<span style={{fontSize:18,color:C.orange,fontWeight:700}}>✓</span>}
+              {tid && <span style={{ fontSize: 18, color: C.or, fontWeight: 700 }}>✓</span>}
             </div>;
           })}
         </div>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{fontSize:13,color:C.gray400}}>{replicaSel.reglas.filter(r=>r.tipId).length} asignado(s)</span>
-          <div style={{display:"flex",gap:10}}><Btn onClick={()=>setReplicaModal(false)}>Cancelar</Btn><Btn variant="primary" disabled={!replicaSel.reglas.filter(r=>r.tipId).length} onClick={replicarEnSerie}>Aplicar</Btn></div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: 13, color: C.g4 }}>{repSel.reglas.filter(r => r.tipId).length} asignado(s)</span>
+          <div style={{ display: "flex", gap: 10 }}><Btn onClick={() => setRepModal(false)}>Cancelar</Btn><Btn variant="primary" disabled={!repSel.reglas.filter(r => r.tipId).length} onClick={replicar}>Aplicar</Btn></div>
         </div>
       </Modal>}
     </div>
   );
 }
 
-function AptoDetalle({apto,piso,obra,obras,updateObra,user,elementos,usuarios,calcAvanceApto,pushNotif,getPrecio}){
-  const currentObra=obras.find(o=>o.id===obra.id);
-  const currentPiso=currentObra?.pisos?.find(p=>p.id===piso.id);
-  const currentApto=currentPiso?.aptos?.find(a=>a.id===apto.id)||apto;
-  const tip=currentObra?.tipologias?.find(t=>t.id===currentApto.tipologia);
-  const av=calcAvanceApto(currentApto);
-  const supervisores=usuarios.filter(u=>u.rol===ROLES.SUPERVISOR);
-  const[pendientes,setPendientes]=useState({});
-  const[cantidades,setCantidades]=useState({});
-  const[ajusteLocal,setAjusteLocal]=useState({pasajes:"",bonificacion:""});
-  const[nuevoAdicional,setNuevoAdicional]=useState({descripcion:"",cantidad:1,valorUnitario:0});
-  const[agregarAdicional,setAgregarAdicional]=useState(false);
-  const hayPendientes=Object.keys(pendientes).length>0||ajusteLocal.pasajes||ajusteLocal.bonificacion;
-  const canToggle=(idx)=>{const el=currentApto.elementos?.[idx];if(!el||el.completado)return false;return[ROLES.INSTALADOR,ROLES.SUPERADMIN,ROLES.SUPERVISOR].includes(user.rol);};
-  const canEdit=user.rol===ROLES.SUPERADMIN||user.rol===ROLES.SUPERVISOR;
-  const corteActual=getCorteFechas()[0];
+// ── APTO ──────────────────────────────────────────────────
+function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceApto, toast, getPrecio }) {
+  const cur = obras.find(o => o.id === obra.id);
+  const curP = cur?.pisos?.find(p => p.id === piso.id);
+  const curA = curP?.aptos?.find(a => a.id === apto.id) || apto;
+  const tip = cur?.tipologias?.find(t => t.id === curA.tipologia);
+  const av = avanceApto(curA);
+  const SVs = users.filter(u => u.rol === ROLES.SV);
+  const [pend, setPend] = useState({});
+  const [cnts, setCnts] = useState({});
+  const [ajuste, setAjuste] = useState({ pasajes: "", bonificacion: "" });
+  const [nAd, setNAd] = useState({ desc: "", cant: 1, val: 0 });
+  const [addAd, setAddAd] = useState(false);
+  const hayPend = Object.keys(pend).length > 0 || ajuste.pasajes || ajuste.bonificacion;
+  const canAct = [ROLES.IN, ROLES.SA, ROLES.SV].includes(user.rol);
+  const canEdit = user.rol === ROLES.SA || user.rol === ROLES.SV;
+  const corteAct = getCorteFechas()[0];
 
-  function togglePendiente(idx){if(!canToggle(idx))return;setPendientes(p=>{const c={...p};if(c[idx]!==undefined)delete c[idx];else c[idx]=true;return c;});}
+  const canToggle = idx => { const e = curA.elementos?.[idx]; if (!e || e.completado) return false; return canAct; };
+  const togglePend = idx => { if (!canToggle(idx)) return; setPend(p => { const c = { ...p }; if (c[idx] !== undefined) delete c[idx]; else c[idx] = true; return c; }); };
 
-  async function guardarCambios(){
-    await updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>{if(p.id!==piso.id)return p;return{...p,aptos:p.aptos.map(a=>{if(a.id!==apto.id)return a;
-      const newEls=a.elementos.map((el,i)=>{let u={...el};if(cantidades[i]!==undefined)u.cantidad=cantidades[i];if(pendientes[i]){u.completado=true;u.instaladorId=user.id;u.fecha=new Date().toLocaleDateString("es-CO");}return u;});
-      const ajustes=[];
-      if(ajusteLocal.pasajes)ajustes.push({elementoId:"__pasajes__",completado:true,instaladorId:user.id,fecha:new Date().toLocaleDateString("es-CO"),cantidad:1,valorManual:Number(ajusteLocal.pasajes),aprobado:false});
-      if(ajusteLocal.bonificacion)ajustes.push({elementoId:"__bonificacion__",completado:true,instaladorId:user.id,fecha:new Date().toLocaleDateString("es-CO"),cantidad:1,valorManual:Number(ajusteLocal.bonificacion),aprobado:false});
-      const newElsFinal=[...newEls.filter(e=>e.elementoId!=="__pasajes__"&&e.elementoId!=="__bonificacion__"),...ajustes];
-      const allDone=newEls.filter(e=>!e.esAdicional&&!e.elementoId?.startsWith("__")).every(e=>e.completado);
-      if(allDone)supervisores.forEach(s=>pushNotif(`🔔 ${s.nombre}: Apto completado en ${obra.nombre}`,"info"));
-      return{...a,elementos:newElsFinal};})};})}));
-    pushNotif("Guardado correctamente","success");setPendientes({});setCantidades({});setAjusteLocal({pasajes:"",bonificacion:""});
+  async function guardar() {
+    updateObra(obra.id, o => ({
+      ...o, pisos: o.pisos.map(p => {
+        if (p.id !== piso.id) return p;
+        return {
+          ...p, aptos: p.aptos.map(a => {
+            if (a.id !== apto.id) return a;
+            const newEls = a.elementos.map((el, i) => {
+              let u = { ...el };
+              if (cnts[i] !== undefined) u.cantidad = cnts[i];
+              if (pend[i]) { u.completado = true; u.instaladorId = user.id; u.fecha = new Date().toLocaleDateString("es-CO"); }
+              return u;
+            });
+            const extras = [];
+            if (ajuste.pasajes) extras.push({ elementoId: "__pasajes__", completado: true, instaladorId: user.id, fecha: new Date().toLocaleDateString("es-CO"), cantidad: 1, valorManual: Number(ajuste.pasajes), aprobado: false });
+            if (ajuste.bonificacion) extras.push({ elementoId: "__bonificacion__", completado: true, instaladorId: user.id, fecha: new Date().toLocaleDateString("es-CO"), cantidad: 1, valorManual: Number(ajuste.bonificacion), aprobado: false });
+            const final = [...newEls.filter(e => e.elementoId !== "__pasajes__" && e.elementoId !== "__bonificacion__"), ...extras];
+            const done = newEls.filter(e => !e.esAdicional && !e.elementoId?.startsWith("__")).every(e => e.completado);
+            if (done) SVs.forEach(s => toast(`🔔 ${s.nombre}: Apto completado en ${obra.nombre}`));
+            return { ...a, elementos: final };
+          })
+        };
+      })
+    }));
+    toast("Guardado", "ok"); setPend({}); setCnts({}); setAjuste({ pasajes: "", bonificacion: "" });
   }
 
-  async function desmarcarElemento(idx){
-    await updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>p.id!==piso.id?p:{...p,aptos:p.aptos.map(a=>a.id!==apto.id?a:{...a,elementos:a.elementos.map((el,i)=>i!==idx?el:{...el,completado:false,instaladorId:null,fecha:null})})})}));
-    pushNotif("Elemento desmarcado","success");
+  const desmarcar = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, completado: false, instaladorId: null, fecha: null }) }) }) }));
+  const aprobarAjuste = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, aprobado: true }) }) }) }));
+
+  async function guardarAd() {
+    if (!nAd.desc || !nAd.val) return;
+    const el = { elementoId: `__ad__${Date.now()}`, descripcion: nAd.desc, cantidad: Number(nAd.cant), valorUnitario: Number(nAd.val), completado: false, instaladorId: null, fecha: null, esAdicional: true, aprobado: false };
+    updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: [...(a.elementos || []), el] }) }) }));
+    setNAd({ desc: "", cant: 1, val: 0 }); setAddAd(false); toast("Adicional agregado", "ok");
   }
+  const elimAd = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.filter((_, i) => i !== idx) }) }) }));
 
-  async function aprobarAjuste(idx){
-    await updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>p.id!==piso.id?p:{...p,aptos:p.aptos.map(a=>a.id!==apto.id?a:{...a,elementos:a.elementos.map((el,i)=>i!==idx?el:{...el,aprobado:true})})})}));
-    pushNotif("Ajuste aprobado","success");
-  }
+  const elsNorm = curA.elementos?.filter(e => !e.esAdicional && e.elementoId !== "__pasajes__" && e.elementoId !== "__bonificacion__") || [];
+  const elsAd = curA.elementos?.filter(e => e.esAdicional) || [];
+  const ajustes = curA.elementos?.filter(e => e.elementoId === "__pasajes__" || e.elementoId === "__bonificacion__") || [];
 
-  async function guardarAdicional(){
-    if(!nuevoAdicional.descripcion||!nuevoAdicional.valorUnitario)return;
-    const el={elementoId:`__adicional__${Date.now()}`,descripcion:nuevoAdicional.descripcion,cantidad:Number(nuevoAdicional.cantidad),valorUnitario:Number(nuevoAdicional.valorUnitario),completado:false,instaladorId:null,fecha:null,esAdicional:true,aprobado:false};
-    await updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>p.id!==piso.id?p:{...p,aptos:p.aptos.map(a=>a.id!==apto.id?a:{...a,elementos:[...(a.elementos||[]),el]})})}));
-    setNuevoAdicional({descripcion:"",cantidad:1,valorUnitario:0});setAgregarAdicional(false);pushNotif("Elemento adicional agregado","success");
-  }
+  const totNorm = elsNorm.filter(e => e.completado).reduce((s, el) => s + getPrecio(el.elementoId, obra.id, corteAct.label) * (el.cantidad || 1), 0);
+  const totAd = elsAd.filter(e => e.completado && e.aprobado).reduce((s, e) => s + e.valorUnitario * e.cantidad, 0);
+  const totAj = ajustes.filter(e => e.aprobado).reduce((s, e) => s + (e.valorManual || 0), 0);
+  const totLiq = totNorm + totAd + totAj;
+  const totPend = Object.keys(pend).reduce((s, i) => { const el = elsNorm[parseInt(i)]; return s + getPrecio(el?.elementoId, obra.id, corteAct.label) * (cnts[i] ?? el?.cantidad ?? 1); }, 0) + (Number(ajuste.pasajes) || 0) + (Number(ajuste.bonificacion) || 0);
 
-  async function eliminarAdicional(idx){
-    await updateObra(obra.id,o=>({...o,pisos:o.pisos.map(p=>p.id!==piso.id?p:{...p,aptos:p.aptos.map(a=>a.id!==apto.id?a:{...a,elementos:a.elementos.filter((_,i)=>i!==idx)})})}));
-  }
-
-  const elementosNormales=currentApto.elementos?.filter(e=>!e.esAdicional&&e.elementoId!=="__pasajes__"&&e.elementoId!=="__bonificacion__")||[];
-  const elementosAdicionales=currentApto.elementos?.filter(e=>e.esAdicional)||[];
-  const ajustesGuardados=currentApto.elementos?.filter(e=>e.elementoId==="__pasajes__"||e.elementoId==="__bonificacion__")||[];
-
-  const totalNormal=elementosNormales.filter(e=>e.completado).reduce((s,el)=>s+getPrecio(el.elementoId,obra.id,corteActual.label)*(el.cantidad||1),0);
-  const totalAdicionales=elementosAdicionales.filter(e=>e.completado&&e.aprobado).reduce((s,e)=>s+e.valorUnitario*e.cantidad,0);
-  const totalAjustes=ajustesGuardados.filter(e=>e.aprobado).reduce((s,e)=>s+(e.valorManual||0),0);
-  const totalLiquidado=totalNormal+totalAdicionales+totalAjustes;
-  const totalPendiente=Object.keys(pendientes).reduce((s,idx)=>{const el=elementosNormales[parseInt(idx)];const precio=getPrecio(el?.elementoId,obra.id,corteActual.label);return s+precio*(cantidades[idx]??el?.cantidad??1);},0)+(Number(ajusteLocal.pasajes)||0)+(Number(ajusteLocal.bonificacion)||0);
-
-  const canAct=[ROLES.INSTALADOR,ROLES.SUPERADMIN,ROLES.SUPERVISOR].includes(user.rol);
-
-  return(
+  return (
     <div>
-      <div style={{marginBottom:18}}>
-        <h2 style={{margin:0,fontSize:20,fontWeight:700,color:C.black}}>Apto {apto.nombre||`${piso.numero}${String(apto.numero).padStart(2,"0")}`} — {tip?.nombre||"Sin tipología"}</h2>
-        <p style={{margin:"4px 0 0",fontSize:13,color:C.gray500}}>{obra.nombre} · Piso {piso.numero}</p>
+      <div style={{ marginBottom: 18 }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>Apto {curA.nombre || `${piso.numero}${String(apto.numero).padStart(2, "0")}`} — {tip?.nombre || "Sin tipología"}</h2>
+        <p style={{ margin: "4px 0 0", fontSize: 13, color: C.g5 }}>{obra.nombre} · Piso {piso.numero}</p>
       </div>
-
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:20}}>
-        {[["Avance",`${av}%`],["Instalados",`${elementosNormales.filter(e=>e.completado).length}/${elementosNormales.length}`],[user.rol===ROLES.INSTALADOR?"Mi liquidación":"Liquidación",fmt(totalLiquidado)]].map(([l,v])=>(
-          <div key={l} style={{background:C.white,borderRadius:10,padding:"14px 16px",border:`1px solid ${C.gray200}`,boxShadow:"0 1px 4px rgba(0,0,0,0.04)"}}>
-            <div style={{fontSize:11,color:C.gray400,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em"}}>{l}</div>
-            <div style={{fontSize:18,fontWeight:700,color:l==="Avance"?(av===100?C.green:C.orange):l.includes("liquidación")||l==="Liquidación"?C.greenD:C.black}}>{v}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
+        {[["Avance", `${av}%`], ["Instalados", `${elsNorm.filter(e => e.completado).length}/${elsNorm.length}`], [user.rol === ROLES.IN ? "Mi liquidación" : "Liquidación", fmt(totLiq)]].map(([l, v]) => (
+          <div key={l} style={{ background: C.wh, borderRadius: 10, padding: "14px 16px", border: `1px solid ${C.g2}` }}>
+            <div style={{ fontSize: 11, color: C.g4, marginBottom: 4, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".06em" }}>{l}</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: l === "Avance" ? (av === 100 ? C.gn : C.or) : C.gnD }}>{v}</div>
           </div>
         ))}
       </div>
+      {canEdit && <div style={{ marginBottom: 14, padding: "10px 14px", background: C.amL, border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#B45309", fontWeight: 500 }}>Puedes desmarcar elementos con ✕ y aprobar ajustes.</div>}
+      {user.rol === ROLES.IN && <div style={{ marginBottom: 14, padding: "10px 14px", background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 10, fontSize: 13, color: C.orD, fontWeight: 500 }}>Marca los elementos terminados y presiona <strong>Guardar</strong>.{hayPend && <span style={{ marginLeft: 8 }}>+{fmt(totPend)}</span>}</div>}
 
-      {canEdit&&<div style={{marginBottom:14,padding:"10px 14px",background:C.amberL,border:"1px solid #FDE68A",borderRadius:10,fontSize:13,color:"#B45309",fontWeight:500}}>Como {user.rol} puedes desmarcar elementos con ✕ y aprobar ajustes.</div>}
-      {user.rol===ROLES.INSTALADOR&&<div style={{marginBottom:14,padding:"10px 14px",background:C.orangeL,border:`1px solid ${C.orangeMid}`,borderRadius:10,fontSize:13,color:C.orangeD,fontWeight:500}}>Marca los elementos terminados y presiona <strong>Guardar</strong>.{hayPendientes&&<span style={{marginLeft:8}}>· +{fmt(totalPendiente)}</span>}</div>}
-
-      {/* Elementos tipología */}
-      <div style={{display:"grid",gap:8,marginBottom:16}}>
-        {elementosNormales.map((el,idx)=>{
-          const elem=elementos.find(e=>e.id===el.elementoId);
-          const inst=usuarios.find(u=>u.id===el.instaladorId);
-          const esPend=!!pendientes[idx],marcado=el.completado||esPend;
-          const cT=canToggle(idx);
-          const cantActual=cantidades[idx]??el.cantidad??1;
-          const precio=getPrecio(el.elementoId,obra.id,corteActual.label);
-          return(
-            <div key={idx} onClick={()=>cT&&togglePendiente(idx)} style={{display:"flex",alignItems:"center",gap:12,background:el.completado?C.greenL:esPend?C.orangeL:C.white,border:`1.5px solid ${el.completado?"#BBF7D0":esPend?C.orangeMid:C.gray200}`,borderRadius:10,padding:"12px 14px",cursor:cT?"pointer":"default",transition:"all 0.12s"}}>
-              <div style={{width:26,height:26,borderRadius:7,flexShrink:0,border:`2.5px solid ${el.completado?C.green:esPend?C.orange:C.gray300}`,background:el.completado?C.green:esPend?C.orange:"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                {marcado&&<span style={{color:C.white,fontSize:14,fontWeight:700}}>✓</span>}
+      <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
+        {elsNorm.map((el, idx) => {
+          const elem = elems.find(e => e.id === el.elementoId);
+          const inst = users.find(u => u.id === el.instaladorId);
+          const eP = !!pend[idx], marc = el.completado || eP;
+          const cT = canToggle(idx);
+          const ca = cnts[idx] ?? el.cantidad ?? 1;
+          const precio = getPrecio(el.elementoId, obra.id, corteAct.label);
+          return (
+            <div key={idx} onClick={() => cT && togglePend(idx)} style={{ display: "flex", alignItems: "center", gap: 12, background: el.completado ? C.gnL : eP ? C.orL : C.wh, border: `1.5px solid ${el.completado ? "#BBF7D0" : eP ? C.orM : C.g2}`, borderRadius: 10, padding: "12px 14px", cursor: cT ? "pointer" : "default", transition: "all .12s" }}>
+              <div style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0, border: `2.5px solid ${el.completado ? C.gn : eP ? C.or : C.g3}`, background: el.completado ? C.gn : eP ? C.or : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {marc && <span style={{ color: C.wh, fontSize: 14, fontWeight: 700 }}>✓</span>}
               </div>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:600,fontSize:14,color:el.completado?C.greenD:esPend?C.orangeD:C.black}}>{elem?.nombre||el.elementoId}</div>
-                {el.completado&&inst&&<div style={{fontSize:12,color:C.greenD,fontWeight:500}}>{inst.nombre} · {el.fecha}</div>}
-                {esPend&&<div style={{fontSize:12,color:C.orangeD,fontWeight:500}}>Pendiente de guardar</div>}
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, fontSize: 14, color: el.completado ? C.gnD : eP ? C.orD : C.bk }}>{elem?.nombre || el.elementoId}</div>
+                {el.completado && inst && <div style={{ fontSize: 12, color: C.gnD, fontWeight: 500 }}>{inst.nombre} · {el.fecha}</div>}
+                {eP && <div style={{ fontSize: 12, color: C.orD, fontWeight: 500 }}>Pendiente de guardar</div>}
               </div>
-              {(elem?.unidad==="ml"||elem?.unidad==="m2")&&<div onClick={e=>e.stopPropagation()} style={{display:"flex",alignItems:"center",gap:6}}>
-                <span style={{fontSize:12,color:C.gray400}}>{elem.unidad}</span>
-                <input type="number" min="0.1" step="0.1" value={cantActual} disabled={el.completado&&user.rol===ROLES.INSTALADOR} onChange={e=>setCantidades(c=>({...c,[idx]:Number(e.target.value)}))} style={{width:64,textAlign:"center",fontSize:13,padding:"4px",border:`1px solid ${C.gray200}`,borderRadius:6}}/>
+              {(elem?.unidad === "ml" || elem?.unidad === "m2") && <div onClick={e => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 12, color: C.g4 }}>{elem.unidad}</span>
+                <input type="number" min="0.1" step="0.1" value={ca} disabled={el.completado && user.rol === ROLES.IN} onChange={e => setCnts(c => ({ ...c, [idx]: Number(e.target.value) }))} style={{ width: 64, textAlign: "center", fontSize: 13, padding: "4px", border: `1px solid ${C.g2}`, borderRadius: 6 }} />
               </div>}
-              <div style={{textAlign:"right",minWidth:90}}>
-                <div style={{fontSize:14,fontWeight:700}}>{fmt(precio*cantActual)}</div>
-                <div style={{fontSize:11,color:C.gray400}}>{elem?.unidad}</div>
+              <div style={{ textAlign: "right", minWidth: 90 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>{fmt(precio * ca)}</div>
+                <div style={{ fontSize: 11, color: C.g4 }}>{elem?.unidad}</div>
               </div>
-              {canEdit&&el.completado&&<button onClick={e=>{e.stopPropagation();desmarcarElemento(idx);}} style={{marginLeft:4,width:28,height:28,borderRadius:6,...badge("red"),cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:14,fontWeight:700}}>✕</button>}
+              {canEdit && el.completado && <button onClick={e => { e.stopPropagation(); desmarcar(idx); }} style={{ marginLeft: 4, width: 28, height: 28, borderRadius: 6, ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14, fontWeight: 700 }}>✕</button>}
             </div>
           );
         })}
       </div>
 
-      {/* Elementos adicionales */}
-      <div style={{borderTop:`2px solid ${C.gray100}`,paddingTop:16,marginBottom:16}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <div style={{fontSize:13,fontWeight:700,color:C.black}}>Elementos adicionales</div>
-          {canAct&&<button onClick={()=>setAgregarAdicional(!agregarAdicional)} style={{...badge("orange"),cursor:"pointer"}}>+ Agregar</button>}
+      <div style={{ borderTop: `2px solid ${C.g1}`, paddingTop: 16, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.bk }}>Elementos adicionales</div>
+          {canAct && <button onClick={() => setAddAd(!addAd)} style={{ ...bdg("orange"), cursor: "pointer" }}>+ Agregar</button>}
         </div>
-        {agregarAdicional&&<div style={{background:C.orangeL,border:`1px solid ${C.orangeMid}`,borderRadius:10,padding:"14px",marginBottom:12}}>
-          <Input label="Descripción" value={nuevoAdicional.descripcion} onChange={e=>setNuevoAdicional(n=>({...n,descripcion:e.target.value}))} placeholder="Ej: Arreglo puerta, corte moldura..."/>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-            <Input label="Cantidad" type="number" min="0.1" step="0.1" value={nuevoAdicional.cantidad} onChange={e=>setNuevoAdicional(n=>({...n,cantidad:e.target.value}))}/>
-            <Input label="Valor unitario ($)" type="number" min="0" value={nuevoAdicional.valorUnitario} onChange={e=>setNuevoAdicional(n=>({...n,valorUnitario:e.target.value}))}/>
+        {addAd && <div style={{ background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 10, padding: "14px", marginBottom: 12 }}>
+          <Inp label="Descripción" value={nAd.desc} onChange={e => setNAd(n => ({ ...n, desc: e.target.value }))} placeholder="Ej: Arreglo puerta, corte moldura..." />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Inp label="Cantidad" type="number" min="0.1" step="0.1" value={nAd.cant} onChange={e => setNAd(n => ({ ...n, cant: e.target.value }))} />
+            <Inp label="Valor unitario ($)" type="number" min="0" value={nAd.val} onChange={e => setNAd(n => ({ ...n, val: e.target.value }))} />
           </div>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span style={{fontSize:13,color:C.greenD,fontWeight:700}}>Total: {fmt(Number(nuevoAdicional.cantidad)*Number(nuevoAdicional.valorUnitario))}</span>
-            <div style={{display:"flex",gap:8}}><Btn onClick={()=>setAgregarAdicional(false)}>Cancelar</Btn><Btn variant="primary" onClick={guardarAdicional}>Guardar</Btn></div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 13, color: C.gnD, fontWeight: 700 }}>Total: {fmt(Number(nAd.cant) * Number(nAd.val))}</span>
+            <div style={{ display: "flex", gap: 8 }}><Btn onClick={() => setAddAd(false)}>Cancelar</Btn><Btn variant="primary" onClick={guardarAd}>Guardar</Btn></div>
           </div>
         </div>}
-        {elementosAdicionales.map((el,i)=>{
-          const idxReal=currentApto.elementos.indexOf(el);
-          const esPend=!!pendientes[idxReal],marcado=el.completado||esPend;
-          const cT=canToggle(idxReal);
-          return<div key={i} style={{display:"flex",alignItems:"center",gap:12,background:el.completado?C.greenL:esPend?C.orangeL:C.white,border:`1.5px solid ${el.completado?"#BBF7D0":esPend?C.orangeMid:C.gray200}`,borderRadius:10,padding:"12px 14px",marginBottom:8,cursor:cT?"pointer":"default"}} onClick={()=>cT&&togglePendiente(idxReal)}>
-            <div style={{width:26,height:26,borderRadius:7,flexShrink:0,border:`2.5px solid ${el.completado?C.green:esPend?C.orange:C.gray300}`,background:el.completado?C.green:esPend?C.orange:"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              {marcado&&<span style={{color:C.white,fontSize:14,fontWeight:700}}>✓</span>}
+        {elsAd.map((el, i) => {
+          const ir = curA.elementos.indexOf(el);
+          const eP = !!pend[ir], marc = el.completado || eP; const cT = canToggle(ir);
+          return <div key={i} onClick={() => cT && togglePend(ir)} style={{ display: "flex", alignItems: "center", gap: 12, background: el.completado ? C.gnL : eP ? C.orL : C.wh, border: `1.5px solid ${el.completado ? "#BBF7D0" : eP ? C.orM : C.g2}`, borderRadius: 10, padding: "12px 14px", marginBottom: 8, cursor: cT ? "pointer" : "default" }}>
+            <div style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0, border: `2.5px solid ${el.completado ? C.gn : eP ? C.or : C.g3}`, background: el.completado ? C.gn : eP ? C.or : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {marc && <span style={{ color: C.wh, fontSize: 14, fontWeight: 700 }}>✓</span>}
             </div>
-            <div style={{flex:1}}>
-              <div style={{fontWeight:600,fontSize:14}}>{el.descripcion}</div>
-              <div style={{fontSize:12,color:C.gray400}}>Adicional · cant: {el.cantidad} · {fmt(el.valorUnitario)} c/u</div>
-              {el.completado&&<div style={{fontSize:12,color:C.greenD,fontWeight:500}}>{usuarios.find(u=>u.id===el.instaladorId)?.nombre} · {el.fecha}</div>}
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>{el.descripcion}</div>
+              <div style={{ fontSize: 12, color: C.g4 }}>Adicional · {el.cantidad} · {fmt(el.valorUnitario)} c/u</div>
+              {el.completado && <div style={{ fontSize: 12, color: C.gnD, fontWeight: 500 }}>{users.find(u => u.id === el.instaladorId)?.nombre} · {el.fecha}</div>}
             </div>
-            <div style={{textAlign:"right",minWidth:90}}>
-              <div style={{fontSize:14,fontWeight:700}}>{fmt(el.valorUnitario*el.cantidad)}</div>
-            </div>
-            {canEdit&&!el.completado&&<button onClick={e=>{e.stopPropagation();eliminarAdicional(idxReal);}} style={{...badge("red"),cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,width:28,height:28,borderRadius:6,fontSize:14,fontWeight:700}}>✕</button>}
-            {canEdit&&el.completado&&<button onClick={e=>{e.stopPropagation();desmarcarElemento(idxReal);}} style={{...badge("red"),cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,width:28,height:28,borderRadius:6,fontSize:14,fontWeight:700}}>✕</button>}
+            <div style={{ textAlign: "right", minWidth: 90 }}><div style={{ fontSize: 14, fontWeight: 700 }}>{fmt(el.valorUnitario * el.cantidad)}</div></div>
+            {canEdit && <button onClick={e => { e.stopPropagation(); el.completado ? desmarcar(ir) : elimAd(ir); }} style={{ ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, width: 28, height: 28, borderRadius: 6, fontSize: 14, fontWeight: 700 }}>✕</button>}
           </div>;
         })}
-        {elementosAdicionales.length===0&&!agregarAdicional&&<p style={{fontSize:13,color:C.gray300,margin:0}}>Sin elementos adicionales.</p>}
+        {elsAd.length === 0 && !addAd && <p style={{ fontSize: 13, color: C.g3, margin: 0 }}>Sin elementos adicionales.</p>}
       </div>
 
-      {/* Pasajes y bonificación */}
-      <div style={{borderTop:`2px solid ${C.gray100}`,paddingTop:16,marginBottom:16}}>
-        <div style={{fontSize:13,fontWeight:700,color:C.black,marginBottom:12}}>Pasajes y Bonificación</div>
-        {ajustesGuardados.map((aj,idx)=>(
-          <div key={idx} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",background:aj.aprobado?C.greenL:C.amberL,border:`1px solid ${aj.aprobado?"#BBF7D0":"#FDE68A"}`,borderRadius:10,marginBottom:8}}>
-            <div style={{flex:1}}>
-              <div style={{fontWeight:600,fontSize:14}}>{aj.elementoId==="__pasajes__"?"Pasajes":"Bonificación"}</div>
-              <div style={{fontSize:12,color:C.gray500}}>{aj.fecha} · {aj.aprobado?"✓ Aprobado":"Pendiente de aprobación"}</div>
+      <div style={{ borderTop: `2px solid ${C.g1}`, paddingTop: 16, marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.bk, marginBottom: 12 }}>Pasajes y Bonificación</div>
+        {ajustes.map((aj, i) => {
+          const ir = curA.elementos.indexOf(aj);
+          return <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: aj.aprobado ? C.gnL : C.amL, border: `1px solid ${aj.aprobado ? "#BBF7D0" : "#FDE68A"}`, borderRadius: 10, marginBottom: 8 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>{aj.elementoId === "__pasajes__" ? "Pasajes" : "Bonificación"}</div>
+              <div style={{ fontSize: 12, color: C.g5 }}>{aj.fecha} · {aj.aprobado ? "✓ Aprobado" : "Pendiente"}</div>
             </div>
-            <div style={{fontWeight:700,fontSize:14}}>{fmt(aj.valorManual)}</div>
-            {canEdit&&!aj.aprobado&&<Btn variant="success" onClick={()=>aprobarAjuste(currentApto.elementos.indexOf(aj))}>Aprobar</Btn>}
-          </div>
-        ))}
-        {user.rol===ROLES.INSTALADOR&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Input label="Pasajes ($)" type="number" min="0" value={ajusteLocal.pasajes} onChange={e=>setAjusteLocal(a=>({...a,pasajes:e.target.value}))} placeholder="0"/>
-          <Input label="Bonificación ($)" type="number" min="0" value={ajusteLocal.bonificacion} onChange={e=>setAjusteLocal(a=>({...a,bonificacion:e.target.value}))} placeholder="0"/>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>{fmt(aj.valorManual)}</div>
+            {canEdit && !aj.aprobado && <Btn variant="success" onClick={() => aprobarAjuste(ir)}>Aprobar</Btn>}
+          </div>;
+        })}
+        {user.rol === ROLES.IN && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Inp label="Pasajes ($)" type="number" min="0" value={ajuste.pasajes} onChange={e => setAjuste(a => ({ ...a, pasajes: e.target.value }))} placeholder="0" />
+          <Inp label="Bonificación ($)" type="number" min="0" value={ajuste.bonificacion} onChange={e => setAjuste(a => ({ ...a, bonificacion: e.target.value }))} placeholder="0" />
         </div>}
       </div>
 
-      {canAct&&<div style={{position:"sticky",bottom:0,background:C.white,borderTop:`2px solid ${C.gray100}`,padding:"14px 0 4px",display:"flex",justifyContent:"flex-end",gap:10}}>
-        {hayPendientes&&<span style={{fontSize:14,color:C.gray500,alignSelf:"center"}}>Listo para guardar</span>}
-        <Btn variant="primary" disabled={!hayPendientes} onClick={guardarCambios} style={{padding:"10px 28px",fontSize:15,fontWeight:700}}>Guardar</Btn>
+      {canAct && <div style={{ position: "sticky", bottom: 0, background: C.wh, borderTop: `2px solid ${C.g1}`, padding: "14px 0 4px", display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        {hayPend && <span style={{ fontSize: 14, color: C.g5, alignSelf: "center" }}>Listo para guardar</span>}
+        <Btn variant="primary" disabled={!hayPend} onClick={guardar} style={{ padding: "10px 28px", fontSize: 15, fontWeight: 700 }}>Guardar</Btn>
       </div>}
     </div>
   );
 }
 
-function ElementosView({elementos,setElementos,openModal,closeModal,modals}){
-  const[form,setForm]=useState({nombre:"",unidad:"und",precio:0});
-  const[editId,setEditId]=useState(null);
-  async function guardar(){
-    if(!form.nombre)return;
-    const el=editId?{...elementos.find(e=>e.id===editId),...form,precio:Number(form.precio)}:{id:`e${Date.now()}`,...form,precio:Number(form.precio)};
-    await dbUpsert("elementos",el);
-    if(editId)setElementos(els=>els.map(e=>e.id===editId?el:e));else setElementos(els=>[...els,el]);
-    setEditId(null);setForm({nombre:"",unidad:"und",precio:0});closeModal("elModal");
+// ── ELEMENTOS ─────────────────────────────────────────────
+function Elementos({ elems, setElems, openM, closeM, modals }) {
+  const [form, setForm] = useState({ nombre: "", unidad: "und", precio: 0 });
+  const [editId, setEditId] = useState(null);
+  async function guardar() {
+    if (!form.nombre) return;
+    const el = editId ? { ...elems.find(e => e.id === editId), ...form, precio: Number(form.precio) } : { id: `e${Date.now()}`, ...form, precio: Number(form.precio) };
+    await dbUpsert("elementos", el);
+    if (editId) setElems(x => x.map(e => e.id === editId ? el : e)); else setElems(x => [...x, el]);
+    setEditId(null); setForm({ nombre: "", unidad: "und", precio: 0 }); closeM("el");
   }
-  return(
+  return (
     <div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-        <h2 style={{margin:0,fontSize:20,fontWeight:700,color:C.black}}>Elementos</h2>
-        <Btn variant="primary" onClick={()=>{setEditId(null);setForm({nombre:"",unidad:"und",precio:0});openModal("elModal");}}>+ Nuevo</Btn>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>Elementos</h2>
+        <Btn variant="primary" onClick={() => { setEditId(null); setForm({ nombre: "", unidad: "und", precio: 0 }); openM("el"); }}>+ Nuevo</Btn>
       </div>
-      <div style={{display:"grid",gap:8}}>
-        {elementos.map(el=><div key={el.id} style={{...card,display:"flex",alignItems:"center",gap:12}}>
-          <div style={{flex:1}}><span style={{fontWeight:600,fontSize:14}}>{el.nombre}</span> <span style={{...badge("gray"),marginLeft:6,fontSize:11}}>{el.unidad}</span></div>
-          <div style={{fontWeight:700,fontSize:14,minWidth:110,textAlign:"right",color:C.black}}>{fmt(el.precio)}</div>
-          <Btn onClick={()=>{setEditId(el.id);setForm({nombre:el.nombre,unidad:el.unidad,precio:el.precio});openModal("elModal");}}>Editar</Btn>
+      <div style={{ display: "grid", gap: 8 }}>
+        {elems.map(e => <div key={e.id} style={{ ...card, display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ flex: 1 }}><span style={{ fontWeight: 600, fontSize: 14 }}>{e.nombre}</span> <span style={{ ...bdg("gray"), marginLeft: 6, fontSize: 11 }}>{e.unidad}</span></div>
+          <div style={{ fontWeight: 700, fontSize: 14, minWidth: 110, textAlign: "right" }}>{fmt(e.precio)}</div>
+          <Btn onClick={() => { setEditId(e.id); setForm({ nombre: e.nombre, unidad: e.unidad, precio: e.precio }); openM("el"); }}>Editar</Btn>
         </div>)}
       </div>
-      {modals.elModal&&<Modal title={editId?"Editar elemento":"Nuevo elemento"} onClose={()=>closeModal("elModal")}>
-        <Input label="Nombre" value={form.nombre} onChange={e=>setForm(f=>({...f,nombre:e.target.value}))}/>
-        <Select label="Unidad" value={form.unidad} onChange={e=>setForm(f=>({...f,unidad:e.target.value}))}>
-          <option value="und">und — Unidad</option><option value="ml">ml — Metro lineal</option><option value="m2">m2 — Metro cuadrado</option><option value="gl">gl — Global</option>
-        </Select>
-        <Input label="Precio ($)" type="number" min="0" value={form.precio} onChange={e=>setForm(f=>({...f,precio:e.target.value}))}/>
-        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}><Btn onClick={()=>closeModal("elModal")}>Cancelar</Btn><Btn variant="primary" onClick={guardar}>{editId?"Guardar":"Crear"}</Btn></div>
+      {modals.el && <Modal title={editId ? "Editar" : "Nuevo elemento"} onClose={() => closeM("el")}>
+        <Inp label="Nombre" value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} />
+        <Sel label="Unidad" value={form.unidad} onChange={e => setForm(f => ({ ...f, unidad: e.target.value }))}>
+          <option value="und">und</option><option value="ml">ml</option><option value="m2">m2</option><option value="gl">gl</option>
+        </Sel>
+        <Inp label="Precio ($)" type="number" min="0" value={form.precio} onChange={e => setForm(f => ({ ...f, precio: e.target.value }))} />
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn onClick={() => closeM("el")}>Cancelar</Btn><Btn variant="primary" onClick={guardar}>{editId ? "Guardar" : "Crear"}</Btn></div>
       </Modal>}
     </div>
   );
 }
 
-function LiquidacionView({obras,elementos,usuarios,user,liquidaciones,setLiquidaciones,getPrecio,calcAvanceObra}){
-  const cortes=getCorteFechas();
-  const[corteIdx,setCorteIdx]=useState(0);
-  const[exportModal,setExportModal]=useState(null);
-  const[verHistorial,setVerHistorial]=useState(false);
-  const corte=cortes[corteIdx];
-  const instaladores=user.rol===ROLES.INSTALADOR?usuarios.filter(u=>u.id===user.id):usuarios.filter(u=>u.rol===ROLES.INSTALADOR);
-  const puedeExportar=[ROLES.SUPERADMIN,ROLES.SUPERVISOR,ROLES.AUXILIAR].includes(user.rol);
+// ── LIQUIDACIÓN ───────────────────────────────────────────
+function Liquidacion({ obras, elems, users, user, liqs, setLiqs, getPrecio }) {
+  const cortes = getCorteFechas();
+  const [ci, setCi] = useState(0);
+  const [expM, setExpM] = useState(null);
+  const [hist, setHist] = useState(false);
+  const corte = cortes[ci];
+  const INs = user.rol === ROLES.IN ? users.filter(u => u.id === user.id) : users.filter(u => u.rol === ROLES.IN);
+  const canExp = [ROLES.SA, ROLES.SV, ROLES.AX].includes(user.rol);
 
-  function detalleInstalador(instId,desde,hasta){
-    const rows=[];
-    obras.forEach(obra=>obra.pisos?.forEach(piso=>piso.aptos?.forEach(apto=>apto.elementos?.forEach(el=>{
-      if(el.completado&&el.instaladorId===instId&&fechaDentroCorte(el.fecha,desde,hasta)){
-        if(el.elementoId==="__pasajes__"){rows.push({obra:obra.nombre,apto:`${piso.numero}${String(apto.numero).padStart(2,"0")}`,elemento:"Pasajes",cantidad:1,precio:el.valorManual||0,fecha:el.fecha,esAjuste:true,aprobado:el.aprobado});return;}
-        if(el.elementoId==="__bonificacion__"){rows.push({obra:obra.nombre,apto:`${piso.numero}${String(apto.numero).padStart(2,"0")}`,elemento:"Bonificación",cantidad:1,precio:el.valorManual||0,fecha:el.fecha,esAjuste:true,aprobado:el.aprobado});return;}
-        if(el.esAdicional){rows.push({obra:obra.nombre,apto:`${piso.numero}${String(apto.numero).padStart(2,"0")}`,elemento:`[Adicional] ${el.descripcion}`,cantidad:el.cantidad||1,precio:el.valorUnitario||0,fecha:el.fecha,esAjuste:false,aprobado:true});return;}
-        const elem=elementos.find(e=>e.id===el.elementoId);
-        rows.push({obra:obra.nombre,apto:`${piso.numero}${String(apto.numero).padStart(2,"0")}`,elemento:elem?.nombre,cantidad:el.cantidad||1,precio:getPrecio(el.elementoId,obra.id,corte.label),fecha:el.fecha,esAjuste:false,aprobado:true});
+  function detalle(iid, d, h) {
+    const rows = [];
+    obras.forEach(o => o.pisos?.forEach(p => p.aptos?.forEach(a => a.elementos?.forEach(el => {
+      if (el.completado && el.instaladorId === iid && enCorte(el.fecha, d, h)) {
+        if (el.elementoId === "__pasajes__") { rows.push({ obra: o.nombre, apto: a.nombre, el: "Pasajes", cant: 1, precio: el.valorManual || 0, fecha: el.fecha, adj: true, apr: el.aprobado }); return; }
+        if (el.elementoId === "__bonificacion__") { rows.push({ obra: o.nombre, apto: a.nombre, el: "Bonificación", cant: 1, precio: el.valorManual || 0, fecha: el.fecha, adj: true, apr: el.aprobado }); return; }
+        if (el.esAdicional) { rows.push({ obra: o.nombre, apto: a.nombre, el: `[Adicional] ${el.descripcion}`, cant: el.cantidad || 1, precio: el.valorUnitario || 0, fecha: el.fecha, adj: false, apr: true }); return; }
+        const elem = elems.find(e => e.id === el.elementoId);
+        rows.push({ obra: o.nombre, apto: a.nombre, el: elem?.nombre, cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label), fecha: el.fecha, adj: false, apr: true });
       }
     }))));
     return rows;
   }
 
-  function calcResumenFull(instId){
-    const rows=detalleInstalador(instId,corte.desde,corte.hasta);
-    const bruto=rows.filter(r=>!r.esAjuste).reduce((s,r)=>s+r.precio*r.cantidad,0);
-    const retencion=Math.round(bruto*0.10);
-    const subtotal=bruto-retencion;
-    const pasajes=rows.filter(r=>r.esAjuste&&r.elemento==="Pasajes"&&r.aprobado).reduce((s,r)=>s+r.precio,0);
-    const bonificacion=rows.filter(r=>r.esAjuste&&r.elemento==="Bonificación"&&r.aprobado).reduce((s,r)=>s+r.precio,0);
-    const pendAjustes=rows.filter(r=>r.esAjuste&&!r.aprobado).length;
-    return{bruto,retencion,subtotal,pasajes,bonificacion,total:subtotal+pasajes+bonificacion,pendAjustes,rows};
+  function resumen(iid) {
+    const rows = detalle(iid, corte.desde, corte.hasta);
+    const bruto = rows.filter(r => !r.adj).reduce((s, r) => s + r.precio * r.cant, 0);
+    const ret = Math.round(bruto * .10);
+    const sub = bruto - ret;
+    const pas = rows.filter(r => r.adj && r.el === "Pasajes" && r.apr).reduce((s, r) => s + r.precio, 0);
+    const bon = rows.filter(r => r.adj && r.el === "Bonificación" && r.apr).reduce((s, r) => s + r.precio, 0);
+    const pendAdj = rows.filter(r => r.adj && !r.apr).length;
+    return { bruto, ret, sub, pas, bon, total: sub + pas + bon, pendAdj, rows };
   }
 
-  async function cerrarLiquidacion(inst){
-    const{rows,...resumen}=calcResumenFull(inst.id);
-    const liq={id:`liq-${Date.now()}-${inst.id}`,inst_id:inst.id,inst_nombre:inst.nombre,inst_cedula:inst.cedula,inst_telefono:inst.telefono,inst_banco:inst.banco,inst_cuenta:inst.cuenta,corte:corte.label,fecha_cierre:new Date().toLocaleDateString("es-CO"),cerrado_por:user.nombre,rows,...resumen,estado:"pagado"};
-    await dbUpsert("liquidaciones",liq);setLiquidaciones(ls=>[...ls,liq]);
+  async function cerrar(inst) {
+    const { rows, ...res } = resumen(inst.id);
+    const l = { id: `l${Date.now()}${inst.id}`, inst_id: inst.id, inst_nombre: inst.nombre, inst_cedula: inst.cedula, inst_telefono: inst.telefono, inst_banco: inst.banco, inst_cuenta: inst.cuenta, corte: corte.label, fecha_cierre: new Date().toLocaleDateString("es-CO"), cerrado_por: user.nombre, rows, ...res, estado: "pagado" };
+    await dbUpsert("liquidaciones", l); setLiqs(x => [...x, l]);
   }
 
-  function yaCerrada(instId){return liquidaciones.some(l=>l.inst_id===instId&&l.corte===corte.label);}
+  const cerrada = iid => liqs.some(l => l.inst_id === iid && l.corte === corte.label);
 
-  function exportarExcel(inst,rows,resumen){
-    const lines=[`Liquidación — ${inst.nombre} (C.C. ${inst.cedula}) — Corte: ${corte.label}`,`Tel: ${inst.telefono||"-"} | Banco: ${inst.banco||"-"} | Cta: ${inst.cuenta||"-"}`,"",["Obra","Apto","Elemento","Cant.","Precio","Total","Fecha"].join("\t"),...rows.map(r=>[r.obra,r.apto,r.elemento,r.cantidad,r.precio,r.precio*r.cantidad,r.fecha].join("\t")),"",["Total bruto","","","","",resumen.bruto,""].join("\t"),["Retención 10%","","","","",-resumen.retencion,""].join("\t"),["Subtotal","","","","",resumen.subtotal,""].join("\t"),["Pasajes","","","","",resumen.pasajes,""].join("\t"),["Bonificación","","","","",resumen.bonificacion,""].join("\t"),["TOTAL A PAGAR","","","","",resumen.total,""].join("\t")].join("\n");
-    setExportModal({tipo:"excel",inst,rows,resumen,texto:lines});
+  function excelTxt(inst, rows, res) {
+    return [`Liquidación — ${inst.nombre} (C.C. ${inst.cedula}) — ${corte.label}`, `Tel: ${inst.telefono || "-"} | Banco: ${inst.banco || "-"} | Cta: ${inst.cuenta || "-"}`, "", ["Obra", "Apto", "Elemento", "Cant.", "Precio", "Total", "Fecha"].join("\t"), ...rows.map(r => [r.obra, r.apto, r.el, r.cant, r.precio, r.precio * r.cant, r.fecha].join("\t")), "", `Bruto\t\t\t\t\t${res.bruto}`, `Retención 10%\t\t\t\t\t-${res.ret}`, `Subtotal\t\t\t\t\t${res.sub}`, res.pas > 0 ? `Pasajes\t\t\t\t\t${res.pas}` : "", res.bon > 0 ? `Bonificación\t\t\t\t\t${res.bon}` : "", `TOTAL\t\t\t\t\t${res.total}`].filter(x => x !== undefined).join("\n");
   }
-  function exportarPDF(inst,rows,resumen){setExportModal({tipo:"pdf",inst,rows,resumen});}
 
-  return(
+  return (
     <div>
-      {exportModal&&<Modal title={exportModal.tipo==="pdf"?"Reporte":"Excel — Copiar"} onClose={()=>setExportModal(null)} wide>
-        {exportModal.tipo==="pdf"?(<div style={{border:`1px solid ${C.gray200}`,borderRadius:12,padding:20,fontSize:13,lineHeight:1.7}}>
-          <div style={{borderBottom:`3px solid ${C.orange}`,paddingBottom:12,marginBottom:16}}>
-            <div style={{fontSize:18,fontWeight:700,color:C.black}}>Liquidación de instalación</div>
-            <div style={{marginTop:4}}><strong>{exportModal.inst.nombre}</strong> — C.C. {exportModal.inst.cedula}</div>
-            <div style={{color:C.gray500,fontSize:12}}>Tel: {exportModal.inst.telefono||"-"} · Banco: {exportModal.inst.banco||"-"} · Cta: {exportModal.inst.cuenta||"-"}</div>
-            <div style={{marginTop:6}}><span style={badge("orange")}>Corte: {corte.label}</span></div>
+      {expM && <Modal title={expM.tipo === "pdf" ? "Reporte" : "Excel — Copiar"} onClose={() => setExpM(null)} wide>
+        {expM.tipo === "pdf" ? (<div style={{ border: `1px solid ${C.g2}`, borderRadius: 12, padding: 20, fontSize: 13, lineHeight: 1.7 }}>
+          <div style={{ borderBottom: `3px solid ${C.or}`, paddingBottom: 12, marginBottom: 16 }}>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>{expM.inst.nombre}</div>
+            <div style={{ fontSize: 12, color: C.g5 }}>C.C. {expM.inst.cedula} · Tel: {expM.inst.telefono || "-"} · {expM.inst.banco || "-"} {expM.inst.cuenta || ""}</div>
+            <span style={{ ...bdg("orange"), marginTop: 6, display: "inline-block" }}>Corte: {corte.label}</span>
           </div>
-          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,marginBottom:16}}>
-            <thead><tr style={{background:C.orangeL}}>{["Obra","Apto","Elemento","Cant.","P. unit.","Total","Fecha"].map(h=><th key={h} style={{padding:"7px 8px",textAlign:"left",fontWeight:700,color:C.orangeD,borderBottom:`2px solid ${C.orangeMid}`}}>{h}</th>)}</tr></thead>
-            <tbody>{exportModal.rows.filter(r=>!r.esAjuste||r.aprobado).map((r,i)=><tr key={i} style={{background:i%2===0?"transparent":C.gray50}}><td style={{padding:"5px 8px"}}>{r.obra}</td><td style={{padding:"5px 8px"}}>{r.apto}</td><td style={{padding:"5px 8px"}}>{r.elemento}</td><td style={{padding:"5px 8px",textAlign:"center"}}>{r.cantidad}</td><td style={{padding:"5px 8px",textAlign:"right"}}>{fmt(r.precio)}</td><td style={{padding:"5px 8px",textAlign:"right",fontWeight:700}}>{fmt(r.precio*r.cantidad)}</td><td style={{padding:"5px 8px"}}>{r.fecha}</td></tr>)}</tbody>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 16 }}>
+            <thead><tr style={{ background: C.orL }}>{["Obra", "Apto", "Elemento", "Cant.", "P.unit.", "Total", "Fecha"].map(h => <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700, color: C.orD, borderBottom: `2px solid ${C.orM}` }}>{h}</th>)}</tr></thead>
+            <tbody>{expM.rows.filter(r => !r.adj || r.apr).map((r, i) => <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : C.g0 }}><td style={{ padding: "5px 8px" }}>{r.obra}</td><td style={{ padding: "5px 8px" }}>{r.apto}</td><td style={{ padding: "5px 8px" }}>{r.el}</td><td style={{ padding: "5px 8px", textAlign: "center" }}>{r.cant}</td><td style={{ padding: "5px 8px", textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700 }}>{fmt(r.precio * r.cant)}</td><td style={{ padding: "5px 8px" }}>{r.fecha}</td></tr>)}</tbody>
           </table>
-          <div style={{background:C.gray50,borderRadius:8,padding:"12px 16px",fontSize:13}}>
-            {[["Total bruto instalado",exportModal.resumen.bruto],["Retención 10%",-exportModal.resumen.retencion],["Subtotal",exportModal.resumen.subtotal],exportModal.resumen.pasajes>0?["Pasajes",exportModal.resumen.pasajes]:null,exportModal.resumen.bonificacion>0?["Bonificación",exportModal.resumen.bonificacion]:null,["Total a pagar",exportModal.resumen.total]].filter(Boolean).map(([l,v],i,arr)=>(
-              <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",borderBottom:i<arr.length-1?`1px solid ${C.gray200}`:"none",fontWeight:i===arr.length-1?700:400,fontSize:i===arr.length-1?16:13,color:i===arr.length-1?C.greenD:C.black,marginTop:i===arr.length-1?6:0}}><span>{l}</span><span>{v<0?`— ${fmt(Math.abs(v))}`:fmt(v)}</span></div>
+          <div style={{ background: C.g0, borderRadius: 8, padding: "12px 16px" }}>
+            {[["Total bruto", expM.res.bruto], ["Retención 10%", -expM.res.ret], ["Subtotal", expM.res.sub], expM.res.pas > 0 ? ["Pasajes", expM.res.pas] : null, expM.res.bon > 0 ? ["Bonificación", expM.res.bon] : null, ["Total a pagar", expM.res.total]].filter(Boolean).map(([l, v], i, a) => (
+              <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: i < a.length - 1 ? `1px solid ${C.g2}` : "none", fontWeight: i === a.length - 1 ? 700 : 400, fontSize: i === a.length - 1 ? 16 : 13, color: i === a.length - 1 ? C.gnD : C.bk, marginTop: i === a.length - 1 ? 6 : 0 }}><span>{l}</span><span>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>
             ))}
           </div>
-        </div>):(<div>
-          <p style={{fontSize:13,color:C.gray500,margin:"0 0 12px"}}>Copia y pega en Excel o Google Sheets.</p>
-          <textarea readOnly value={exportModal.texto} style={{width:"100%",height:260,fontFamily:"monospace",fontSize:12,padding:12,borderRadius:8,border:`1px solid ${C.gray200}`,background:C.gray50,boxSizing:"border-box",resize:"vertical"}} onFocus={e=>e.target.select()}/>
-          <p style={{fontSize:12,color:C.gray400,margin:"8px 0 0"}}>Clic → Ctrl+A → Ctrl+C</p>
+        </div>) : (<div>
+          <p style={{ fontSize: 13, color: C.g5, margin: "0 0 12px" }}>Copia y pega en Excel o Google Sheets.</p>
+          <textarea readOnly value={expM.txt} style={{ width: "100%", height: 260, fontFamily: "monospace", fontSize: 12, padding: 12, borderRadius: 8, border: `1px solid ${C.g2}`, background: C.g0, boxSizing: "border-box", resize: "vertical" }} onFocus={e => e.target.select()} />
+          <p style={{ fontSize: 12, color: C.g4, margin: "8px 0 0" }}>Clic en el área → Ctrl+A → Ctrl+C</p>
         </div>)}
-        <div style={{display:"flex",justifyContent:"flex-end",marginTop:16}}><Btn onClick={()=>setExportModal(null)}>Cerrar</Btn></div>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}><Btn onClick={() => setExpM(null)}>Cerrar</Btn></div>
       </Modal>}
 
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-        <h2 style={{margin:0,fontSize:20,fontWeight:700,color:C.black}}>Liquidación</h2>
-        <Btn onClick={()=>setVerHistorial(!verHistorial)} variant={verHistorial?"primary":"default"}>{verHistorial?"Ver corte actual":"Historial de pagos"}</Btn>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>Liquidación</h2>
+        <Btn onClick={() => setHist(!hist)} variant={hist ? "primary" : "default"}>{hist ? "Ver corte actual" : "Historial"}</Btn>
       </div>
 
-      {verHistorial?<HistorialLiquidaciones liquidaciones={liquidaciones} user={user} usuarios={usuarios}/>:(
+      {hist ? <Historial liqs={liqs} user={user} users={users} /> : (
         <>
-          <div style={{marginBottom:20}}>
-            <div style={{fontSize:12,color:C.gray500,marginBottom:8,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em"}}>Corte de pago</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-              {cortes.map((c,i)=><button key={i} onClick={()=>setCorteIdx(i)} style={{...badge(corteIdx===i?"orange":"gray"),cursor:"pointer",fontWeight:corteIdx===i?700:400}}>{c.label}</button>)}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 12, color: C.g5, marginBottom: 8, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".06em" }}>Corte de pago</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {cortes.map((c, i) => <button key={i} onClick={() => setCi(i)} style={{ ...bdg(ci === i ? "orange" : "gray"), cursor: "pointer", fontWeight: ci === i ? 700 : 400 }}>{c.label}</button>)}
             </div>
-            <p style={{fontSize:12,color:C.gray400,margin:"8px 0 0"}}>Del {corte.desde.toLocaleDateString("es-CO")} al {corte.hasta.toLocaleDateString("es-CO")}</p>
+            <p style={{ fontSize: 12, color: C.g4, margin: "8px 0 0" }}>Del {corte.desde.toLocaleDateString("es-CO")} al {corte.hasta.toLocaleDateString("es-CO")}</p>
           </div>
-          {instaladores.map(inst=>{
-            const{rows,...resumen}=calcResumenFull(inst.id),cerrada=yaCerrada(inst.id);
-            return<div key={inst.id} style={{...card,marginBottom:16,borderLeft:`4px solid ${cerrada?C.green:rows.length>0?C.orange:C.gray200}`}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14,flexWrap:"wrap",gap:10}}>
+          {INs.map(inst => {
+            const { rows, ...res } = resumen(inst.id); const cerr = cerrada(inst.id);
+            return <div key={inst.id} style={{ ...card, marginBottom: 16, borderLeft: `4px solid ${cerr ? C.gn : rows.length > 0 ? C.or : C.g2}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
                 <div>
-                  <div style={{fontWeight:700,fontSize:16,color:C.black}}>{inst.nombre}</div>
-                  <div style={{fontSize:13,color:C.gray500,marginTop:2}}>C.C. {inst.cedula||"—"} · {inst.telefono||"—"}</div>
-                  <div style={{fontSize:13,color:C.gray500}}>{inst.banco?`${inst.banco} — Cta: ${inst.cuenta}`:"Sin datos bancarios"}</div>
-                  <div style={{marginTop:6,display:"flex",gap:6,flexWrap:"wrap"}}>
-                    <span style={badge("green")}>Instalador</span>
-                    {cerrada&&<span style={badge("green")}>✓ Cerrada</span>}
-                    {resumen.pendAjustes>0&&<span style={badge("amber")}>{resumen.pendAjustes} ajuste(s) pendiente(s)</span>}
+                  <div style={{ fontWeight: 700, fontSize: 16 }}>{inst.nombre}</div>
+                  <div style={{ fontSize: 13, color: C.g5, marginTop: 2 }}>C.C. {inst.cedula || "—"} · {inst.telefono || "—"}</div>
+                  <div style={{ fontSize: 13, color: C.g5 }}>{inst.banco ? `${inst.banco} — ${inst.cuenta}` : "Sin datos bancarios"}</div>
+                  <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <span style={bdg("green")}>Instalador</span>
+                    {cerr && <span style={bdg("green")}>✓ Cerrada</span>}
+                    {res.pendAdj > 0 && <span style={bdg("amber")}>{res.pendAdj} ajuste(s) pendiente(s)</span>}
                   </div>
                 </div>
-                <div style={{textAlign:"right"}}>
-                  <div style={{fontSize:12,color:C.gray400,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em"}}>Total a pagar</div>
-                  <div style={{fontSize:24,fontWeight:700,color:C.greenD}}>{fmt(resumen.total)}</div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 12, color: C.g4, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".06em" }}>Total a pagar</div>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: C.gnD }}>{fmt(res.total)}</div>
                 </div>
               </div>
-              {rows.length>0&&<div style={{borderTop:`1px solid ${C.gray200}`,paddingTop:12,marginBottom:12}}>
-                {rows.map((r,i)=><div key={i} style={{display:"flex",gap:10,fontSize:13,padding:"5px 0",borderBottom:`1px solid ${C.gray100}`,flexWrap:"wrap",opacity:r.esAjuste&&!r.aprobado?0.55:1}}>
-                  <span style={{color:C.gray400,minWidth:80}}>{r.obra?.substring(0,14)}</span>
-                  <span style={{fontWeight:500}}>Apto {r.apto}</span>
-                  <span style={{flex:1}}>{r.elemento}{r.esAjuste&&!r.aprobado&&<span style={{marginLeft:6,fontSize:11,...badge("amber")}}>pendiente</span>}</span>
-                  <span style={{fontWeight:700,minWidth:90,textAlign:"right"}}>{fmt(r.precio*r.cantidad)}</span>
+              {rows.length > 0 && <div style={{ borderTop: `1px solid ${C.g2}`, paddingTop: 12, marginBottom: 12 }}>
+                {rows.map((r, i) => <div key={i} style={{ display: "flex", gap: 10, fontSize: 13, padding: "5px 0", borderBottom: `1px solid ${C.g1}`, flexWrap: "wrap", opacity: r.adj && !r.apr ? 0.55 : 1 }}>
+                  <span style={{ color: C.g4, minWidth: 80 }}>{r.obra?.substring(0, 14)}</span>
+                  <span style={{ fontWeight: 500 }}>Apto {r.apto}</span>
+                  <span style={{ flex: 1 }}>{r.el}{r.adj && !r.apr && <span style={{ marginLeft: 6, ...bdg("amber"), fontSize: 10 }}>pendiente</span>}</span>
+                  <span style={{ fontWeight: 700, minWidth: 90, textAlign: "right" }}>{fmt(r.precio * r.cant)}</span>
                 </div>)}
               </div>}
-              {rows.length>0&&<div style={{background:C.gray50,borderRadius:8,padding:"10px 14px",fontSize:13,marginBottom:12}}>
-                {[["Total bruto instalado",resumen.bruto],["Retención 10%",-resumen.retencion],["Subtotal",resumen.subtotal],resumen.pasajes>0?["Pasajes",resumen.pasajes]:null,resumen.bonificacion>0?["Bonificación",resumen.bonificacion]:null].filter(Boolean).map(([l,v])=>(
-                  <div key={l} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",borderBottom:`1px solid ${C.gray200}`}}><span style={{color:C.gray500}}>{l}</span><span style={{fontWeight:500}}>{v<0?`— ${fmt(Math.abs(v))}`:fmt(v)}</span></div>
+              {rows.length > 0 && <div style={{ background: C.g0, borderRadius: 8, padding: "10px 14px", fontSize: 13, marginBottom: 12 }}>
+                {[["Total bruto", res.bruto], ["Retención 10%", -res.ret], ["Subtotal", res.sub], res.pas > 0 ? ["Pasajes", res.pas] : null, res.bon > 0 ? ["Bonificación", res.bon] : null].filter(Boolean).map(([l, v]) => (
+                  <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: `1px solid ${C.g2}` }}><span style={{ color: C.g5 }}>{l}</span><span style={{ fontWeight: 500 }}>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>
                 ))}
-                <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0 0",fontWeight:700,fontSize:16,color:C.greenD}}><span>Total a pagar</span><span>{fmt(resumen.total)}</span></div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0 0", fontWeight: 700, fontSize: 16, color: C.gnD }}><span>Total a pagar</span><span>{fmt(res.total)}</span></div>
               </div>}
-              {rows.length===0&&<p style={{fontSize:13,color:C.gray300,margin:"8px 0"}}>Sin instalaciones en este corte.</p>}
-              {puedeExportar&&rows.length>0&&<div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap"}}>
-                <Btn variant="success" onClick={()=>exportarExcel(inst,rows,resumen)}>Excel</Btn>
-                <Btn variant="primary" onClick={()=>exportarPDF(inst,rows,resumen)}>PDF</Btn>
-                {!cerrada&&user.rol===ROLES.SUPERADMIN&&<Btn variant="amber" onClick={()=>cerrarLiquidacion(inst)}>✓ Cerrar y aprobar</Btn>}
+              {rows.length === 0 && <p style={{ fontSize: 13, color: C.g3, margin: "8px 0" }}>Sin instalaciones en este corte.</p>}
+              {canExp && rows.length > 0 && <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                <Btn variant="success" onClick={() => setExpM({ tipo: "excel", inst, rows, res, txt: excelTxt(inst, rows, res) })}>Excel</Btn>
+                <Btn variant="primary" onClick={() => setExpM({ tipo: "pdf", inst, rows, res })}>PDF</Btn>
+                {!cerr && user.rol === ROLES.SA && <Btn variant="amber" onClick={() => cerrar(inst)}>✓ Cerrar y aprobar</Btn>}
               </div>}
             </div>;
           })}
@@ -1055,35 +1249,35 @@ function LiquidacionView({obras,elementos,usuarios,user,liquidaciones,setLiquida
   );
 }
 
-function HistorialLiquidaciones({liquidaciones,user,usuarios}){
-  const[filtroInst,setFiltroInst]=useState("");
-  const[detalle,setDetalle]=useState(null);
-  const instaladores=usuarios.filter(u=>u.rol===ROLES.INSTALADOR);
-  const liqs=liquidaciones.filter(l=>user.rol===ROLES.INSTALADOR?l.inst_id===user.id:(!filtroInst||l.inst_id===filtroInst)).sort((a,b)=>b.id.localeCompare(a.id));
-  return(
+function Historial({ liqs, user, users }) {
+  const [fi, setFi] = useState("");
+  const [det, setDet] = useState(null);
+  const INs = users.filter(u => u.rol === ROLES.IN);
+  const items = liqs.filter(l => user.rol === ROLES.IN ? l.inst_id === user.id : (!fi || l.inst_id === fi)).sort((a, b) => b.id.localeCompare(a.id));
+  return (
     <div>
-      <h3 style={{margin:"0 0 16px",fontSize:16,fontWeight:700,color:C.black}}>Historial de liquidaciones</h3>
-      {user.rol!==ROLES.INSTALADOR&&<Select label="Filtrar por instalador" value={filtroInst} onChange={e=>setFiltroInst(e.target.value)}><option value="">Todos</option>{instaladores.map(i=><option key={i.id} value={i.id}>{i.nombre}</option>)}</Select>}
-      {liqs.length===0&&<p style={{fontSize:13,color:C.gray400}}>No hay liquidaciones cerradas aún.</p>}
-      <div style={{display:"grid",gap:10}}>
-        {liqs.map(l=><div key={l.id} style={{...card,borderLeft:`4px solid ${C.green}`}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8}}>
+      <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 700, color: C.bk }}>Historial de liquidaciones</h3>
+      {user.rol !== ROLES.IN && <Sel label="Filtrar por instalador" value={fi} onChange={e => setFi(e.target.value)}><option value="">Todos</option>{INs.map(i => <option key={i.id} value={i.id}>{i.nombre}</option>)}</Sel>}
+      {items.length === 0 && <p style={{ fontSize: 13, color: C.g4 }}>No hay liquidaciones cerradas.</p>}
+      <div style={{ display: "grid", gap: 10 }}>
+        {items.map(l => <div key={l.id} style={{ ...card, borderLeft: `4px solid ${C.gn}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8 }}>
             <div>
-              <div style={{fontWeight:700,fontSize:15,color:C.black}}>{l.inst_nombre}</div>
-              <div style={{fontSize:12,color:C.gray500}}>C.C. {l.inst_cedula} · Corte: {l.corte}</div>
-              <div style={{fontSize:12,color:C.gray500}}>Cerrado el {l.fecha_cierre} por {l.cerrado_por}</div>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>{l.inst_nombre}</div>
+              <div style={{ fontSize: 12, color: C.g5 }}>C.C. {l.inst_cedula} · Corte: {l.corte}</div>
+              <div style={{ fontSize: 12, color: C.g5 }}>Cerrado el {l.fecha_cierre} por {l.cerrado_por}</div>
             </div>
-            <div style={{textAlign:"right"}}>
-              <div style={{fontSize:12,color:C.gray400,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em"}}>Total pagado</div>
-              <div style={{fontSize:20,fontWeight:700,color:C.greenD}}>{fmt(l.total)}</div>
-              <button onClick={()=>setDetalle(detalle?.id===l.id?null:l)} style={{...badge("orange"),cursor:"pointer",marginTop:4}}>{detalle?.id===l.id?"Ocultar":"Ver detalle"}</button>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 12, color: C.g4, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".06em" }}>Total pagado</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: C.gnD }}>{fmt(l.total)}</div>
+              <button onClick={() => setDet(det?.id === l.id ? null : l)} style={{ ...bdg("orange"), cursor: "pointer", marginTop: 4 }}>{det?.id === l.id ? "Ocultar" : "Ver detalle"}</button>
             </div>
           </div>
-          {detalle?.id===l.id&&<div style={{marginTop:12,borderTop:`1px solid ${C.gray200}`,paddingTop:12}}>
-            {(l.rows||[]).map((r,i)=><div key={i} style={{display:"flex",gap:10,fontSize:12,padding:"4px 0",borderBottom:`1px solid ${C.gray100}`,flexWrap:"wrap"}}><span style={{color:C.gray400,minWidth:80}}>{r.obra?.substring(0,14)}</span><span>Apto {r.apto}</span><span style={{flex:1}}>{r.elemento}</span><span style={{fontWeight:700,minWidth:90,textAlign:"right"}}>{fmt(r.precio*r.cantidad)}</span></div>)}
-            <div style={{marginTop:10,background:C.gray50,borderRadius:8,padding:"8px 12px",fontSize:12}}>
-              {[["Total bruto",l.bruto],["Retención 10%",-l.retencion],["Subtotal",l.subtotal],l.pasajes>0?["Pasajes",l.pasajes]:null,l.bonificacion>0?["Bonificación",l.bonificacion]:null,["Total pagado",l.total]].filter(Boolean).map(([lb,v],i,arr)=>(
-                <div key={lb} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontWeight:i===arr.length-1?700:400,color:i===arr.length-1?C.greenD:C.black}}><span>{lb}</span><span>{v<0?`— ${fmt(Math.abs(v))}`:fmt(v)}</span></div>
+          {det?.id === l.id && <div style={{ marginTop: 12, borderTop: `1px solid ${C.g2}`, paddingTop: 12 }}>
+            {(l.rows || []).map((r, i) => <div key={i} style={{ display: "flex", gap: 10, fontSize: 12, padding: "4px 0", borderBottom: `1px solid ${C.g1}`, flexWrap: "wrap" }}><span style={{ color: C.g4, minWidth: 80 }}>{r.obra?.substring(0, 14)}</span><span>Apto {r.apto}</span><span style={{ flex: 1 }}>{r.el || r.elemento}</span><span style={{ fontWeight: 700, minWidth: 90, textAlign: "right" }}>{fmt((r.precio || 0) * (r.cant || r.cantidad || 1))}</span></div>)}
+            <div style={{ marginTop: 10, background: C.g0, borderRadius: 8, padding: "8px 12px", fontSize: 12 }}>
+              {[["Total bruto", l.bruto], ["Retención 10%", -(l.ret || 0)], ["Subtotal", l.sub], l.pas > 0 ? ["Pasajes", l.pas] : null, l.bon > 0 ? ["Bonificación", l.bon] : null, ["Total pagado", l.total]].filter(Boolean).map(([lb, v], i, a) => (
+                <div key={lb} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontWeight: i === a.length - 1 ? 700 : 400, color: i === a.length - 1 ? C.gnD : C.bk }}><span>{lb}</span><span>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>
               ))}
             </div>
           </div>}
@@ -1093,70 +1287,78 @@ function HistorialLiquidaciones({liquidaciones,user,usuarios}){
   );
 }
 
-function UsuariosView({usuarios,setUsuarios,openModal,closeModal,modals}){
-  const empty={nombre:"",email:"",rol:ROLES.INSTALADOR,pin:"",cedula:"",telefono:"",banco:"",cuenta:""};
-  const[form,setForm]=useState(empty);
-  const[editId,setEditId]=useState(null);
-  const[confirmDeleteUser,setConfirmDeleteUser]=useState(null);
-  const rolLabel={superadmin:"Superadmin",supervisor:"Supervisor",auxiliar:"Auxiliar",instalador:"Instalador"};
-  const rolBadge={superadmin:"orange",supervisor:"amber",auxiliar:"gray",instalador:"green"};
+// ── USUARIOS ──────────────────────────────────────────────
+function Usuarios({ users, setUsers, openM, closeM, modals }) {
+  const emp = { nombre: "", email: "", rol: ROLES.IN, pin: "", cedula: "", telefono: "", banco: "", cuenta: "" };
+  const [form, setForm] = useState(emp);
+  const [editId, setEditId] = useState(null);
+  const [delId, setDelId] = useState(null);
+  const rL = { superadmin: "Superadmin", supervisor: "Supervisor", auxiliar: "Auxiliar", instalador: "Instalador" };
+  const rC = { superadmin: "orange", supervisor: "amber", auxiliar: "gray", instalador: "green" };
 
-  async function eliminarUsuario(id){await dbDelete("usuarios",id);setUsuarios(us=>us.filter(u=>u.id!==id));setConfirmDeleteUser(null);}
-  async function guardar(){
-    if(!form.nombre||!form.email||(!editId&&!form.pin))return;
-    const u=editId?{...usuarios.find(x=>x.id===editId),...form}:{id:`u${Date.now()}`,...form};
-    await dbUpsert("usuarios",u);
-    if(editId)setUsuarios(us=>us.map(x=>x.id===editId?u:x));else setUsuarios(us=>[...us,u]);
-    setForm(empty);setEditId(null);closeModal("userModal");
+  async function eliminar(id) { await dbDel("usuarios", id); setUsers(x => x.filter(u => u.id !== id)); setDelId(null); }
+  async function guardar() {
+    if (!form.nombre || !form.email || (!editId && !form.pin)) return;
+    const u = editId ? { ...users.find(x => x.id === editId), ...form } : { id: `u${Date.now()}`, ...form };
+    await dbUpsert("usuarios", u);
+    if (editId) setUsers(x => x.map(y => y.id === editId ? u : y)); else setUsers(x => [...x, u]);
+    setForm(emp); setEditId(null); closeM("usr");
   }
-  function editar(u){setEditId(u.id);setForm({nombre:u.nombre,email:u.email,rol:u.rol,pin:u.pin,cedula:u.cedula||"",telefono:u.telefono||"",banco:u.banco||"",cuenta:u.cuenta||""});openModal("userModal");}
+  const editar = u => { setEditId(u.id); setForm({ nombre: u.nombre, email: u.email, rol: u.rol, pin: u.pin, cedula: u.cedula || "", telefono: u.telefono || "", banco: u.banco || "", cuenta: u.cuenta || "" }); openM("usr"); };
 
-  return(
+  return (
     <div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-        <h2 style={{margin:0,fontSize:20,fontWeight:700,color:C.black}}>Usuarios</h2>
-        <Btn variant="primary" onClick={()=>{setEditId(null);setForm(empty);openModal("userModal");}}>+ Nuevo usuario</Btn>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>Usuarios</h2>
+        <Btn variant="primary" onClick={() => { setEditId(null); setForm(emp); openM("usr"); }}>+ Nuevo</Btn>
       </div>
-      <div style={{display:"grid",gap:8}}>
-        {usuarios.map(u=><div key={u.id} style={{...card,display:"flex",alignItems:"center",gap:12}}>
-          <div style={{width:40,height:40,borderRadius:50,background:u.rol===ROLES.SUPERADMIN?C.orange:u.rol===ROLES.INSTALADOR?C.green:C.gray300,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:C.white,flexShrink:0}}>{u.nombre.split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase()}</div>
-          <div style={{flex:1}}>
-            <div style={{fontWeight:600,fontSize:14,color:C.black}}>{u.nombre}</div>
-            <div style={{fontSize:13,color:C.gray500}}>{u.email}{u.cedula?` · C.C. ${u.cedula}`:""}</div>
-            {u.rol===ROLES.INSTALADOR&&u.banco&&<div style={{fontSize:12,color:C.gray400}}>{u.banco} — {u.cuenta}</div>}
+      <div style={{ display: "grid", gap: 8 }}>
+        {users.map(u => <div key={u.id} style={{ ...card, display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 50, background: u.rol === ROLES.SA ? C.or : u.rol === ROLES.IN ? C.gn : C.g3, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: C.wh, flexShrink: 0 }}>{u.nombre.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>{u.nombre}</div>
+            <div style={{ fontSize: 13, color: C.g5 }}>{u.email}{u.cedula ? ` · C.C. ${u.cedula}` : ""}</div>
+            {u.rol === ROLES.IN && u.banco && <div style={{ fontSize: 12, color: C.g4 }}>{u.banco} — {u.cuenta}</div>}
           </div>
-          <span style={badge(rolBadge[u.rol]||"gray")}>{rolLabel[u.rol]}</span>
-          <Btn onClick={()=>editar(u)}>Editar</Btn>
-          <Btn variant="danger" onClick={()=>setConfirmDeleteUser(u.id)}>Eliminar</Btn>
+          <span style={bdg(rC[u.rol] || "gray")}>{rL[u.rol]}</span>
+          <Btn onClick={() => editar(u)}>Editar</Btn>
+          <Btn variant="danger" onClick={() => setDelId(u.id)}>Eliminar</Btn>
         </div>)}
       </div>
 
-      {confirmDeleteUser&&<Modal title="Eliminar usuario" onClose={()=>setConfirmDeleteUser(null)}>
-        <p style={{fontSize:14,color:C.gray700,marginBottom:20}}>¿Estás seguro de eliminar a <strong>{usuarios.find(u=>u.id===confirmDeleteUser)?.nombre}</strong>? Esta acción no se puede deshacer.</p>
-        <div style={{display:"flex",justifyContent:"flex-end",gap:10}}><Btn onClick={()=>setConfirmDeleteUser(null)}>Cancelar</Btn><Btn variant="danger" onClick={()=>eliminarUsuario(confirmDeleteUser)}>Sí, eliminar</Btn></div>
+      {delId && <Modal title="Eliminar usuario" onClose={() => setDelId(null)}>
+        <p style={{ fontSize: 14, color: C.g9, marginBottom: 20 }}>¿Eliminar a <strong>{users.find(u => u.id === delId)?.nombre}</strong>? Esta acción no se puede deshacer.</p>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn onClick={() => setDelId(null)}>Cancelar</Btn><Btn variant="danger" onClick={() => eliminar(delId)}>Sí, eliminar</Btn></div>
       </Modal>}
 
-      {modals.userModal&&<Modal title={editId?"Editar usuario":"Nuevo usuario"} onClose={()=>closeModal("userModal")} wide>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 16px"}}>
-          <Input label="Nombre completo (nombres y apellidos)" value={form.nombre} onChange={e=>setForm(f=>({...f,nombre:e.target.value}))} placeholder="Ej: Yarlinton Arboleda Lemus"/>
-          <Input label="Correo" type="email" value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))}/>
-          <Input label="Cédula" value={form.cedula} onChange={e=>setForm(f=>({...f,cedula:e.target.value}))}/>
-          <Input label="Teléfono" value={form.telefono} onChange={e=>setForm(f=>({...f,telefono:e.target.value}))}/>
+      {modals.usr && <Modal title={editId ? "Editar usuario" : "Nuevo usuario"} onClose={() => closeM("usr")} wide>
+        <p style={{ fontSize: 12, color: C.g5, margin: "-4px 0 14px", fontStyle: "italic" }}>Ingresa primero los nombres y luego los apellidos.</p>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+          <Inp label="Nombre completo" value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Ej: Juan Carlos Pérez López" />
+          <Inp label="Correo" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+          <Inp label="Cédula" value={form.cedula} onChange={e => setForm(f => ({ ...f, cedula: e.target.value }))} />
+          <Inp label="Teléfono" value={form.telefono} onChange={e => setForm(f => ({ ...f, telefono: e.target.value }))} />
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 16px"}}>
-          <Select label="Rol" value={form.rol} onChange={e=>setForm(f=>({...f,rol:e.target.value}))}>
-            <option value={ROLES.INSTALADOR}>Instalador</option><option value={ROLES.AUXILIAR}>Auxiliar</option><option value={ROLES.SUPERVISOR}>Supervisor</option><option value={ROLES.SUPERADMIN}>Superadmin</option>
-          </Select>
-          <Input label={editId?"Nuevo PIN (vacío = no cambiar)":"PIN (4 dígitos)"} type="password" maxLength={4} value={form.pin} onChange={e=>setForm(f=>({...f,pin:e.target.value}))} placeholder="••••"/>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+          <Sel label="Rol" value={form.rol} onChange={e => setForm(f => ({ ...f, rol: e.target.value }))}>
+            <option value={ROLES.IN}>Instalador</option>
+            <option value={ROLES.AX}>Auxiliar</option>
+            <option value={ROLES.SV}>Supervisor</option>
+            <option value={ROLES.SA}>Superadmin</option>
+          </Sel>
+          <Inp label={editId ? "Nuevo PIN (vacío = no cambiar)" : "PIN (4 dígitos)"} type="password" maxLength={4} value={form.pin} onChange={e => setForm(f => ({ ...f, pin: e.target.value }))} placeholder="••••" />
         </div>
-        {form.rol===ROLES.INSTALADOR&&<>
-          <div style={{fontSize:12,fontWeight:600,margin:"4px 0 10px",color:C.gray500,borderTop:`1px solid ${C.gray200}`,paddingTop:12,textTransform:"uppercase",letterSpacing:"0.06em"}}>Datos bancarios</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 16px"}}>
-            <Input label="Banco" value={form.banco} onChange={e=>setForm(f=>({...f,banco:e.target.value}))} placeholder="Ej: Bancolombia"/>
-            <Input label="Número de cuenta" value={form.cuenta} onChange={e=>setForm(f=>({...f,cuenta:e.target.value}))}/>
+        {form.rol === ROLES.IN && <>
+          <div style={{ fontSize: 12, fontWeight: 600, margin: "4px 0 10px", color: C.g5, borderTop: `1px solid ${C.g2}`, paddingTop: 12, textTransform: "uppercase", letterSpacing: ".06em" }}>Datos bancarios</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+            <Inp label="Banco" value={form.banco} onChange={e => setForm(f => ({ ...f, banco: e.target.value }))} placeholder="Ej: Bancolombia" />
+            <Inp label="Número de cuenta" value={form.cuenta} onChange={e => setForm(f => ({ ...f, cuenta: e.target.value }))} />
           </div>
         </>}
-        <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:8}}><Btn onClick={()=>closeModal("userModal")}>Cancelar</Btn><Btn variant="primary" onClick={guardar}>{editId?"Guardar cambios":"Crear usuario"}</Btn></div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
+          <Btn onClick={() => closeM("usr")}>Cancelar</Btn>
+          <Btn variant="primary" onClick={guardar}>{editId ? "Guardar" : "Crear"}</Btn>
+        </div>
       </Modal>}
     </div>
   );
