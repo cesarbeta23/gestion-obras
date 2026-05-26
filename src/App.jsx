@@ -36,14 +36,16 @@ function bdg(t) {
   return { background: v.bg, color: v.c, border: `1px solid ${v.b}`, borderRadius: 20, padding: "3px 10px", fontSize: 12, fontWeight: 500, display: "inline-block" };
 }
 
+// ── CAMBIO 1: Fechas de corte corregidas 1-14 y 15-fin de mes ──
 function getCorteFechas() {
   const h = new Date(), y = h.getFullYear(), m = h.getMonth();
   const r = [];
   [-2, -1, 0, 1].forEach(d => {
     const mm = m + d, yr = mm < 0 ? y - 1 : mm > 11 ? y + 1 : y, mr = ((mm % 12) + 12) % 12;
-    const dias = new Date(yr, mr + 1, 0).getDate();
-    r.push({ label: `1–13 ${new Date(yr, mr, 13).toLocaleString("es-CO", { month: "long", year: "numeric" })}`, desde: new Date(yr, mr, 1), hasta: new Date(yr, mr, 13) });
-    r.push({ label: `14–${Math.min(28, dias)} ${new Date(yr, mr, Math.min(28, dias)).toLocaleString("es-CO", { month: "long", year: "numeric" })}`, desde: new Date(yr, mr, 14), hasta: new Date(yr, mr, Math.min(28, dias)) });
+    const diasMes = new Date(yr, mr + 1, 0).getDate();
+    const nomMes = new Date(yr, mr, 1).toLocaleString("es-CO", { month: "long", year: "numeric" });
+    r.push({ label: `1–14 ${nomMes}`, desde: new Date(yr, mr, 1), hasta: new Date(yr, mr, 14) });
+    r.push({ label: `15–${diasMes} ${nomMes}`, desde: new Date(yr, mr, 15), hasta: new Date(yr, mr, diasMes) });
   });
   return r.sort((a, b) => b.desde - a.desde).slice(0, 10);
 }
@@ -339,7 +341,7 @@ function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra,
       aptos: Array.from({ length: Number(form.aptos) }, (_, ai) => ({
         id: `a${Date.now()}${pi}${ai}`, numero: ai + 1,
         nombre: `${pi + 1}${String(ai + 1).padStart(2, "0")}`,
-        tipologia: "", elementos: [], instaladorAsignado: null
+        tipologia: "", elementos: [], instaladorAsignado: null, observaciones: ""
       }))
     }));
     const n = { id: `o${Date.now()}`, nombre: form.nombre, direccion: form.direccion, coordinadorId: form.coordinadorId, pisos, estado: "activa", tipologias: [], instaladoresAutorizados: [], aptosHabilitados: {}, solicitudes: [], preciosOverride: {} };
@@ -641,7 +643,7 @@ function Obra({ obra, obras, updateObra, user, avanceApto, elems, users, goApto,
     toast(instId ? "Instalador asignado" : "Instalador removido", "ok");
   }
 
-  const agregarApto = pid => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => { if (p.id !== pid) return p; const n = p.aptos.length + 1; return { ...p, aptos: [...p.aptos, { id: `a${Date.now()}`, numero: n, nombre: `${p.numero}${String(n).padStart(2, "0")}`, tipologia: "", elementos: [], instaladorAsignado: null }] }; }) }));
+  const agregarApto = pid => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => { if (p.id !== pid) return p; const n = p.aptos.length + 1; return { ...p, aptos: [...p.aptos, { id: `a${Date.now()}`, numero: n, nombre: `${p.numero}${String(n).padStart(2, "0")}`, tipologia: "", elementos: [], instaladorAsignado: null, observaciones: "" }] }; }) }));
   const eliminarApto = (pid, aid) => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pid ? p : { ...p, aptos: p.aptos.filter(a => a.id !== aid) }) }));
   const renombrarApto = (pid, aid, nom) => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pid ? p : { ...p, aptos: p.aptos.map(a => a.id !== aid ? a : { ...a, nombre: nom }) }) }));
 
@@ -1071,6 +1073,28 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
         </div>}
       </div>
 
+      {/* ── CAMBIO 2: Sección de Observaciones ── */}
+      <div style={{ borderTop: `2px solid ${C.g1}`, paddingTop: 16, marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.bk, marginBottom: 12 }}>Observaciones</div>
+        <textarea
+          value={curA.observaciones || ""}
+          disabled={!canAct}
+          onChange={e => {
+            const val = e.target.value;
+            updateObra(obra.id, o => ({
+              ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : {
+                ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, observaciones: val })
+              })
+            }));
+          }}
+          placeholder={canAct ? "Escribe observaciones sobre este apartamento..." : "Sin observaciones"}
+          style={{ width: "100%", boxSizing: "border-box", minHeight: 90, padding: "10px 12px", border: `1px solid ${C.g2}`, borderRadius: 10, fontSize: 14, fontFamily: "system-ui", color: C.bk, background: canAct ? C.wh : C.g0, resize: "vertical" }}
+        />
+        {curA.observaciones && (
+          <div style={{ fontSize: 12, color: C.g4, marginTop: 4 }}>Visible para todos los roles.</div>
+        )}
+      </div>
+
       {canAct && <div style={{ position: "sticky", bottom: 0, background: C.wh, borderTop: `2px solid ${C.g1}`, padding: "14px 0 4px", display: "flex", justifyContent: "flex-end", gap: 10 }}>
         {hayPend && <span style={{ fontSize: 14, color: C.g5, alignSelf: "center" }}>Listo para guardar</span>}
         <Btn variant="primary" disabled={!hayPend} onClick={guardar} style={{ padding: "10px 28px", fontSize: 15, fontWeight: 700 }}>Guardar</Btn>
@@ -1249,14 +1273,36 @@ function Liquidacion({ obras, elems, users, user, liqs, setLiqs, getPrecio }) {
   );
 }
 
+// ── HISTORIAL ─────────────────────────────────────────────
 function Historial({ liqs, user, users }) {
   const [fi, setFi] = useState("");
   const [det, setDet] = useState(null);
   const INs = users.filter(u => u.rol === ROLES.IN);
   const items = liqs.filter(l => user.rol === ROLES.IN ? l.inst_id === user.id : (!fi || l.inst_id === fi)).sort((a, b) => b.id.localeCompare(a.id));
+
+  // ── CAMBIO 3: Resumen histórico para instalador y superadmin ──
+  const totalPagado = items.reduce((s, l) => s + (l.total || 0), 0);
+  const totalBruto = items.reduce((s, l) => s + (l.bruto || 0), 0);
+
   return (
     <div>
       <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 700, color: C.bk }}>Historial de liquidaciones</h3>
+
+      {items.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 20 }}>
+          {[
+            ["Cortes pagados", String(items.length)],
+            ["Total bruto histórico", fmt(totalBruto)],
+            ["Total neto recibido", fmt(totalPagado)]
+          ].map(([l, v]) => (
+            <div key={l} style={{ background: C.wh, borderRadius: 10, padding: "14px 16px", border: `1px solid ${C.g2}` }}>
+              <div style={{ fontSize: 11, color: C.g4, marginBottom: 4, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".06em" }}>{l}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: C.gnD }}>{v}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {user.rol !== ROLES.IN && <Sel label="Filtrar por instalador" value={fi} onChange={e => setFi(e.target.value)}><option value="">Todos</option>{INs.map(i => <option key={i.id} value={i.id}>{i.nombre}</option>)}</Sel>}
       {items.length === 0 && <p style={{ fontSize: 13, color: C.g4 }}>No hay liquidaciones cerradas.</p>}
       <div style={{ display: "grid", gap: 10 }}>
