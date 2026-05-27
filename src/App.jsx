@@ -36,7 +36,6 @@ function bdg(t) {
   return { background: v.bg, color: v.c, border: `1px solid ${v.b}`, borderRadius: 20, padding: "3px 10px", fontSize: 12, fontWeight: 500, display: "inline-block" };
 }
 
-// ── CAMBIO 1: Fechas de corte corregidas 1-14 y 15-fin de mes ──
 function getCorteFechas() {
   const h = new Date(), y = h.getFullYear(), m = h.getMonth();
   const r = [];
@@ -57,7 +56,6 @@ function enCorte(fs, d, h) {
   return f >= d && f <= h;
 }
 
-// ── UI Primitives ─────────────────────────────────────────
 function Modal({ title, onClose, children, wide }) {
   useEffect(() => { document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = ""; }; }, []);
   return (
@@ -94,7 +92,6 @@ function Toast({ items, setItems }) {
   </div>;
 }
 
-// ── Datos por defecto ─────────────────────────────────────
 const ELEMENTOS_DEF = [
   { id: "e1", nombre: "Puerta principal", unidad: "und", precio: 55000 },
   { id: "e2", nombre: "Puerta habitación", unidad: "und", precio: 55000 },
@@ -168,7 +165,6 @@ const USUARIOS_DEF = [
   { id: "i37", nombre: "Yefferson Sanchez Henao", rol: ROLES.IN, email: "1214720944@obra.com", pin: "0944", cedula: "1214720944", telefono: "", banco: "", cuenta: "" },
 ];
 
-// ── APP ───────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(() => { try { const s = localStorage.getItem("gs"); return s ? JSON.parse(s) : null; } catch { return null; } });
   const [obras, setObras] = useState([]);
@@ -237,8 +233,15 @@ export default function App() {
   }
   function doLogout() { setUser(null); localStorage.removeItem("gs"); }
 
-  const getPrecio = (eid, oid, corteLabel) => {
+  // ARREGLO 3: getPrecio ahora también busca override por apto individual (key: aptoId__eid)
+  const getPrecio = (eid, oid, corteLabel, aptoId) => {
     const o = obras.find(x => x.id === oid);
+    // Primero busca override individual por apto
+    if (aptoId) {
+      const kApto = `apto__${aptoId}__${eid}`;
+      if (o?.preciosOverride?.[kApto] !== undefined) return o.preciosOverride[kApto];
+    }
+    // Luego busca override por corte
     const k = `${corteLabel}__${eid}`;
     if (o?.preciosOverride?.[k] !== undefined) return o.preciosOverride[k];
     return elems.find(e => e.id === eid)?.precio || 0;
@@ -327,7 +330,8 @@ function Header({ user, doLogout, view, setView, selObra, setSelObra, setSelPiso
 
 // ── OBRAS ─────────────────────────────────────────────────
 function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra, goObra, openM, closeM, modals, toast }) {
-  const [form, setForm] = useState({ nombre: "", direccion: "", coordinadorId: "", pisos: 1, aptos: 1 });
+  // ARREGLO 4: pisoInicio agregado al form
+  const [form, setForm] = useState({ nombre: "", direccion: "", coordinadorId: "", pisoInicio: 1, pisos: 1, aptos: 1 });
   const [accM, setAccM] = useState(null);
   const [delM, setDelM] = useState(null);
   const [editM, setEditM] = useState(null);
@@ -336,16 +340,18 @@ function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra,
 
   async function crear() {
     if (!form.nombre) return;
+    const inicio = Number(form.pisoInicio) || 1;
+    // ARREGLO 4: pisos numerados desde pisoInicio
     const pisos = Array.from({ length: Number(form.pisos) }, (_, pi) => ({
-      id: `p${Date.now()}${pi}`, numero: pi + 1,
+      id: `p${Date.now()}${pi}`, numero: inicio + pi,
       aptos: Array.from({ length: Number(form.aptos) }, (_, ai) => ({
         id: `a${Date.now()}${pi}${ai}`, numero: ai + 1,
-        nombre: `${pi + 1}${String(ai + 1).padStart(2, "0")}`,
+        nombre: `${inicio + pi}${String(ai + 1).padStart(2, "0")}`,
         tipologia: "", elementos: [], instaladorAsignado: null, observaciones: ""
       }))
     }));
     const n = { id: `o${Date.now()}`, nombre: form.nombre, direccion: form.direccion, coordinadorId: form.coordinadorId, pisos, estado: "activa", tipologias: [], instaladoresAutorizados: [], aptosHabilitados: {}, solicitudes: [], preciosOverride: {} };
-    await saveObra(n); setObras(x => [...x, n]); setForm({ nombre: "", direccion: "", coordinadorId: "", pisos: 1, aptos: 1 }); closeM("nObra");
+    await saveObra(n); setObras(x => [...x, n]); setForm({ nombre: "", direccion: "", coordinadorId: "", pisoInicio: 1, pisos: 1, aptos: 1 }); closeM("nObra");
     toast("Obra creada", "ok");
   }
 
@@ -464,10 +470,15 @@ function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra,
         <Sel label="Coordinador responsable" value={form.coordinadorId} onChange={e => setForm(f => ({ ...f, coordinadorId: e.target.value }))}>
           <option value="">— Seleccionar —</option>{SAs.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
         </Sel>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <Inp label="Pisos" type="number" min="1" max="50" value={form.pisos} onChange={e => setForm(f => ({ ...f, pisos: e.target.value }))} />
+        {/* ARREGLO 4: campo piso inicial */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+          <Inp label="Piso inicial" type="number" min="1" max="50" value={form.pisoInicio} onChange={e => setForm(f => ({ ...f, pisoInicio: e.target.value }))} />
+          <Inp label="Cantidad de pisos" type="number" min="1" max="50" value={form.pisos} onChange={e => setForm(f => ({ ...f, pisos: e.target.value }))} />
           <Inp label="Aptos por piso" type="number" min="1" max="20" value={form.aptos} onChange={e => setForm(f => ({ ...f, aptos: e.target.value }))} />
         </div>
+        <p style={{ fontSize: 12, color: C.g4, margin: "-8px 0 12px" }}>
+          Ej: piso inicial 3, cantidad 10 → pisos 3 al 12. Nomenclatura: 301, 302…
+        </p>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn onClick={() => closeM("nObra")}>Cancelar</Btn><Btn variant="primary" onClick={crear}>Crear</Btn></div>
       </Modal>}
     </div>
@@ -576,7 +587,6 @@ function Obra({ obra, obras, updateObra, user, avanceApto, elems, users, goApto,
   const nums = [...new Set(cur.pisos?.flatMap(p => p.aptos?.map(a => String(a.numero))) || [])].sort((a, b) => Number(a) - Number(b));
   const cortes = getCorteFechas();
   const instsActivos = (cur.instaladoresAutorizados || []).map(id => users.find(u => u.id === id)).filter(Boolean);
-  const INs = users.filter(u => u.rol === ROLES.IN);
 
   const abrirNueva = () => { setEditTip(null); setTipForm({ nombre: "", eids: [] }); openM("tip"); };
   const abrirEditar = t => { setEditTip(t.id); setTipForm({ nombre: t.nombre, eids: [...t.elementoIds] }); openM("tip"); };
@@ -653,12 +663,14 @@ function Obra({ obra, obras, updateObra, user, avanceApto, elems, users, goApto,
     toast("Precios guardados", "ok"); setPreciosM(false); setPrecTmp({});
   }
 
-  // Vista instalador
+  // ARREGLO 1: Vista instalador — puede entrar a aptos habilitados aunque no tenga instaladorAsignado
   if (user.rol === ROLES.IN) {
     const aptosHab = (cur.aptosHabilitados || {})[user.id] || [];
     const todosAptos = cur.pisos?.flatMap(p => p.aptos?.map(a => ({ ...a, pisoId: p.id, pisoNum: p.numero })) || []) || [];
     const misHabilitados = todosAptos.filter(a => aptosHab.includes(a.id));
+    // Tomados = habilitados donde el instalador es este usuario
     const misTomados = misHabilitados.filter(a => a.instaladorAsignado === user.id);
+    // Disponibles = habilitados sin instalador asignado Y con tipología
     const disponibles = misHabilitados.filter(a => !a.instaladorAsignado && a.tipologia);
 
     const tomar = (pisoId, aptoId) => {
@@ -706,6 +718,20 @@ function Obra({ obra, obras, updateObra, user, avanceApto, elems, users, goApto,
             })}
           </div>
         </>}
+        {/* ARREGLO 1: también muestra aptos habilitados con instalador asignado a otro (solo lectura) */}
+        {(() => {
+          const otrosOcupados = misHabilitados.filter(a => a.instaladorAsignado && a.instaladorAsignado !== user.id);
+          if (!otrosOcupados.length) return null;
+          return <>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.g5, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 10 }}>Ocupados por otro instalador</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(130px,1fr))", gap: 10, marginBottom: 24 }}>
+              {otrosOcupados.map(a => <div key={a.id} style={{ ...card, background: C.g1, border: `1px solid ${C.g2}`, opacity: 0.7 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4, color: C.g5 }}>{a.nombre}</div>
+                <div style={{ fontSize: 10, color: C.rd }}>Ocupado</div>
+              </div>)}
+            </div>
+          </>;
+        })()}
         {misHabilitados.length === 0 && (
           <div style={{ textAlign: "center", padding: "3rem", color: C.g4, background: C.wh, borderRadius: 12, border: `1px solid ${C.g2}` }}>
             <div style={{ fontSize: 40, marginBottom: 8 }}>🏠</div>
@@ -914,6 +940,10 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const [ajuste, setAjuste] = useState({ pasajes: "", bonificacion: "" });
   const [nAd, setNAd] = useState({ desc: "", cant: 1, val: 0 });
   const [addAd, setAddAd] = useState(false);
+  // ARREGLO 3: estado para precios individuales por elemento en este apto
+  const [precIndM, setPrecIndM] = useState(false);
+  const [precIndTmp, setPrecIndTmp] = useState({});
+
   const hayPend = Object.keys(pend).length > 0 || ajuste.pasajes || ajuste.bonificacion;
   const canAct = [ROLES.IN, ROLES.SA, ROLES.SV].includes(user.rol);
   const canEdit = user.rol === ROLES.SA || user.rol === ROLES.SV;
@@ -951,6 +981,8 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
 
   const desmarcar = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, completado: false, instaladorId: null, fecha: null }) }) }) }));
   const aprobarAjuste = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, aprobado: true }) }) }) }));
+  // ARREGLO 2: rechazar/eliminar ajuste (pasajes o bonificación)
+  const rechazarAjuste = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.filter((_, i) => i !== idx) }) }) }));
 
   async function guardarAd() {
     if (!nAd.desc || !nAd.val) return;
@@ -960,22 +992,45 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   }
   const elimAd = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.filter((_, i) => i !== idx) }) }) }));
 
+  // ARREGLO 3: guardar precios individuales por elemento en este apto
+  function guardarPreciosInd() {
+    updateObra(obra.id, o => ({
+      ...o,
+      preciosOverride: {
+        ...(o.preciosOverride || {}),
+        ...Object.fromEntries(
+          Object.entries(precIndTmp)
+            .filter(([, v]) => v !== "")
+            .map(([eid, v]) => [`apto__${curA.id}__${eid}`, Number(v)])
+        )
+      }
+    }));
+    toast("Precios individuales guardados", "ok"); setPrecIndM(false); setPrecIndTmp({});
+  }
+
   const elsNorm = curA.elementos?.filter(e => !e.esAdicional && e.elementoId !== "__pasajes__" && e.elementoId !== "__bonificacion__") || [];
   const elsAd = curA.elementos?.filter(e => e.esAdicional) || [];
   const ajustes = curA.elementos?.filter(e => e.elementoId === "__pasajes__" || e.elementoId === "__bonificacion__") || [];
 
-  const totNorm = elsNorm.filter(e => e.completado).reduce((s, el) => s + getPrecio(el.elementoId, obra.id, corteAct.label) * (el.cantidad || 1), 0);
+  const totNorm = elsNorm.filter(e => e.completado).reduce((s, el) => s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id) * (el.cantidad || 1), 0);
   const totAd = elsAd.filter(e => e.completado && e.aprobado).reduce((s, e) => s + e.valorUnitario * e.cantidad, 0);
   const totAj = ajustes.filter(e => e.aprobado).reduce((s, e) => s + (e.valorManual || 0), 0);
   const totLiq = totNorm + totAd + totAj;
-  const totPend = Object.keys(pend).reduce((s, i) => { const el = elsNorm[parseInt(i)]; return s + getPrecio(el?.elementoId, obra.id, corteAct.label) * (cnts[i] ?? el?.cantidad ?? 1); }, 0) + (Number(ajuste.pasajes) || 0) + (Number(ajuste.bonificacion) || 0);
+  const totPend = Object.keys(pend).reduce((s, i) => { const el = elsNorm[parseInt(i)]; return s + getPrecio(el?.elementoId, obra.id, corteAct.label, curA.id) * (cnts[i] ?? el?.cantidad ?? 1); }, 0) + (Number(ajuste.pasajes) || 0) + (Number(ajuste.bonificacion) || 0);
 
   return (
     <div>
-      <div style={{ marginBottom: 18 }}>
-        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>Apto {curA.nombre || `${piso.numero}${String(apto.numero).padStart(2, "0")}`} — {tip?.nombre || "Sin tipología"}</h2>
-        <p style={{ margin: "4px 0 0", fontSize: 13, color: C.g5 }}>{obra.nombre} · Piso {piso.numero}</p>
+      <div style={{ marginBottom: 18, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>Apto {curA.nombre || `${piso.numero}${String(apto.numero).padStart(2, "0")}`} — {tip?.nombre || "Sin tipología"}</h2>
+          <p style={{ margin: "4px 0 0", fontSize: 13, color: C.g5 }}>{obra.nombre} · Piso {piso.numero}</p>
+        </div>
+        {/* ARREGLO 3: botón precios individuales para SA */}
+        {user.rol === ROLES.SA && tip && (
+          <Btn onClick={() => { setPrecIndTmp({}); setPrecIndM(true); }}>💰 Precios apto</Btn>
+        )}
       </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
         {[["Avance", `${av}%`], ["Instalados", `${elsNorm.filter(e => e.completado).length}/${elsNorm.length}`], [user.rol === ROLES.IN ? "Mi liquidación" : "Liquidación", fmt(totLiq)]].map(([l, v]) => (
           <div key={l} style={{ background: C.wh, borderRadius: 10, padding: "14px 16px", border: `1px solid ${C.g2}` }}>
@@ -984,7 +1039,7 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
           </div>
         ))}
       </div>
-      {canEdit && <div style={{ marginBottom: 14, padding: "10px 14px", background: C.amL, border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#B45309", fontWeight: 500 }}>Puedes desmarcar elementos con ✕ y aprobar ajustes.</div>}
+      {canEdit && <div style={{ marginBottom: 14, padding: "10px 14px", background: C.amL, border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#B45309", fontWeight: 500 }}>Puedes desmarcar elementos con ✕ y aprobar o rechazar ajustes.</div>}
       {user.rol === ROLES.IN && <div style={{ marginBottom: 14, padding: "10px 14px", background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 10, fontSize: 13, color: C.orD, fontWeight: 500 }}>Marca los elementos terminados y presiona <strong>Guardar</strong>.{hayPend && <span style={{ marginLeft: 8 }}>+{fmt(totPend)}</span>}</div>}
 
       <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
@@ -994,7 +1049,9 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
           const eP = !!pend[idx], marc = el.completado || eP;
           const cT = canToggle(idx);
           const ca = cnts[idx] ?? el.cantidad ?? 1;
-          const precio = getPrecio(el.elementoId, obra.id, corteAct.label);
+          const precio = getPrecio(el.elementoId, obra.id, corteAct.label, curA.id);
+          // Indicar si tiene precio individual
+          const tieneOvInd = cur?.preciosOverride?.[`apto__${curA.id}__${el.elementoId}`] !== undefined;
           return (
             <div key={idx} onClick={() => cT && togglePend(idx)} style={{ display: "flex", alignItems: "center", gap: 12, background: el.completado ? C.gnL : eP ? C.orL : C.wh, border: `1.5px solid ${el.completado ? "#BBF7D0" : eP ? C.orM : C.g2}`, borderRadius: 10, padding: "12px 14px", cursor: cT ? "pointer" : "default", transition: "all .12s" }}>
               <div style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0, border: `2.5px solid ${el.completado ? C.gn : eP ? C.or : C.g3}`, background: el.completado ? C.gn : eP ? C.or : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -1004,6 +1061,7 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
                 <div style={{ fontWeight: 600, fontSize: 14, color: el.completado ? C.gnD : eP ? C.orD : C.bk }}>{elem?.nombre || el.elementoId}</div>
                 {el.completado && inst && <div style={{ fontSize: 12, color: C.gnD, fontWeight: 500 }}>{inst.nombre} · {el.fecha}</div>}
                 {eP && <div style={{ fontSize: 12, color: C.orD, fontWeight: 500 }}>Pendiente de guardar</div>}
+                {tieneOvInd && <div style={{ fontSize: 10, color: C.or, fontWeight: 600 }}>precio personalizado</div>}
               </div>
               {(elem?.unidad === "ml" || elem?.unidad === "m2") && <div onClick={e => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 12, color: C.g4 }}>{elem.unidad}</span>
@@ -1054,6 +1112,7 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
         {elsAd.length === 0 && !addAd && <p style={{ fontSize: 13, color: C.g3, margin: 0 }}>Sin elementos adicionales.</p>}
       </div>
 
+      {/* ARREGLO 2: Pasajes y Bonificación con opción de rechazar/eliminar */}
       <div style={{ borderTop: `2px solid ${C.g1}`, paddingTop: 16, marginBottom: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: C.bk, marginBottom: 12 }}>Pasajes y Bonificación</div>
         {ajustes.map((aj, i) => {
@@ -1061,10 +1120,17 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
           return <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: aj.aprobado ? C.gnL : C.amL, border: `1px solid ${aj.aprobado ? "#BBF7D0" : "#FDE68A"}`, borderRadius: 10, marginBottom: 8 }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 600, fontSize: 14 }}>{aj.elementoId === "__pasajes__" ? "Pasajes" : "Bonificación"}</div>
-              <div style={{ fontSize: 12, color: C.g5 }}>{aj.fecha} · {aj.aprobado ? "✓ Aprobado" : "Pendiente"}</div>
+              <div style={{ fontSize: 12, color: C.g5 }}>{aj.fecha} · {aj.aprobado ? "✓ Aprobado" : "⏳ Pendiente aprobación"}</div>
             </div>
             <div style={{ fontWeight: 700, fontSize: 14 }}>{fmt(aj.valorManual)}</div>
-            {canEdit && !aj.aprobado && <Btn variant="success" onClick={() => aprobarAjuste(ir)}>Aprobar</Btn>}
+            {/* ARREGLO 2: SA/SV pueden aprobar Y rechazar (eliminar el ajuste) */}
+            {canEdit && !aj.aprobado && <>
+              <Btn variant="success" onClick={() => aprobarAjuste(ir)}>Aprobar</Btn>
+              <Btn variant="danger" onClick={() => { rechazarAjuste(ir); toast("Ajuste rechazado y eliminado", "ok"); }}>Rechazar</Btn>
+            </>}
+            {canEdit && aj.aprobado && (
+              <Btn variant="danger" onClick={() => { rechazarAjuste(ir); toast("Ajuste eliminado", "ok"); }}>Eliminar</Btn>
+            )}
           </div>;
         })}
         {user.rol === ROLES.IN && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -1073,7 +1139,6 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
         </div>}
       </div>
 
-      {/* ── CAMBIO 2: Sección de Observaciones ── */}
       <div style={{ borderTop: `2px solid ${C.g1}`, paddingTop: 16, marginBottom: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: C.bk, marginBottom: 12 }}>Observaciones</div>
         <textarea
@@ -1090,15 +1155,48 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
           placeholder={canAct ? "Escribe observaciones sobre este apartamento..." : "Sin observaciones"}
           style={{ width: "100%", boxSizing: "border-box", minHeight: 90, padding: "10px 12px", border: `1px solid ${C.g2}`, borderRadius: 10, fontSize: 14, fontFamily: "system-ui", color: C.bk, background: canAct ? C.wh : C.g0, resize: "vertical" }}
         />
-        {curA.observaciones && (
-          <div style={{ fontSize: 12, color: C.g4, marginTop: 4 }}>Visible para todos los roles.</div>
-        )}
+        {curA.observaciones && <div style={{ fontSize: 12, color: C.g4, marginTop: 4 }}>Visible para todos los roles.</div>}
       </div>
 
       {canAct && <div style={{ position: "sticky", bottom: 0, background: C.wh, borderTop: `2px solid ${C.g1}`, padding: "14px 0 4px", display: "flex", justifyContent: "flex-end", gap: 10 }}>
         {hayPend && <span style={{ fontSize: 14, color: C.g5, alignSelf: "center" }}>Listo para guardar</span>}
         <Btn variant="primary" disabled={!hayPend} onClick={guardar} style={{ padding: "10px 28px", fontSize: 15, fontWeight: 700 }}>Guardar</Btn>
       </div>}
+
+      {/* ARREGLO 3: Modal precios individuales por apto */}
+      {precIndM && <Modal title={`Precios individuales — Apto ${curA.nombre}`} onClose={() => setPrecIndM(false)} wide>
+        <p style={{ fontSize: 13, color: C.g5, margin: "0 0 12px" }}>
+          Ajusta el precio de cada elemento solo para este apartamento. No modifica el precio base ni otros aptos.<br />
+          Deja vacío para usar el precio estándar del corte.
+        </p>
+        <div style={{ maxHeight: 350, overflowY: "auto", display: "grid", gap: 8 }}>
+          {elsNorm.map(el => {
+            const elem = elems.find(e => e.id === el.elementoId);
+            if (!elem) return null;
+            const precioStd = getPrecio(el.elementoId, obra.id, corteAct.label);
+            const keyInd = `apto__${curA.id}__${el.elementoId}`;
+            const ovActual = cur?.preciosOverride?.[keyInd];
+            return <div key={el.elementoId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: ovActual !== undefined ? C.orL : C.g0, borderRadius: 8, border: `1px solid ${ovActual !== undefined ? C.orM : C.g2}` }}>
+              <div style={{ flex: 1, fontSize: 14 }}>
+                {elem.nombre}
+                <span style={{ fontSize: 12, color: C.g4, marginLeft: 8 }}>std: {fmt(precioStd)}</span>
+                {ovActual !== undefined && <span style={{ fontSize: 11, color: C.orD, marginLeft: 6, fontWeight: 600 }}>actual: {fmt(ovActual)}</span>}
+              </div>
+              <input
+                type="number" min="0"
+                placeholder={String(precioStd)}
+                value={precIndTmp[el.elementoId] ?? (ovActual !== undefined ? ovActual : "")}
+                onChange={x => setPrecIndTmp(t => ({ ...t, [el.elementoId]: x.target.value }))}
+                style={{ width: 120, padding: "5px 8px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 13, textAlign: "right" }}
+              />
+            </div>;
+          })}
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
+          <Btn onClick={() => setPrecIndM(false)}>Cancelar</Btn>
+          <Btn variant="primary" onClick={guardarPreciosInd}>Guardar precios</Btn>
+        </div>
+      </Modal>}
     </div>
   );
 }
@@ -1157,7 +1255,7 @@ function Liquidacion({ obras, elems, users, user, liqs, setLiqs, getPrecio }) {
         if (el.elementoId === "__bonificacion__") { rows.push({ obra: o.nombre, apto: a.nombre, el: "Bonificación", cant: 1, precio: el.valorManual || 0, fecha: el.fecha, adj: true, apr: el.aprobado }); return; }
         if (el.esAdicional) { rows.push({ obra: o.nombre, apto: a.nombre, el: `[Adicional] ${el.descripcion}`, cant: el.cantidad || 1, precio: el.valorUnitario || 0, fecha: el.fecha, adj: false, apr: true }); return; }
         const elem = elems.find(e => e.id === el.elementoId);
-        rows.push({ obra: o.nombre, apto: a.nombre, el: elem?.nombre, cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label), fecha: el.fecha, adj: false, apr: true });
+        rows.push({ obra: o.nombre, apto: a.nombre, el: elem?.nombre, cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label, a.id), fecha: el.fecha, adj: false, apr: true });
       }
     }))));
     return rows;
@@ -1273,28 +1371,20 @@ function Liquidacion({ obras, elems, users, user, liqs, setLiqs, getPrecio }) {
   );
 }
 
-// ── HISTORIAL ─────────────────────────────────────────────
 function Historial({ liqs, user, users }) {
   const [fi, setFi] = useState("");
   const [det, setDet] = useState(null);
   const INs = users.filter(u => u.rol === ROLES.IN);
   const items = liqs.filter(l => user.rol === ROLES.IN ? l.inst_id === user.id : (!fi || l.inst_id === fi)).sort((a, b) => b.id.localeCompare(a.id));
-
-  // ── CAMBIO 3: Resumen histórico para instalador y superadmin ──
   const totalPagado = items.reduce((s, l) => s + (l.total || 0), 0);
   const totalBruto = items.reduce((s, l) => s + (l.bruto || 0), 0);
 
   return (
     <div>
       <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 700, color: C.bk }}>Historial de liquidaciones</h3>
-
       {items.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 20 }}>
-          {[
-            ["Cortes pagados", String(items.length)],
-            ["Total bruto histórico", fmt(totalBruto)],
-            ["Total neto recibido", fmt(totalPagado)]
-          ].map(([l, v]) => (
+          {[["Cortes pagados", String(items.length)], ["Total bruto histórico", fmt(totalBruto)], ["Total neto recibido", fmt(totalPagado)]].map(([l, v]) => (
             <div key={l} style={{ background: C.wh, borderRadius: 10, padding: "14px 16px", border: `1px solid ${C.g2}` }}>
               <div style={{ fontSize: 11, color: C.g4, marginBottom: 4, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".06em" }}>{l}</div>
               <div style={{ fontSize: 18, fontWeight: 700, color: C.gnD }}>{v}</div>
@@ -1302,7 +1392,6 @@ function Historial({ liqs, user, users }) {
           ))}
         </div>
       )}
-
       {user.rol !== ROLES.IN && <Sel label="Filtrar por instalador" value={fi} onChange={e => setFi(e.target.value)}><option value="">Todos</option>{INs.map(i => <option key={i.id} value={i.id}>{i.nombre}</option>)}</Sel>}
       {items.length === 0 && <p style={{ fontSize: 13, color: C.g4 }}>No hay liquidaciones cerradas.</p>}
       <div style={{ display: "grid", gap: 10 }}>
@@ -1371,12 +1460,10 @@ function Usuarios({ users, setUsers, openM, closeM, modals }) {
           <Btn variant="danger" onClick={() => setDelId(u.id)}>Eliminar</Btn>
         </div>)}
       </div>
-
       {delId && <Modal title="Eliminar usuario" onClose={() => setDelId(null)}>
         <p style={{ fontSize: 14, color: C.g9, marginBottom: 20 }}>¿Eliminar a <strong>{users.find(u => u.id === delId)?.nombre}</strong>? Esta acción no se puede deshacer.</p>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn onClick={() => setDelId(null)}>Cancelar</Btn><Btn variant="danger" onClick={() => eliminar(delId)}>Sí, eliminar</Btn></div>
       </Modal>}
-
       {modals.usr && <Modal title={editId ? "Editar usuario" : "Nuevo usuario"} onClose={() => closeM("usr")} wide>
         <p style={{ fontSize: 12, color: C.g5, margin: "-4px 0 14px", fontStyle: "italic" }}>Ingresa primero los nombres y luego los apellidos.</p>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
