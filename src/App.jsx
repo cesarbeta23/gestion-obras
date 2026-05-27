@@ -649,8 +649,25 @@ function Obra({ obra, obras, updateObra, user, avanceApto, elems, users, goApto,
   }
 
   function asignarInst(pisoId, aptoId, instId) {
-    updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : { ...p, aptos: p.aptos.map(a => a.id !== aptoId ? a : { ...a, instaladorAsignado: instId || null }) }) }));
+    updateObra(obra.id, o => {
+      const ah = { ...(o.aptosHabilitados || {}) };
+      if (instId) {
+        const lista = ah[instId] || [];
+        if (!lista.includes(aptoId)) ah[instId] = [...lista, aptoId];
+      }
+      return {
+        ...o,
+        aptosHabilitados: ah,
+        pisos: o.pisos.map(p => p.id !== pisoId ? p : {
+          ...p, aptos: p.aptos.map(a => a.id !== aptoId ? a : {
+            ...a, instaladorAsignado: instId || null
+          })
+        })
+      };
+    });
     toast(instId ? "Instalador asignado" : "Instalador removido", "ok");
+  }
+
   }
 
   const agregarApto = pid => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => { if (p.id !== pid) return p; const n = p.aptos.length + 1; return { ...p, aptos: [...p.aptos, { id: `a${Date.now()}`, numero: n, nombre: `${p.numero}${String(n).padStart(2, "0")}`, tipologia: "", elementos: [], instaladorAsignado: null, observaciones: "" }] }; }) }));
