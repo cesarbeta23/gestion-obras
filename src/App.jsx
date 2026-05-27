@@ -668,8 +668,6 @@ function Obra({ obra, obras, updateObra, user, avanceApto, elems, users, goApto,
     toast(instId ? "Instalador asignado" : "Instalador removido", "ok");
   }
 
-  }
-
   const agregarApto = pid => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => { if (p.id !== pid) return p; const n = p.aptos.length + 1; return { ...p, aptos: [...p.aptos, { id: `a${Date.now()}`, numero: n, nombre: `${p.numero}${String(n).padStart(2, "0")}`, tipologia: "", elementos: [], instaladorAsignado: null, observaciones: "" }] }; }) }));
   const eliminarApto = (pid, aid) => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pid ? p : { ...p, aptos: p.aptos.filter(a => a.id !== aid) }) }));
   const renombrarApto = (pid, aid, nom) => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pid ? p : { ...p, aptos: p.aptos.map(a => a.id !== aid ? a : { ...a, nombre: nom }) }) }));
