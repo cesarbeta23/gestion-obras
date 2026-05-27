@@ -373,7 +373,7 @@ function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra,
     toast("Solicitud enviada", "ok");
   }
 
-  const visibles = obras.filter(o => user.rol !== ROLES.IN || (o.instaladoresAutorizados || []).includes(user.id));
+  const visibles = obras.filter(o => user.rol === ROLES.SA || user.rol === ROLES.SV || user.rol === ROLES.AX || (user.rol === ROLES.IN && (o.instaladoresAutorizados || []).includes(user.id)));
   const sinAcceso = user.rol === ROLES.IN ? obras.filter(o => !(o.instaladoresAutorizados || []).includes(user.id)) : [];
 
   return (
