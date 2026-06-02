@@ -1131,7 +1131,8 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
                 <div style={{ fontSize: 14, fontWeight: 700 }}>{fmt(precio * ca)}</div>
                 <div style={{ fontSize: 11, color: C.g4 }}>{elem?.unidad}</div>
               </div>
-              {canEdit && el.completado && <button onClick={e => { e.stopPropagation(); desmarcar(idx); }} style={{ marginLeft: 4, width: 28, height: 28, borderRadius: 6, ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14, fontWeight: 700 }}>✕</button>}
+              {canEdit && !el.completado && <button onClick={e => { e.stopPropagation(); updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.filter((_, i) => i !== idx) }) }) })); toast("Elemento eliminado", "ok"); }} style={{ marginLeft: 4, width: 28, height: 28, borderRadius: 6, ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14, fontWeight: 700 }}>🗑</button>}
+{canEdit && el.completado && <button onClick={e => { e.stopPropagation(); desmarcar(idx); }} style={{ marginLeft: 4, width: 28, height: 28, borderRadius: 6, ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14, fontWeight: 700 }}>✕</button>}
             </div>
           );
         })}
