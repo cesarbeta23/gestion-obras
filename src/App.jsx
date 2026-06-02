@@ -1143,7 +1143,14 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
             const final = [...newEls.filter(e => e.elementoId !== "__pasajes__" && e.elementoId !== "__bonificacion__"), ...extras];
             const done = newEls.filter(e => !e.esAdicional && !e.elementoId?.startsWith("__")).every(e => e.completado);
             if (done) SVs.forEach(s => toast(`🔔 ${s.nombre}: Apto completado en ${obra.nombre}`));
-            return { ...a, elementos: final };
+            // También guardar elementosExtra pendientes
+const newElsExtra = (a.elementosExtra || []).map((el, i) => {
+  let u = { ...el };
+  if (cnts[`x${i}`] !== undefined) u.cantidad = cnts[`x${i}`];
+  if (pend[`x${i}`]) { u.completado = true; u.instaladorId = user.id; u.fecha = new Date().toLocaleDateString("es-CO"); }
+  return u;
+});
+return { ...a, elementos: final, elementosExtra: newElsExtra };
           })
         };
       })
@@ -1183,11 +1190,13 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const elsNorm = curA.elementos?.filter(e => !e.esAdicional && e.elementoId !== "__pasajes__" && e.elementoId !== "__bonificacion__") || [];
   const elsAd = curA.elementos?.filter(e => e.esAdicional) || [];
   const ajustes = curA.elementos?.filter(e => e.elementoId === "__pasajes__" || e.elementoId === "__bonificacion__") || [];
+  const elsExtra = curA.elementosExtra?.filter(e => !e.esAdicional) || [];
 
   const totNorm = elsNorm.filter(e => e.completado).reduce((s, el) => s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id) * (el.cantidad || 1), 0);
   const totAd = elsAd.filter(e => e.completado && e.aprobado).reduce((s, e) => s + e.valorUnitario * e.cantidad, 0);
   const totAj = ajustes.filter(e => e.aprobado).reduce((s, e) => s + (e.valorManual || 0), 0);
-  const totLiq = totNorm + totAd + totAj;
+  const totExtra = elsExtra.filter(e => e.completado).reduce((s, el) => s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, el.tipologiaId) * (el.cantidad || 1), 0);
+const totLiq = totNorm + totAd + totAj + totExtra;
   const totPend = Object.keys(pend).reduce((s, i) => { const el = elsNorm[parseInt(i)]; return s + getPrecio(el?.elementoId, obra.id, corteAct.label, curA.id) * (cnts[i] ?? el?.cantidad ?? 1); }, 0) + (Number(ajuste.pasajes) || 0) + (Number(ajuste.bonificacion) || 0);
 
   return (
@@ -1283,6 +1292,45 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
           </div>;
         })}
         {elsAd.length === 0 && !addAd && <p style={{ fontSize: 13, color: C.g3, margin: 0 }}>Sin elementos adicionales.</p>}
+        {elsExtra.length > 0 && <div style={{ borderTop: `2px solid ${C.g1}`, paddingTop: 16, marginBottom: 16 }}>
+  {(curA.tipologiasExtra || []).map(tipId => {
+    const tip = cur?.tipologias?.find(t => t.id === tipId);
+    const elsDeEsta = elsExtra.filter(e => e.tipologiaId === tipId);
+    if (!elsDeEsta.length) return null;
+    return <div key={tipId} style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: C.bk, marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span>{tip?.nombre || "Tipología extra"}</span>
+        <span style={{ fontSize: 12, color: C.gnD, fontWeight: 600 }}>{fmt(elsDeEsta.filter(e => e.completado).reduce((s, el) => s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, tipId) * (el.cantidad || 1), 0))}</span>
+      </div>
+      <div style={{ display: "grid", gap: 8 }}>
+        {elsDeEsta.map((el, idx) => {
+          const irx = curA.elementosExtra.indexOf(el);
+          const elem = elems.find(e => e.id === el.elementoId);
+          const inst = users.find(u => u.id === el.instaladorId);
+          const eP = !!pend[`x${irx}`];
+          const marc = el.completado || eP;
+          const cT = !el.completado && canAct;
+          const ca = cnts[`x${irx}`] ?? el.cantidad ?? 1;
+          const precio = getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, tipId);
+          return <div key={irx} onClick={() => { if (!cT) return; setPend(p => { const c = {...p}; if (c[`x${irx}`] !== undefined) delete c[`x${irx}`]; else c[`x${irx}`] = true; return c; }); }} style={{ display: "flex", alignItems: "center", gap: 12, background: el.completado ? C.gnL : eP ? C.orL : C.wh, border: `1.5px solid ${el.completado ? "#BBF7D0" : eP ? C.orM : C.g2}`, borderRadius: 10, padding: "12px 14px", cursor: cT ? "pointer" : "default" }}>
+            <div style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0, border: `2.5px solid ${el.completado ? C.gn : eP ? C.or : C.g3}`, background: el.completado ? C.gn : eP ? C.or : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {marc && <span style={{ color: C.wh, fontSize: 14, fontWeight: 700 }}>✓</span>}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 14, color: el.completado ? C.gnD : eP ? C.orD : C.bk }}>{elem?.nombre || el.elementoId}</div>
+              {el.completado && inst && <div style={{ fontSize: 12, color: C.gnD }}>{inst.nombre} · {el.fecha}</div>}
+              {eP && <div style={{ fontSize: 12, color: C.orD }}>Pendiente de guardar</div>}
+            </div>
+            <div style={{ textAlign: "right", minWidth: 90 }}>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>{fmt(precio * ca)}</div>
+            </div>
+            {canEdit && el.completado && <button onClick={e => { e.stopPropagation(); updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementosExtra: a.elementosExtra.map((x, i) => i !== irx ? x : { ...x, completado: false, instaladorId: null, fecha: null }) }) }) })); }} style={{ ...bdg("red"), cursor: "pointer", width: 28, height: 28, borderRadius: 6, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>}
+          </div>;
+        })}
+      </div>
+    </div>;
+  })}
+</div>}
       </div>
 
       {/* ARREGLO 2: Pasajes y Bonificación con opción de rechazar/eliminar */}
