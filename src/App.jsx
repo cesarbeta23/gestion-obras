@@ -234,14 +234,16 @@ export default function App() {
   function doLogout() { setUser(null); localStorage.removeItem("gs"); }
 
   // ARREGLO 3: getPrecio ahora también busca override por apto individual (key: aptoId__eid)
-  const getPrecio = (eid, oid, corteLabel, aptoId) => {
+  const getPrecio = (eid, oid, corteLabel, aptoId, tipId) => {
     const o = obras.find(x => x.id === oid);
-    // Primero busca override individual por apto
     if (aptoId) {
       const kApto = `apto__${aptoId}__${eid}`;
       if (o?.preciosOverride?.[kApto] !== undefined) return o.preciosOverride[kApto];
     }
-    // Luego busca override por corte
+    if (tipId) {
+      const kTip = `tip__${tipId}__${eid}`;
+      if (o?.preciosOverride?.[kTip] !== undefined) return o.preciosOverride[kTip];
+    }
     const k = `${corteLabel}__${eid}`;
     if (o?.preciosOverride?.[k] !== undefined) return o.preciosOverride[k];
     return elems.find(e => e.id === eid)?.precio || 0;
@@ -637,7 +639,8 @@ const [nuevoPisoF, setNuevoPisoF] = useState({ numero: "", aptos: 1 });
 
   const abrirNueva = () => { setEditTip(null); setTipForm({ nombre: "", eids: [] }); openM("tip"); };
   const abrirEditar = t => { setEditTip(t.id); setTipForm({ nombre: t.nombre, eids: [...t.elementoIds] }); openM("tip"); };
-
+const [dupTip, setDupTip] = useState(null);
+const [dupPrecios, setDupPrecios] = useState({});
   async function guardarTip() {
     if (!tipForm.nombre) return;
     if (editTip) {
@@ -841,6 +844,7 @@ const disponibles = misHabilitados.filter(a => {
               {user.rol === ROLES.SA && <>
                 <span onClick={() => abrirEditar(t)} style={{ cursor: "pointer", fontWeight: 700 }}>✎</span>
                 <span onClick={() => setDelTipId(t.id)} style={{ cursor: "pointer", fontWeight: 700, color: C.rd, marginLeft: 2 }}>🗑</span>
+<span onClick={() => { setDupTip(t); setDupPrecios({}); }} style={{ cursor: "pointer", fontWeight: 700, color: C.gnD, marginLeft: 2 }}>⧉</span>
               </>}
             </div>
           ))}
@@ -936,7 +940,36 @@ const disponibles = misHabilitados.filter(a => {
           </div>
         );
       })}
-
+{dupTip && <Modal title={`Duplicar — ${dupTip.nombre}`} onClose={() => setDupTip(null)} wide>
+  <Inp label="Nombre de la nueva tipología" defaultValue={`${dupTip.nombre} — Detalle`} onChange={e => setDupTip(t => ({ ...t, nombreDup: e.target.value }))} />
+  <p style={{ fontSize: 13, color: C.g5, margin: "0 0 12px" }}>Ajusta los precios para esta tipología en esta obra. Vacío = precio estándar.</p>
+  <div style={{ maxHeight: 300, overflowY: "auto", display: "grid", gap: 8, marginBottom: 16 }}>
+    {dupTip.elementoIds?.map(eid => {
+      const elem = elems.find(e => e.id === eid);
+      if (!elem) return null;
+      return <div key={eid} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: C.g0, borderRadius: 8 }}>
+        <div style={{ flex: 1, fontSize: 14 }}>{elem.nombre} <span style={{ fontSize: 12, color: C.g4 }}>std: {fmt(elem.precio)}</span></div>
+        <input type="number" min="0" placeholder={String(elem.precio)} value={dupPrecios[eid] ?? ""} onChange={x => setDupPrecios(p => ({ ...p, [eid]: x.target.value }))} style={{ width: 120, padding: "5px 8px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 13, textAlign: "right" }} />
+      </div>;
+    })}
+  </div>
+  <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+    <Btn onClick={() => setDupTip(null)}>Cancelar</Btn>
+    <Btn variant="primary" onClick={() => {
+      const nuevoId = `t${Date.now()}`;
+      const nombre = dupTip.nombreDup || `${dupTip.nombre} — Detalle`;
+      const nuevaTip = { id: nuevoId, nombre, elementoIds: [...dupTip.elementoIds] };
+      const nuevosPrecios = Object.fromEntries(Object.entries(dupPrecios).filter(([, v]) => v !== "").map(([eid, v]) => [`tip__${nuevoId}__${eid}`, Number(v)]));
+      updateObra(obra.id, o => ({
+        ...o,
+        tipologias: [...(o.tipologias || []), nuevaTip],
+        preciosOverride: { ...(o.preciosOverride || {}), ...nuevosPrecios }
+      }));
+      toast(`Tipología "${nombre}" creada`, "ok");
+      setDupTip(null);
+    }}>Crear tipología</Btn>
+  </div>
+</Modal>}
       {delTipId && <Modal title="Eliminar tipología" onClose={() => setDelTipId(null)}>
         {(() => {
           const tip = tips.find(t => t.id === delTipId);
