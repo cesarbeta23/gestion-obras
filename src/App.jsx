@@ -854,7 +854,17 @@ const disponibles = misHabilitados.filter(a => {
           <div key={piso.id} style={{ marginBottom: 20 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, borderBottom: `2px solid ${C.g1}`, paddingBottom: 8 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: C.g5, textTransform: "uppercase", letterSpacing: ".06em" }}>Piso {piso.numero}</div>
-              {user.rol === ROLES.SA && !vistaInst && <button onClick={() => setPisoEditM(piso.id)} style={{ ...bdg("gray"), cursor: "pointer", fontSize: 11 }}>✎ Editar aptos</button>}
+              {user.rol === ROLES.SA && !vistaInst && <div style={{ display: "flex", gap: 6 }}>
+  <button onClick={() => setPisoEditM(piso.id)} style={{ ...bdg("gray"), cursor: "pointer", fontSize: 11 }}>✎ Editar aptos</button>
+  <button onClick={() => {
+    const tieneDatos = piso.aptos?.some(a => a.elementos?.some(e => e.completado));
+    if (tieneDatos) { toast("No se puede eliminar: tiene instalaciones registradas", "error"); return; }
+    if (window.confirm(`¿Eliminar piso ${piso.numero} y todos sus aptos?`)) {
+      updateObra(obra.id, o => ({ ...o, pisos: o.pisos.filter(p => p.id !== piso.id) }));
+      toast(`Piso ${piso.numero} eliminado`, "ok");
+    }
+  }} style={{ ...bdg("red"), cursor: "pointer", fontSize: 11 }}>🗑 Eliminar piso</button>
+</div>}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(130px,1fr))", gap: 10 }}>
               {aptosV?.map(apto => {
