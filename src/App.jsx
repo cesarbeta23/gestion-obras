@@ -626,6 +626,8 @@ function Obra({ obra, obras, updateObra, user, avanceApto, elems, users, goApto,
   const [precCorte, setPrecCorte] = useState("");
   const [precTmp, setPrecTmp] = useState({});
   const [vistaInst, setVistaInst] = useState(null);
+  const [nuevoPisoM, setNuevoPisoM] = useState(false);
+const [nuevoPisoF, setNuevoPisoF] = useState({ numero: "", aptos: 1 });
 
   const cur = obras.find(o => o.id === obra.id) || obra;
   const tips = cur.tipologias || [];
@@ -820,6 +822,7 @@ const disponibles = misHabilitados.filter(a => {
           <Btn onClick={() => { setPrecTmp({}); setPrecCorte(""); setPreciosM(true); }}>💰 Precios</Btn>
           <Btn onClick={() => setAccModal(true)}>👷 Accesos</Btn>
           <Btn onClick={() => setRepModal(true)}>Replicar</Btn>
+          <Btn onClick={() => { setNuevoPisoF({ numero: "", aptos: 1 }); setNuevoPisoM(true); }}>+ Piso</Btn>
           <Btn variant="primary" onClick={abrirNueva}>+ Tipología</Btn>
         </div>}
       </div>
@@ -987,7 +990,26 @@ const disponibles = misHabilitados.filter(a => {
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn onClick={() => closeM("tip")}>Cancelar</Btn><Btn variant="primary" onClick={guardarTip}>{editTip ? "Guardar" : "Crear"}</Btn></div>
       </Modal>}
-
+{nuevoPisoM && <Modal title="Nuevo piso" onClose={() => setNuevoPisoM(false)}>
+  <Inp label="Número o nombre del piso (ej: 9801, PH, Local 1)" value={nuevoPisoF.numero} onChange={e => setNuevoPisoF(f => ({ ...f, numero: e.target.value }))} placeholder="Ej: 9801" />
+  <Inp label="Cantidad de aptos iniciales" type="number" min="0" max="20" value={nuevoPisoF.aptos} onChange={e => setNuevoPisoF(f => ({ ...f, aptos: e.target.value }))} />
+  <p style={{ fontSize: 12, color: C.g4, margin: "-8px 0 12px" }}>Puedes agregar o editar los aptos después desde "Editar aptos".</p>
+  <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+    <Btn onClick={() => setNuevoPisoM(false)}>Cancelar</Btn>
+    <Btn variant="primary" onClick={() => {
+      if (!nuevoPisoF.numero) return;
+      const aptos = Array.from({ length: Number(nuevoPisoF.aptos) || 0 }, (_, ai) => ({
+        id: `a${Date.now()}${ai}`, numero: ai + 1,
+        nombre: `${nuevoPisoF.numero}${String(ai + 1).padStart(2, "0")}`,
+        tipologia: "", elementos: [], instaladorAsignado: null, instaladoresAsignados: [], observaciones: ""
+      }));
+      const nuevoPiso = { id: `p${Date.now()}`, numero: nuevoPisoF.numero, aptos };
+      updateObra(obra.id, o => ({ ...o, pisos: [...o.pisos, nuevoPiso] }));
+      toast(`Piso ${nuevoPisoF.numero} creado`, "ok");
+      setNuevoPisoM(false);
+    }}>Crear piso</Btn>
+  </div>
+</Modal>}
       {repModal && <Modal title="Replicar tipologías" onClose={() => setRepModal(false)} wide>
         <p style={{ fontSize: 13, color: C.g5, margin: "0 0 16px" }}>Asigna tipología por número de apartamento en todos los pisos.</p>
         <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
