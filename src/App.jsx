@@ -711,7 +711,7 @@ const [nuevoPisoF, setNuevoPisoF] = useState({ numero: "", aptos: 1 });
           const actuales = a.instaladoresAsignados || (a.instaladorAsignado ? [a.instaladorAsignado] : []);
           if (!instId) return { ...a, instaladorAsignado: null, instaladoresAsignados: [] };
           if (actuales.includes(instId)) return a;
-          const nuevos = [...actuales, instId].slice(0, 3);
+          const nuevos = [...actuales, instId].slice(0, 5);
           return { ...a, instaladorAsignado: nuevos[0], instaladoresAsignados: nuevos };
         })
       })
@@ -886,7 +886,7 @@ const disponibles = misHabilitados.filter(a => {
                     {user.rol === ROLES.SA && apto.tipologia && (() => {
   const asignados = apto.instaladoresAsignados || (apto.instaladorAsignado ? [apto.instaladorAsignado] : []);
   const disponibles = instsActivos.filter(i => !asignados.includes(i.id));
-  if (asignados.length >= 3) return null;
+  if (asignados.length >= 5) return null;
   return <div onClick={e => e.stopPropagation()} style={{ marginBottom: 4 }}>
     <select style={{ width: "100%", fontSize: 10, padding: "3px 4px", border: `1px solid ${C.g2}`, borderRadius: 6, color: C.g5 }} value="" onChange={e => { if (e.target.value) asignarInst(piso.id, apto.id, e.target.value); }}>
       <option value="">+ Instalador...</option>
