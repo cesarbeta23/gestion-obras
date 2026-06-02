@@ -448,14 +448,59 @@ function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra,
         </div>
       )}
 
-      {editM && <Modal title="Editar obra" onClose={() => setEditM(null)}>
-        <Inp label="Nombre" value={editF.nombre} onChange={e => setEditF(f => ({ ...f, nombre: e.target.value }))} />
-        <Inp label="Dirección" value={editF.direccion} onChange={e => setEditF(f => ({ ...f, direccion: e.target.value }))} />
-        <Sel label="Coordinador" value={editF.coordinadorId} onChange={e => setEditF(f => ({ ...f, coordinadorId: e.target.value }))}>
-          <option value="">— Sin asignar —</option>{SAs.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
-        </Sel>
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn onClick={() => setEditM(null)}>Cancelar</Btn><Btn variant="primary" onClick={editar}>Guardar</Btn></div>
-      </Modal>}
+       {editM && <Modal title="Editar obra" onClose={() => setEditM(null)} wide>
+  <Inp label="Nombre" value={editF.nombre} onChange={e => setEditF(f => ({ ...f, nombre: e.target.value }))} />
+  <Inp label="Dirección" value={editF.direccion} onChange={e => setEditF(f => ({ ...f, direccion: e.target.value }))} />
+  <Sel label="Coordinador" value={editF.coordinadorId} onChange={e => setEditF(f => ({ ...f, coordinadorId: e.target.value }))}>
+    <option value="">— Sin asignar —</option>{SAs.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+  </Sel>
+
+  <div style={{ borderTop: `1px solid ${C.g2}`, paddingTop: 14, marginTop: 4, marginBottom: 14 }}>
+    <div style={{ fontSize: 12, fontWeight: 700, color: C.g5, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 12 }}>Pisos y apartamentos</div>
+    <div style={{ display: "grid", gap: 8, maxHeight: 300, overflowY: "auto", marginBottom: 12 }}>
+      {(obras.find(o => o.id === editM)?.pisos || []).map(p => (
+        <div key={p.id} style={{ padding: "10px 14px", background: C.g0, border: `1px solid ${C.g2}`, borderRadius: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>Piso {p.numero}</div>
+            <button onClick={() => {
+              const obra = obras.find(o => o.id === editM);
+              const pisoTieneData = p.aptos?.some(a => a.elementos?.some(e => e.completado));
+              if (pisoTieneData) { toast("No se puede eliminar: tiene instalaciones registradas", "error"); return; }
+              updateObra(editM, o => ({ ...o, pisos: o.pisos.filter(x => x.id !== p.id) }));
+            }} style={{ ...bdg("red"), cursor: "pointer", fontSize: 11 }}>🗑 Eliminar piso</button>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
+            {p.aptos?.map(a => (
+              <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 4, background: C.wh, border: `1px solid ${C.g2}`, borderRadius: 6, padding: "3px 8px", fontSize: 12 }}>
+                <span>{a.nombre}</span>
+                <button onClick={() => {
+                  if (a.elementos?.some(e => e.completado)) { toast("Apto con instalaciones, no se puede eliminar", "error"); return; }
+                  updateObra(editM, o => ({ ...o, pisos: o.pisos.map(x => x.id !== p.id ? x : { ...x, aptos: x.aptos.filter(z => z.id !== a.id) }) }));
+                }} style={{ background: "none", border: "none", cursor: "pointer", color: C.rd, fontWeight: 700, fontSize: 13, padding: 0 }}>×</button>
+              </div>
+            ))}
+          </div>
+          <button onClick={() => {
+            updateObra(editM, o => ({ ...o, pisos: o.pisos.map(x => {
+              if (x.id !== p.id) return x;
+              const n = x.aptos.length + 1;
+              return { ...x, aptos: [...x.aptos, { id: `a${Date.now()}`, numero: n, nombre: `${x.numero}${String(n).padStart(2, "0")}`, tipologia: "", elementos: [], instaladorAsignado: null, observaciones: "" }] };
+            }) }));
+          }} style={{ ...bdg("orange"), cursor: "pointer", fontSize: 11 }}>+ Apto</button>
+        </div>
+      ))}
+    </div>
+    <button onClick={() => {
+      const obra = obras.find(o => o.id === editM);
+      const pisos = obra?.pisos || [];
+      const ultimoPiso = pisos.length > 0 ? Math.max(...pisos.map(p => p.numero)) : 0;
+      const nuevoPiso = { id: `p${Date.now()}`, numero: ultimoPiso + 1, aptos: [] };
+      updateObra(editM, o => ({ ...o, pisos: [...o.pisos, nuevoPiso] }));
+    }} style={{ ...bdg("green"), cursor: "pointer" }}>+ Agregar piso</button>
+  </div>
+
+  <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn onClick={() => setEditM(null)}>Cancelar</Btn><Btn variant="primary" onClick={editar}>Guardar</Btn></div>
+</Modal>}
 
       {delM && <Modal title="Eliminar obra" onClose={() => setDelM(null)}>
         <p style={{ fontSize: 14, color: C.g9, marginBottom: 20 }}>¿Eliminar esta obra? Todos los datos se perderán. Esta acción no se puede deshacer.</p>
