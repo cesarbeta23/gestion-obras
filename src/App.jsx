@@ -671,15 +671,29 @@ const [dupPrecios, setDupPrecios] = useState({});
   }
 
   async function asignarTip(pisoId, aptoId, tipId) {
-    const tip = tips.find(t => t.id === tipId);
-    const els = (tip?.elementoIds || []).map(eid => ({ elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad: 1 }));
-    updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : { ...p, aptos: p.aptos.map(a => a.id !== aptoId ? a : { ...a, tipologia: tipId, elementos: els }) }) }));
-    setAsign(null);
-  }
+  const tip = tips.find(t => t.id === tipId);
+  const elsNuevos = (tip?.elementoIds || []).map(eid => ({ elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad: 1, tipologiaId: tipId }));
+  updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : { ...p, aptos: p.aptos.map(a => {
+    if (a.id !== aptoId) return a;
+    // Si no tiene tipología principal aún, asignarla
+    if (!a.tipologia) return { ...a, tipologia: tipId, elementos: elsNuevos };
+    // Si ya tiene tipología principal, agregar como extra
+    const yaEsta = (a.tipologiasExtra || []).includes(tipId) || a.tipologia === tipId;
+    if (yaEsta) return a;
+    return { ...a, tipologiasExtra: [...(a.tipologiasExtra || []), tipId], elementosExtra: [...(a.elementosExtra || []), ...elsNuevos] };
+  }) }) }));
+  setAsign(null);
+}
 
-  function quitarTip(pisoId, aptoId) {
-    updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : { ...p, aptos: p.aptos.map(a => a.id !== aptoId ? a : { ...a, tipologia: "", elementos: [] }) }) }));
-  }
+  function quitarTip(pisoId, aptoId, tipId) {
+  updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : { ...p, aptos: p.aptos.map(a => {
+    if (a.id !== aptoId) return a;
+    // Si es la tipología principal
+    if (a.tipologia === tipId) return { ...a, tipologia: "", elementos: [] };
+    // Si es una tipología extra
+    return { ...a, tipologiasExtra: (a.tipologiasExtra || []).filter(t => t !== tipId), elementosExtra: (a.elementosExtra || []).filter(e => e.tipologiaId !== tipId) };
+  }) }) }));
+}
 
   async function replicar() {
     let cnt = 0;
@@ -910,7 +924,7 @@ const disponibles = misHabilitados.filter(a => {
                             <option value="">Cambiar...</option>
                             {tips.filter(t => t.id !== apto.tipologia).map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
                           </select>
-                          <button onClick={e => { e.stopPropagation(); quitarTip(piso.id, apto.id); }} style={{ fontSize: 9, background: C.rdL, border: "1px solid #FECACA", color: C.rd, borderRadius: 4, padding: "2px 5px", cursor: "pointer" }}>✕</button>
+                          <button onClick={e => { e.stopPropagation(); quitarTip(piso.id, apto.id, apto.tipologia); }} style={{ fontSize: 9, background: C.rdL, border: "1px solid #FECACA", color: C.rd, borderRadius: 4, padding: "2px 5px", cursor: "pointer" }}>✕</button>
                         </div>
                       )}
                     </>) : user.rol !== ROLES.AX ? (
@@ -933,6 +947,14 @@ const disponibles = misHabilitados.filter(a => {
     })}
   </div>;
 })()}
+{(apto.tipologiasExtra || []).map(tipId => {
+  const t = tips.find(x => x.id === tipId);
+  if (!t) return null;
+  return <div key={tipId} style={{ fontSize: 9, ...bdg("amber"), marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
+    <span>+{t.nombre}</span>
+    {user.rol === ROLES.SA && <span onClick={e => { e.stopPropagation(); quitarTip(piso.id, apto.id, tipId); }} style={{ cursor: "pointer", fontWeight: 700, color: C.rd }}>×</span>}
+  </div>;
+})}
                   </div>
                 );
               })}
