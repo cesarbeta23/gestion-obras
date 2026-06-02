@@ -694,24 +694,29 @@ function Obra({ obra, obras, updateObra, user, avanceApto, elems, users, goApto,
   }
 
   function asignarInst(pisoId, aptoId, instId) {
-    updateObra(obra.id, o => {
-      const ah = { ...(o.aptosHabilitados || {}) };
-      if (instId) {
-        const lista = ah[instId] || [];
-        if (!lista.includes(aptoId)) ah[instId] = [...lista, aptoId];
-      }
-      return {
-        ...o,
-        aptosHabilitados: ah,
-        pisos: o.pisos.map(p => p.id !== pisoId ? p : {
-          ...p, aptos: p.aptos.map(a => a.id !== aptoId ? a : {
-            ...a, instaladorAsignado: instId || null
-          })
+  updateObra(obra.id, o => {
+    const ah = { ...(o.aptosHabilitados || {}) };
+    if (instId) {
+      const lista = ah[instId] || [];
+      if (!lista.includes(aptoId)) ah[instId] = [...lista, aptoId];
+    }
+    return {
+      ...o,
+      aptosHabilitados: ah,
+      pisos: o.pisos.map(p => p.id !== pisoId ? p : {
+        ...p, aptos: p.aptos.map(a => {
+          if (a.id !== aptoId) return a;
+          const actuales = a.instaladoresAsignados || (a.instaladorAsignado ? [a.instaladorAsignado] : []);
+          if (!instId) return { ...a, instaladorAsignado: null, instaladoresAsignados: [] };
+          if (actuales.includes(instId)) return a;
+          const nuevos = [...actuales, instId].slice(0, 3);
+          return { ...a, instaladorAsignado: nuevos[0], instaladoresAsignados: nuevos };
         })
-      };
-    });
-    toast(instId ? "Instalador asignado" : "Instalador removido", "ok");
-  }
+      })
+    };
+  });
+  toast(instId ? "Instalador asignado" : "Instaladores removidos", "ok");
+}
 
   const agregarApto = pid => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => { if (p.id !== pid) return p; const n = p.aptos.length + 1; return { ...p, aptos: [...p.aptos, { id: `a${Date.now()}`, numero: n, nombre: `${p.numero}${String(n).padStart(2, "0")}`, tipologia: "", elementos: [], instaladorAsignado: null, observaciones: "" }] }; }) }));
   const eliminarApto = (pid, aid) => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pid ? p : { ...p, aptos: p.aptos.filter(a => a.id !== aid) }) }));
@@ -729,9 +734,11 @@ function Obra({ obra, obras, updateObra, user, avanceApto, elems, users, goApto,
     const todosAptos = cur.pisos?.flatMap(p => p.aptos?.map(a => ({ ...a, pisoId: p.id, pisoNum: p.numero })) || []) || [];
     const misHabilitados = todosAptos.filter(a => aptosHab.includes(a.id));
     // Tomados = habilitados donde el instalador es este usuario
-    const misTomados = misHabilitados.filter(a => a.instaladorAsignado === user.id);
-    // Disponibles = habilitados sin instalador asignado Y con tipología
-    const disponibles = misHabilitados.filter(a => !a.instaladorAsignado && a.tipologia);
+    const misTomados = misHabilitados.filter(a => (a.instaladoresAsignados || (a.instaladorAsignado ? [a.instaladorAsignado] : [])).includes(user.id));
+const disponibles = misHabilitados.filter(a => {
+  const asignados = a.instaladoresAsignados || (a.instaladorAsignado ? [a.instaladorAsignado] : []);
+  return asignados.length === 0 && a.tipologia;
+});
 
     const tomar = (pisoId, aptoId) => {
       updateObra(cur.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : { ...p, aptos: p.aptos.map(a => a.id !== aptoId ? a : { ...a, instaladorAsignado: user.id }) }) }));
@@ -856,18 +863,24 @@ function Obra({ obra, obras, updateObra, user, avanceApto, elems, users, goApto,
                 return (
                   <div key={apto.id} onClick={() => canEnter ? goApto(apto, piso) : null} style={{ ...card, cursor: canEnter ? "pointer" : "default", padding: "10px 12px" }} onMouseEnter={e => canEnter && (e.currentTarget.style.borderColor = C.or)} onMouseLeave={e => (e.currentTarget.style.borderColor = C.g2)}>
                     <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{apto.nombre || `${piso.numero}${String(apto.numero).padStart(2, "0")}`}</div>
-                    {instAsig
-                      ? <div style={{ fontSize: 10, color: C.or, marginBottom: 4, fontWeight: 700 }}>👷 {instAsig.nombre.split(" ")[0]}</div>
-                      : habPara.length > 0 && <div style={{ fontSize: 10, color: C.am, marginBottom: 4 }}>🔓 {habPara.join(", ")}</div>
-                    }
-                    {!instAsig && user.rol === ROLES.SA && apto.tipologia && (
-                      <div onClick={e => e.stopPropagation()} style={{ marginBottom: 4 }}>
-                        <select style={{ width: "100%", fontSize: 10, padding: "3px 4px", border: `1px solid ${C.g2}`, borderRadius: 6, color: C.g5 }} value="" onChange={e => { if (e.target.value) asignarInst(piso.id, apto.id, e.target.value); }}>
-                          <option value="">Asignar inst...</option>
-                          {instsActivos.map(i => <option key={i.id} value={i.id}>{i.nombre.split(" ")[0]}</option>)}
-                        </select>
-                      </div>
-                    )}
+                {(() => {
+  const asignados = apto.instaladoresAsignados || (apto.instaladorAsignado ? [apto.instaladorAsignado] : []);
+  if (asignados.length > 0) {
+    return <div style={{ fontSize: 10, color: C.or, marginBottom: 4, fontWeight: 700 }}>👷 {asignados.map(id => users.find(u => u.id === id)?.nombre?.split(" ")[0]).filter(Boolean).join(", ")}</div>;
+  }
+  return habPara.length > 0 ? <div style={{ fontSize: 10, color: C.am, marginBottom: 4 }}>🔓 {habPara.join(", ")}</div> : null;
+})()}
+                    {user.rol === ROLES.SA && apto.tipologia && (() => {
+  const asignados = apto.instaladoresAsignados || (apto.instaladorAsignado ? [apto.instaladorAsignado] : []);
+  const disponibles = instsActivos.filter(i => !asignados.includes(i.id));
+  if (asignados.length >= 3) return null;
+  return <div onClick={e => e.stopPropagation()} style={{ marginBottom: 4 }}>
+    <select style={{ width: "100%", fontSize: 10, padding: "3px 4px", border: `1px solid ${C.g2}`, borderRadius: 6, color: C.g5 }} value="" onChange={e => { if (e.target.value) asignarInst(piso.id, apto.id, e.target.value); }}>
+      <option value="">+ Instalador...</option>
+      {disponibles.map(i => <option key={i.id} value={i.id}>{i.nombre.split(" ")[0]}</option>)}
+    </select>
+  </div>;
+})()}
                     {tip ? (<>
                       <div style={{ fontSize: 10, color: C.g5, marginBottom: 5 }}>{tip.nombre}</div>
                       <div style={{ height: 5, background: C.g1, borderRadius: 10, overflow: "hidden", marginBottom: 4 }}>
@@ -890,7 +903,19 @@ function Obra({ obra, obras, updateObra, user, avanceApto, elems, users, goApto,
                         </select>
                         : <button onClick={e => { e.stopPropagation(); setAsign(apto.id); }} style={{ fontSize: 10, ...bdg("orange"), cursor: "pointer", marginTop: 4 }}>+ tipología</button>
                     ) : <div style={{ fontSize: 10, color: C.g4 }}>Sin asignar</div>}
-                    {instAsig && user.rol === ROLES.SA && <button onClick={e => { e.stopPropagation(); asignarInst(piso.id, apto.id, null); }} style={{ fontSize: 9, ...bdg("red"), cursor: "pointer", marginTop: 4, width: "100%", textAlign: "center" }}>✕ Quitar instalador</button>}
+                    {user.rol === ROLES.SA && (() => {
+  const asignados = apto.instaladoresAsignados || (apto.instaladorAsignado ? [apto.instaladorAsignado] : []);
+  if (!asignados.length) return null;
+  return <div onClick={e => e.stopPropagation()} style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3 }}>
+    {asignados.map(id => {
+      const inst = users.find(u => u.id === id);
+      return <button key={id} onClick={() => {
+        updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => { if (a.id !== apto.id) return a; const nuevos = (a.instaladoresAsignados || [a.instaladorAsignado]).filter(x => x !== id); return { ...a, instaladorAsignado: nuevos[0] || null, instaladoresAsignados: nuevos }; }) }) }));
+        toast(`${inst?.nombre?.split(" ")[0]} removido`, "ok");
+      }} style={{ fontSize: 9, ...bdg("red"), cursor: "pointer", textAlign: "center" }}>✕ {inst?.nombre?.split(" ")[0]}</button>;
+    })}
+  </div>;
+})()}
                   </div>
                 );
               })}
