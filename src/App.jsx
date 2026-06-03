@@ -271,6 +271,7 @@ export default function App() {
       {view === "apto" && selApto && selObra && <Apto {...sh} apto={selApto} piso={selPiso} obra={obras.find(o => o.id === selObra.id)} />}
       {view === "elems" && user.rol === ROLES.SA && <Elementos {...sh} />}
       {view === "liqs" && <Liquidacion {...sh} avanceObra={avanceObra} />}
+      {view === "reportes" && [ROLES.SA, ROLES.SV].includes(user.rol) && <Reportes obras={obras} elems={elems} users={users} user={user} getPrecio={getPrecio} avanceObra={avanceObra} />}
       {view === "users" && user.rol === ROLES.SA && <Usuarios {...sh} />}
     </div>
   );
@@ -300,6 +301,7 @@ function Header({ user, doLogout, view, setView, selObra, setSelObra, setSelPiso
     { k: "obras", l: "Obras", r: [ROLES.SA, ROLES.SV, ROLES.AX, ROLES.IN] },
     { k: "elems", l: "Elementos", r: [ROLES.SA] },
     { k: "liqs", l: "Liquidación", r: [ROLES.SA, ROLES.SV, ROLES.AX, ROLES.IN] },
+    { k: "reportes", l: "Reportes", r: [ROLES.SA, ROLES.SV] },
     { k: "users", l: "Usuarios", r: [ROLES.SA] }
   ];
   return (
@@ -616,7 +618,7 @@ function ModalAccesos({ obraId, obras, users, updateObra, toast, onClose }) {
 
 // ── OBRA DETALLE ──────────────────────────────────────────
 function Obra({ obra, obras, updateObra, user, avanceApto, elems, users, goApto, openM, closeM, modals, toast, getPrecio }) {
-  const [tipForm, setTipForm] = useState({ nombre: "", eids: [] });
+  const [tipForm, setTipForm] = useState({ nombre: "", eids: [], cantidades: {} });
   const [editTip, setEditTip] = useState(null);
   const [delTipId, setDelTipId] = useState(null);
   const [repModal, setRepModal] = useState(false);
@@ -637,8 +639,8 @@ const [nuevoPisoF, setNuevoPisoF] = useState({ numero: "", aptos: 1 });
   const cortes = getCorteFechas();
   const instsActivos = (cur.instaladoresAutorizados || []).map(id => users.find(u => u.id === id)).filter(Boolean);
 
-  const abrirNueva = () => { setEditTip(null); setTipForm({ nombre: "", eids: [] }); openM("tip"); };
-  const abrirEditar = t => { setEditTip(t.id); setTipForm({ nombre: t.nombre, eids: [...t.elementoIds] }); openM("tip"); };
+  const abrirNueva = () => { setEditTip(null); setTipForm({ nombre: "", eids: [], cantidades: {} }); openM("tip"); };
+  const abrirEditar = t => { setEditTip(t.id); setTipForm({ nombre: t.nombre, eids: [...t.elementoIds], cantidades: { ...(t.cantidades || {}) } }); openM("tip"); };
 const [dupTip, setDupTip] = useState(null);
 const [dupPrecios, setDupPrecios] = useState({});
   async function guardarTip() {
@@ -646,7 +648,7 @@ const [dupPrecios, setDupPrecios] = useState({});
     if (editTip) {
       updateObra(obra.id, o => ({
         ...o,
-        tipologias: (o.tipologias || []).map(t => t.id === editTip ? { ...t, nombre: tipForm.nombre, elementoIds: tipForm.eids } : t),
+        tipologias: (o.tipologias || []).map(t => t.id === editTip ? { ...t, nombre: tipForm.nombre, elementoIds: tipForm.eids, cantidades: tipForm.cantidades || {} } : t),
         pisos: o.pisos.map(p => ({
           ...p, aptos: p.aptos.map(a => {
             if (a.tipologia !== editTip) return a;
@@ -655,7 +657,7 @@ const [dupPrecios, setDupPrecios] = useState({});
         }))
       }));
     } else {
-      const t = { id: `t${Date.now()}`, nombre: tipForm.nombre, elementoIds: tipForm.eids };
+      const t = { id: `t${Date.now()}`, nombre: tipForm.nombre, elementoIds: tipForm.eids, cantidades: tipForm.cantidades || {} };
       updateObra(obra.id, o => ({ ...o, tipologias: [...(o.tipologias || []), t] }));
     }
     toast("Tipología guardada", "ok"); closeM("tip"); setEditTip(null);
@@ -672,16 +674,27 @@ const [dupPrecios, setDupPrecios] = useState({});
 
   async function asignarTip(pisoId, aptoId, tipId) {
   const tip = tips.find(t => t.id === tipId);
-  const elsNuevos = (tip?.elementoIds || []).map(eid => ({ elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad: 1, tipologiaId: tipId }));
+  const elsNuevos = (tip?.elementoIds || []).map(eid => ({ elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad: tip?.cantidades?.[eid] || 1, tipologiaId: tipId }));
   updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : { ...p, aptos: p.aptos.map(a => {
     if (a.id !== aptoId) return a;
-    // Si no tiene tipología principal aún, asignarla
     if (!a.tipologia) return { ...a, tipologia: tipId, elementos: elsNuevos };
-    // Si ya tiene tipología principal, agregar como extra
-    const yaEsta = (a.tipologiasExtra || []).includes(tipId) || a.tipologia === tipId;
-    if (yaEsta) return a;
+    // Si es la tipología principal, restaurar elementos faltantes sin borrar completados
+    if (a.tipologia === tipId) {
+      const existIds = new Set((a.elementos || []).map(e => e.elementoId));
+      const faltantes = elsNuevos.filter(e => !existIds.has(e.elementoId));
+      if (!faltantes.length) return a;
+      return { ...a, elementos: [...(a.elementos || []), ...faltantes] };
+    }
+    // Si ya es tipología extra, restaurar faltantes en extra
+    if ((a.tipologiasExtra || []).includes(tipId)) {
+      const existIdsExtra = new Set((a.elementosExtra || []).filter(e => e.tipologiaId === tipId).map(e => e.elementoId));
+      const faltantes = elsNuevos.filter(e => !existIdsExtra.has(e.elementoId));
+      if (!faltantes.length) return a;
+      return { ...a, elementosExtra: [...(a.elementosExtra || []), ...faltantes] };
+    }
     return { ...a, tipologiasExtra: [...(a.tipologiasExtra || []), tipId], elementosExtra: [...(a.elementosExtra || []), ...elsNuevos] };
   }) }) }));
+  toast("Tipología asignada", "ok");
   setAsign(null);
 }
 
@@ -922,6 +935,7 @@ const disponibles = misHabilitados.filter(a => {
                         <div style={{ display: "flex", gap: 3 }} onClick={e => e.stopPropagation()}>
                           <select style={{ fontSize: 9, padding: "2px 3px", border: `1px solid ${C.g2}`, borderRadius: 4, flex: 1, color: C.g5 }} defaultValue="" onChange={e => { if (e.target.value) asignarTip(piso.id, apto.id, e.target.value); }}>
                             <option value="">Cambiar...</option>
+                            {apto.tipologia && <option value={apto.tipologia}>↺ Restaurar tipología</option>}
                             {tips.filter(t => t.id !== apto.tipologia).map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
                           </select>
                           <button onClick={e => { e.stopPropagation(); quitarTip(piso.id, apto.id, apto.tipologia); }} style={{ fontSize: 9, background: C.rdL, border: "1px solid #FECACA", color: C.rd, borderRadius: 4, padding: "2px 5px", cursor: "pointer" }}>✕</button>
@@ -1049,6 +1063,14 @@ const disponibles = misHabilitados.filter(a => {
               <input type="checkbox" checked={tipForm.eids.includes(e.id)} onChange={x => setTipForm(f => ({ ...f, eids: x.target.checked ? [...f.eids, e.id] : f.eids.filter(i => i !== e.id) }))} />
               <span style={{ flex: 1, color: C.bk }}>{e.nombre}</span>
               <span style={{ fontSize: 12, color: C.g4 }}>{e.unidad} · {fmt(e.precio)}</span>
+              {tipForm.eids.includes(e.id) && (e.unidad === "ml" || e.unidad === "m2") && (
+                <input type="number" min="0.1" step="0.1" placeholder="Cant."
+                  value={tipForm.cantidades?.[e.id] ?? ""}
+                  onClick={x => x.stopPropagation()}
+                  onChange={x => { x.stopPropagation(); setTipForm(f => ({ ...f, cantidades: { ...f.cantidades, [e.id]: Number(x.target.value) } })); }}
+                  style={{ width: 64, padding: "2px 6px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 12, textAlign: "right" }}
+                />
+              )}
             </label>)}
           </div>
           <div style={{ fontSize: 12, color: C.g4, marginTop: 6 }}>{tipForm.eids.length} seleccionado(s)</div>
@@ -1116,7 +1138,7 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const [precIndM, setPrecIndM] = useState(false);
   const [precIndTmp, setPrecIndTmp] = useState({});
 
-  const hayPend = Object.keys(pend).length > 0 || ajuste.pasajes || ajuste.bonificacion;
+  const hayPend = Object.keys(pend).length > 0 || ajuste.pasajes || ajuste.bonificacion || (canEdit && (curA.elementos?.some(e => e.completado) || (curA.elementosExtra || []).some(e => !e.esAdicional)));
   const canAct = [ROLES.IN, ROLES.SA, ROLES.SV].includes(user.rol);
   const canEdit = user.rol === ROLES.SA || user.rol === ROLES.SV;
   const corteAct = getCorteFechas()[0];
@@ -1536,7 +1558,7 @@ function Liquidacion({ obras, elems, users, user, liqs, setLiqs, getPrecio }) {
         <Btn onClick={() => setHist(!hist)} variant={hist ? "primary" : "default"}>{hist ? "Ver corte actual" : "Historial"}</Btn>
       </div>
 
-      {hist ? <Historial liqs={liqs} user={user} users={users} /> : (
+      {hist ? <Historial liqs={liqs} setLiqs={setLiqs} user={user} users={users} toast={toast} /> : (
         <>
           <div style={{ marginBottom: 20 }}>
             <div style={{ fontSize: 12, color: C.g5, marginBottom: 8, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".06em" }}>Corte de pago</div>
@@ -1592,16 +1614,82 @@ function Liquidacion({ obras, elems, users, user, liqs, setLiqs, getPrecio }) {
   );
 }
 
-function Historial({ liqs, user, users }) {
+function Historial({ liqs, setLiqs, user, users, toast }) {
   const [fi, setFi] = useState("");
   const [det, setDet] = useState(null);
+  const [editL, setEditL] = useState(null);
+  const [editRows, setEditRows] = useState([]);
+  const [newRow, setNewRow] = useState({ el: "", cant: 1, precio: 0 });
   const INs = users.filter(u => u.rol === ROLES.IN);
+  const canEdit = [ROLES.SA, ROLES.SV].includes(user.rol);
   const items = liqs.filter(l => user.rol === ROLES.IN ? l.inst_id === user.id : (!fi || l.inst_id === fi)).sort((a, b) => b.id.localeCompare(a.id));
   const totalPagado = items.reduce((s, l) => s + (l.total || 0), 0);
   const totalBruto = items.reduce((s, l) => s + (l.bruto || 0), 0);
 
+  function recalcTotales(rows) {
+    const bruto = rows.filter(r => !r.adj).reduce((s, r) => s + (r.precio || 0) * (r.cant || r.cantidad || 1), 0);
+    const ret = Math.round(bruto * 0.1);
+    const sub = bruto - ret;
+    const pas = rows.filter(r => r.adj && r.el === "Pasajes" && r.apr).reduce((s, r) => s + (r.precio || 0), 0);
+    const bon = rows.filter(r => r.adj && r.el === "Bonificación" && r.apr).reduce((s, r) => s + (r.precio || 0), 0);
+    return { bruto, ret, sub, pas, bon, total: sub + pas + bon };
+  }
+
+  async function guardarEdicion() {
+    const totales = recalcTotales(editRows);
+    const updated = { ...editL, rows: editRows, ...totales };
+    await dbUpsert("liquidaciones", updated);
+    setLiqs(x => x.map(l => l.id === editL.id ? updated : l));
+    setEditL(null);
+    toast("Liquidación actualizada", "ok");
+  }
+
+  function abrirEdicion(l) {
+    setEditL(l);
+    setEditRows((l.rows || []).map(r => ({ ...r })));
+    setNewRow({ el: "", cant: 1, precio: 0 });
+  }
+
   return (
     <div>
+      {editL && <Modal title={`Editar liquidación — ${editL.inst_nombre}`} onClose={() => setEditL(null)} wide>
+        <p style={{ fontSize: 13, color: C.g5, margin: "0 0 12px" }}>Modifica precios, agrega o elimina filas. Los totales se recalculan automáticamente.</p>
+        <div style={{ maxHeight: 340, overflowY: "auto", display: "grid", gap: 6, marginBottom: 12 }}>
+          {editRows.map((r, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 12px", background: C.g0, borderRadius: 8, border: `1px solid ${C.g2}` }}>
+              <div style={{ flex: 1, fontSize: 13 }}>
+                <div style={{ fontWeight: 600 }}>{r.obra ? `${r.obra} — Apto ${r.apto}` : "Adicional"}</div>
+                <div style={{ color: C.g5, fontSize: 12 }}>{r.el} × {r.cant || r.cantidad || 1}</div>
+              </div>
+              <input type="number" min="0" value={r.precio || 0}
+                onChange={e => setEditRows(rows => rows.map((x, j) => j === i ? { ...x, precio: Number(e.target.value) } : x))}
+                style={{ width: 110, padding: "5px 8px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 13, textAlign: "right" }} />
+              <button onClick={() => setEditRows(rows => rows.filter((_, j) => j !== i))} style={{ ...bdg("red"), cursor: "pointer", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 6, fontWeight: 700 }}>✕</button>
+            </div>
+          ))}
+        </div>
+        <div style={{ padding: "10px 14px", background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 10, marginBottom: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.orD, marginBottom: 8 }}>Agregar fila</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 120px auto", gap: 8, alignItems: "end" }}>
+            <div><label style={lbl()}>Descripción</label><input value={newRow.el} onChange={e => setNewRow(n => ({ ...n, el: e.target.value }))} style={iSt} placeholder="Ej: Zócalo, Adicional..." /></div>
+            <div><label style={lbl()}>Cant.</label><input type="number" min="1" step="0.1" value={newRow.cant} onChange={e => setNewRow(n => ({ ...n, cant: e.target.value }))} style={iSt} /></div>
+            <div><label style={lbl()}>Precio ($)</label><input type="number" min="0" value={newRow.precio} onChange={e => setNewRow(n => ({ ...n, precio: e.target.value }))} style={iSt} /></div>
+            <Btn variant="primary" onClick={() => { if (!newRow.el || !Number(newRow.precio)) return; setEditRows(rows => [...rows, { el: newRow.el, cant: Number(newRow.cant), precio: Number(newRow.precio), adj: false, apr: true }]); setNewRow({ el: "", cant: 1, precio: 0 }); }}>+</Btn>
+          </div>
+        </div>
+        {(() => { const t = recalcTotales(editRows); return (
+          <div style={{ background: C.g0, borderRadius: 8, padding: "10px 14px", fontSize: 13, marginBottom: 14 }}>
+            {[["Total bruto", t.bruto], ["Retención 10%", -t.ret], ["Subtotal", t.sub], t.pas > 0 ? ["Pasajes", t.pas] : null, t.bon > 0 ? ["Bonificación", t.bon] : null, ["Total a pagar", t.total]].filter(Boolean).map(([lb, v], i, a) => (
+              <div key={lb} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontWeight: i === a.length - 1 ? 700 : 400, color: i === a.length - 1 ? C.gnD : C.bk }}><span>{lb}</span><span>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>
+            ))}
+          </div>
+        ); })()}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <Btn onClick={() => setEditL(null)}>Cancelar</Btn>
+          <Btn variant="primary" onClick={guardarEdicion}>Guardar cambios</Btn>
+        </div>
+      </Modal>}
+
       <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 700, color: C.bk }}>Historial de liquidaciones</h3>
       {items.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 20 }}>
@@ -1626,7 +1714,10 @@ function Historial({ liqs, user, users }) {
             <div style={{ textAlign: "right" }}>
               <div style={{ fontSize: 12, color: C.g4, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".06em" }}>Total pagado</div>
               <div style={{ fontSize: 20, fontWeight: 700, color: C.gnD }}>{fmt(l.total)}</div>
-              <button onClick={() => setDet(det?.id === l.id ? null : l)} style={{ ...bdg("orange"), cursor: "pointer", marginTop: 4 }}>{det?.id === l.id ? "Ocultar" : "Ver detalle"}</button>
+              <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 4 }}>
+                <button onClick={() => setDet(det?.id === l.id ? null : l)} style={{ ...bdg("orange"), cursor: "pointer" }}>{det?.id === l.id ? "Ocultar" : "Ver detalle"}</button>
+                {canEdit && <button onClick={() => abrirEdicion(l)} style={{ ...bdg("gray"), cursor: "pointer" }}>✎ Editar</button>}
+              </div>
             </div>
           </div>
           {det?.id === l.id && <div style={{ marginTop: 12, borderTop: `1px solid ${C.g2}`, paddingTop: 12 }}>
@@ -1639,6 +1730,234 @@ function Historial({ liqs, user, users }) {
           </div>}
         </div>)}
       </div>
+    </div>
+  );
+}
+
+// ── REPORTES ──────────────────────────────────────────────
+function Reportes({ obras, elems, users, user, getPrecio, avanceObra }) {
+  const [tipo, setTipo] = useState("resumen");
+  const [obraId, setObraId] = useState("");
+  const [instId, setInstId] = useState("");
+  const [expM, setExpM] = useState(null);
+  const INs = users.filter(u => u.rol === ROLES.IN);
+  const tabs = [
+    { k: "resumen", l: "Resumen por obra" },
+    { k: "detalle", l: "Detalle por obra" },
+    { k: "instalador", l: "Por instalador" },
+  ];
+
+  function resumenObras() {
+    return obras.map(o => {
+      const av = avanceObra(o);
+      const tot = o.pisos?.reduce((s, p) => s + (p.aptos?.length || 0), 0) || 0;
+      const allEls = o.pisos?.flatMap(p => p.aptos?.flatMap(a => (a.elementos || []).map(el => ({ ...el, aptoId: a.id }))) || []) || [];
+      const completados = allEls.filter(e => e.completado && !e.esAdicional && !e.elementoId?.startsWith("__")).length;
+      const totalPago = allEls.filter(e => e.completado).reduce((s, el) => {
+        if (el.elementoId?.startsWith("__")) return el.aprobado ? s + (el.valorManual || 0) : s;
+        if (el.esAdicional) return el.aprobado ? s + (el.valorUnitario || 0) * (el.cantidad || 1) : s;
+        return s + getPrecio(el.elementoId, o.id, "", el.aptoId) * (el.cantidad || 1);
+      }, 0);
+      return { obra: o, av, tot, completados, totalPago };
+    });
+  }
+
+  function detalleObra(oId) {
+    const o = obras.find(x => x.id === oId);
+    if (!o) return [];
+    const rows = [];
+    o.pisos?.forEach(p => p.aptos?.forEach(a => {
+      (a.elementos || []).forEach(el => {
+        if (!el.completado) return;
+        const elem = elems.find(e => e.id === el.elementoId);
+        const inst = users.find(u => u.id === el.instaladorId);
+        let nombre, precio;
+        if (el.elementoId === "__pasajes__") { nombre = "Pasajes"; precio = el.valorManual || 0; }
+        else if (el.elementoId === "__bonificacion__") { nombre = "Bonificación"; precio = el.valorManual || 0; }
+        else if (el.esAdicional) { nombre = `[Ad] ${el.descripcion}`; precio = el.valorUnitario || 0; }
+        else { nombre = elem?.nombre || el.elementoId; precio = getPrecio(el.elementoId, oId, "", a.id); }
+        rows.push({ piso: p.numero, apto: a.nombre, el: nombre, cant: el.cantidad || 1, precio, total: precio * (el.cantidad || 1), inst: inst?.nombre || "—", fecha: el.fecha || "" });
+      });
+    }));
+    return rows;
+  }
+
+  function detalleInstalador(iId) {
+    const inst = users.find(u => u.id === iId);
+    if (!inst) return { inst: null, rows: [], bruto: 0, ret: 0, sub: 0, pas: 0, bon: 0, total: 0 };
+    const rows = [];
+    obras.forEach(o => o.pisos?.forEach(p => p.aptos?.forEach(a => {
+      (a.elementos || []).forEach(el => {
+        if (!el.completado || el.instaladorId !== iId) return;
+        const elem = elems.find(e => e.id === el.elementoId);
+        let nombre, precio, adj = false, apr = true;
+        if (el.elementoId === "__pasajes__") { nombre = "Pasajes"; precio = el.valorManual || 0; adj = true; apr = !!el.aprobado; }
+        else if (el.elementoId === "__bonificacion__") { nombre = "Bonificación"; precio = el.valorManual || 0; adj = true; apr = !!el.aprobado; }
+        else if (el.esAdicional) { nombre = `[Ad] ${el.descripcion}`; precio = el.valorUnitario || 0; }
+        else { nombre = elem?.nombre || el.elementoId; precio = getPrecio(el.elementoId, o.id, "", a.id); }
+        rows.push({ obra: o.nombre, apto: a.nombre, el: nombre, cant: el.cantidad || 1, precio, total: precio * (el.cantidad || 1), fecha: el.fecha || "", adj, apr });
+      });
+      (a.elementosExtra || []).forEach(el => {
+        if (!el.completado || el.instaladorId !== iId) return;
+        const elem = elems.find(e => e.id === el.elementoId);
+        const precio = getPrecio(el.elementoId, o.id, "", a.id, el.tipologiaId);
+        rows.push({ obra: o.nombre, apto: a.nombre, el: elem?.nombre || el.elementoId, cant: el.cantidad || 1, precio, total: precio * (el.cantidad || 1), fecha: el.fecha || "", adj: false, apr: true });
+      });
+    })));
+    const bruto = rows.filter(r => !r.adj).reduce((s, r) => s + r.precio * r.cant, 0);
+    const ret = Math.round(bruto * 0.1);
+    const sub = bruto - ret;
+    const pas = rows.filter(r => r.adj && r.el === "Pasajes" && r.apr).reduce((s, r) => s + r.precio, 0);
+    const bon = rows.filter(r => r.adj && r.el === "Bonificación" && r.apr).reduce((s, r) => s + r.precio, 0);
+    return { inst, rows, bruto, ret, sub, pas, bon, total: sub + pas + bon };
+  }
+
+  const thSt = { padding: "8px 10px", textAlign: "left", fontWeight: 700, color: C.g5, borderBottom: `2px solid ${C.g2}`, fontSize: 11, textTransform: "uppercase", letterSpacing: ".04em" };
+  const tdSt = { padding: "7px 10px", borderBottom: `1px solid ${C.g1}` };
+
+  return (
+    <div>
+      {expM && <Modal title={expM.tipo === "excel" ? "Exportar — Copiar" : "Reporte PDF"} onClose={() => setExpM(null)} wide>
+        {expM.tipo === "excel" ? (
+          <div>
+            <p style={{ fontSize: 13, color: C.g5, margin: "0 0 12px" }}>Copia y pega en Excel o Google Sheets.</p>
+            <textarea readOnly value={expM.txt} style={{ width: "100%", height: 280, fontFamily: "monospace", fontSize: 12, padding: 12, borderRadius: 8, border: `1px solid ${C.g2}`, background: C.g0, boxSizing: "border-box", resize: "vertical" }} onFocus={e => e.target.select()} />
+            <p style={{ fontSize: 12, color: C.g4, margin: "8px 0 0" }}>Clic → Ctrl+A → Ctrl+C</p>
+          </div>
+        ) : (
+          <div>
+            <div style={{ borderBottom: `3px solid ${C.or}`, paddingBottom: 12, marginBottom: 16 }}>
+              <div style={{ fontSize: 18, fontWeight: 700 }}>{expM.titulo}</div>
+              <span style={{ ...bdg("orange"), marginTop: 6, display: "inline-block" }}>Gestión de Obras</span>
+            </div>
+            {expM.tabla}
+            <div style={{ marginTop: 12, display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <Btn onClick={() => window.print()}>Imprimir</Btn>
+            </div>
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}><Btn onClick={() => setExpM(null)}>Cerrar</Btn></div>
+      </Modal>}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>Reportes</h2>
+      </div>
+      <div style={{ display: "flex", gap: 4, borderBottom: `2px solid ${C.g2}`, marginBottom: 20 }}>
+        {tabs.map(t => <button key={t.k} onClick={() => setTipo(t.k)} style={{ background: "transparent", color: tipo === t.k ? C.or : C.g5, border: "none", borderBottom: tipo === t.k ? `2.5px solid ${C.or}` : "2.5px solid transparent", padding: "10px 16px", cursor: "pointer", fontSize: 14, fontWeight: tipo === t.k ? 600 : 400, marginBottom: -2, fontFamily: "system-ui" }}>{t.l}</button>)}
+      </div>
+
+      {tipo === "resumen" && (() => {
+        const data = resumenObras();
+        const pdfTabla = (
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead><tr style={{ background: C.orL }}>{["Obra", "Aptos", "Avance", "Completados", "Total pagado"].map(h => <th key={h} style={{ padding: "6px 10px", textAlign: "left", fontWeight: 700, color: C.orD, borderBottom: `2px solid ${C.orM}` }}>{h}</th>)}</tr></thead>
+            <tbody>{data.map((d, i) => <tr key={d.obra.id} style={{ background: i % 2 === 0 ? "transparent" : C.g0 }}><td style={{ padding: "5px 10px" }}>{d.obra.nombre}</td><td style={{ padding: "5px 10px", textAlign: "center" }}>{d.tot}</td><td style={{ padding: "5px 10px", textAlign: "center" }}>{d.av}%</td><td style={{ padding: "5px 10px", textAlign: "center" }}>{d.completados}</td><td style={{ padding: "5px 10px", textAlign: "right", fontWeight: 700 }}>{fmt(d.totalPago)}</td></tr>)}</tbody>
+          </table>
+        );
+        const excelTxt = ["Resumen por obra", "", ["Obra", "Aptos", "Avance %", "Completados", "Total pagado"].join("\t"), ...data.map(d => [d.obra.nombre, d.tot, `${d.av}%`, d.completados, d.totalPago].join("\t"))].join("\n");
+        return (
+          <div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginBottom: 14 }}>
+              <Btn variant="success" onClick={() => setExpM({ tipo: "excel", txt: excelTxt })}>Excel</Btn>
+              <Btn variant="primary" onClick={() => setExpM({ tipo: "pdf", titulo: "Resumen por obra", tabla: pdfTabla })}>PDF</Btn>
+            </div>
+            <div style={card}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+                <thead><tr style={{ background: C.g0 }}>{["Obra", "Aptos", "Avance", "Completados", "Total pagado"].map(h => <th key={h} style={thSt}>{h}</th>)}</tr></thead>
+                <tbody>{data.map(d => <tr key={d.obra.id}><td style={tdSt}><span style={{ fontWeight: 600 }}>{d.obra.nombre}</span><div style={{ fontSize: 12, color: C.g5 }}>{d.obra.direccion}</div></td><td style={{ ...tdSt, textAlign: "center" }}>{d.tot}</td><td style={{ ...tdSt, textAlign: "center" }}><span style={bdg(d.av === 100 ? "green" : d.av > 50 ? "orange" : "gray")}>{d.av}%</span></td><td style={{ ...tdSt, textAlign: "center" }}>{d.completados}</td><td style={{ ...tdSt, textAlign: "right", fontWeight: 700, color: C.gnD }}>{fmt(d.totalPago)}</td></tr>)}</tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
+
+      {tipo === "detalle" && (
+        <div>
+          <Sel label="Seleccionar obra" value={obraId} onChange={e => setObraId(e.target.value)}>
+            <option value="">— Seleccionar —</option>
+            {obras.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
+          </Sel>
+          {obraId && (() => {
+            const rows = detalleObra(obraId);
+            const o = obras.find(x => x.id === obraId);
+            const cols = ["Piso", "Apto", "Elemento", "Cant.", "Precio", "Total", "Instalador", "Fecha"];
+            const pdfTabla = (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ background: C.orL }}>{cols.map(h => <th key={h} style={{ padding: "5px 8px", textAlign: "left", fontWeight: 700, color: C.orD, borderBottom: `2px solid ${C.orM}` }}>{h}</th>)}</tr></thead>
+                <tbody>{rows.map((r, i) => <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : C.g0 }}><td style={{ padding: "5px 8px" }}>{r.piso}</td><td style={{ padding: "5px 8px" }}>{r.apto}</td><td style={{ padding: "5px 8px" }}>{r.el}</td><td style={{ padding: "5px 8px", textAlign: "center" }}>{r.cant}</td><td style={{ padding: "5px 8px", textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700 }}>{fmt(r.total)}</td><td style={{ padding: "5px 8px" }}>{r.inst}</td><td style={{ padding: "5px 8px" }}>{r.fecha}</td></tr>)}</tbody>
+              </table>
+            );
+            const excelTxt = [`Detalle — ${o?.nombre}`, "", cols.join("\t"), ...rows.map(r => [r.piso, r.apto, r.el, r.cant, r.precio, r.total, r.inst, r.fecha].join("\t"))].join("\n");
+            return (
+              <div>
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginBottom: 14 }}>
+                  <Btn variant="success" onClick={() => setExpM({ tipo: "excel", txt: excelTxt })}>Excel</Btn>
+                  <Btn variant="primary" onClick={() => setExpM({ tipo: "pdf", titulo: `Detalle — ${o?.nombre}`, tabla: pdfTabla })}>PDF</Btn>
+                </div>
+                <div style={card}>
+                  {rows.length === 0 ? <p style={{ color: C.g4, fontSize: 14 }}>Sin instalaciones registradas.</p> : (
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                      <thead><tr style={{ background: C.g0 }}>{cols.map(h => <th key={h} style={thSt}>{h}</th>)}</tr></thead>
+                      <tbody>{rows.map((r, i) => <tr key={i}><td style={tdSt}>{r.piso}</td><td style={tdSt}>{r.apto}</td><td style={tdSt}>{r.el}</td><td style={{ ...tdSt, textAlign: "center" }}>{r.cant}</td><td style={{ ...tdSt, textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ ...tdSt, textAlign: "right", fontWeight: 700, color: C.gnD }}>{fmt(r.total)}</td><td style={{ ...tdSt, color: C.g5 }}>{r.inst}</td><td style={{ ...tdSt, color: C.g5 }}>{r.fecha}</td></tr>)}</tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {tipo === "instalador" && (
+        <div>
+          <Sel label="Seleccionar instalador" value={instId} onChange={e => setInstId(e.target.value)}>
+            <option value="">— Seleccionar —</option>
+            {INs.map(i => <option key={i.id} value={i.id}>{i.nombre}</option>)}
+          </Sel>
+          {instId && (() => {
+            const { inst, rows, bruto, ret, sub, pas, bon, total } = detalleInstalador(instId);
+            const cols = ["Obra", "Apto", "Elemento", "Cant.", "Precio", "Total", "Fecha"];
+            const resumen = [["Total bruto", bruto], ["Retención 10%", -ret], ["Subtotal", sub], pas > 0 ? ["Pasajes", pas] : null, bon > 0 ? ["Bonificación", bon] : null, ["Total", total]].filter(Boolean);
+            const pdfTabla = (
+              <div>
+                <div style={{ fontSize: 13, color: C.g5, marginBottom: 12 }}>C.C. {inst?.cedula} · {inst?.banco || "—"} {inst?.cuenta || ""}</div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 14 }}>
+                  <thead><tr style={{ background: C.orL }}>{cols.map(h => <th key={h} style={{ padding: "5px 8px", textAlign: "left", fontWeight: 700, color: C.orD, borderBottom: `2px solid ${C.orM}` }}>{h}</th>)}</tr></thead>
+                  <tbody>{rows.filter(r => !r.adj || r.apr).map((r, i) => <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : C.g0 }}><td style={{ padding: "5px 8px" }}>{r.obra}</td><td style={{ padding: "5px 8px" }}>{r.apto}</td><td style={{ padding: "5px 8px" }}>{r.el}</td><td style={{ padding: "5px 8px", textAlign: "center" }}>{r.cant}</td><td style={{ padding: "5px 8px", textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700 }}>{fmt(r.total)}</td><td style={{ padding: "5px 8px" }}>{r.fecha}</td></tr>)}</tbody>
+                </table>
+                <div style={{ background: C.g0, borderRadius: 8, padding: "10px 14px" }}>
+                  {resumen.map(([lb, v], i, a) => <div key={lb} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontWeight: i === a.length - 1 ? 700 : 400, fontSize: i === a.length - 1 ? 15 : 13, color: i === a.length - 1 ? C.gnD : C.bk }}><span>{lb}</span><span>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>)}
+                </div>
+              </div>
+            );
+            const excelTxt = [`Instalador — ${inst?.nombre} (C.C. ${inst?.cedula})`, "", cols.join("\t"), ...rows.map(r => [r.obra, r.apto, r.el, r.cant, r.precio, r.total, r.fecha].join("\t")), "", `Bruto\t\t\t\t\t${bruto}`, `Retención 10%\t\t\t\t\t-${ret}`, `Subtotal\t\t\t\t\t${sub}`, pas > 0 ? `Pasajes\t\t\t\t\t${pas}` : "", bon > 0 ? `Bonificación\t\t\t\t\t${bon}` : "", `TOTAL\t\t\t\t\t${total}`].filter(Boolean).join("\n");
+            return (
+              <div>
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginBottom: 14 }}>
+                  <Btn variant="success" onClick={() => setExpM({ tipo: "excel", txt: excelTxt })}>Excel</Btn>
+                  <Btn variant="primary" onClick={() => setExpM({ tipo: "pdf", titulo: `Reporte — ${inst?.nombre}`, tabla: pdfTabla })}>PDF</Btn>
+                </div>
+                <div style={card}>
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontWeight: 700, fontSize: 16 }}>{inst?.nombre}</div>
+                    <div style={{ fontSize: 13, color: C.g5 }}>C.C. {inst?.cedula} · {inst?.telefono || "—"}</div>
+                    {inst?.banco && <div style={{ fontSize: 13, color: C.g5 }}>{inst.banco} — {inst.cuenta}</div>}
+                  </div>
+                  {rows.length === 0 ? <p style={{ color: C.g4, fontSize: 14 }}>Sin instalaciones registradas.</p> : (<>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, marginBottom: 14 }}>
+                      <thead><tr style={{ background: C.g0 }}>{cols.map(h => <th key={h} style={thSt}>{h}</th>)}</tr></thead>
+                      <tbody>{rows.map((r, i) => <tr key={i} style={{ opacity: r.adj && !r.apr ? 0.5 : 1 }}><td style={{ ...tdSt, color: C.g5, fontSize: 12 }}>{r.obra?.substring(0, 16)}</td><td style={tdSt}>{r.apto}</td><td style={tdSt}>{r.el}{r.adj && !r.apr && <span style={{ marginLeft: 6, ...bdg("amber"), fontSize: 10 }}>pend.</span>}</td><td style={{ ...tdSt, textAlign: "center" }}>{r.cant}</td><td style={{ ...tdSt, textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ ...tdSt, textAlign: "right", fontWeight: 700, color: C.gnD }}>{fmt(r.total)}</td><td style={{ ...tdSt, color: C.g5 }}>{r.fecha}</td></tr>)}</tbody>
+                    </table>
+                    <div style={{ background: C.g0, borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>
+                      {resumen.map(([lb, v], i, a) => <div key={lb} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: i < a.length - 1 ? `1px solid ${C.g2}` : "none", fontWeight: i === a.length - 1 ? 700 : 400, fontSize: i === a.length - 1 ? 16 : 13, color: i === a.length - 1 ? C.gnD : C.bk, marginTop: i === a.length - 1 ? 4 : 0 }}><span>{lb}</span><span>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>)}
+                    </div>
+                  </>)}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
     </div>
   );
 }
