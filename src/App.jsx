@@ -1138,9 +1138,9 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const [precIndM, setPrecIndM] = useState(false);
   const [precIndTmp, setPrecIndTmp] = useState({});
 
-  const hayPend = Object.keys(pend).length > 0 || ajuste.pasajes || ajuste.bonificacion || (canEdit && (curA.elementos?.some(e => e.completado) || (curA.elementosExtra || []).some(e => !e.esAdicional)));
   const canAct = [ROLES.IN, ROLES.SA, ROLES.SV].includes(user.rol);
   const canEdit = user.rol === ROLES.SA || user.rol === ROLES.SV;
+  const hayPend = Object.keys(pend).length > 0 || ajuste.pasajes || ajuste.bonificacion || (canEdit && (curA.elementos?.some(e => e.completado) || (curA.elementosExtra || []).some(e => !e.esAdicional)));
   const corteAct = getCorteFechas()[0];
 
   const canToggle = idx => { const e = curA.elementos?.[idx]; if (!e || e.completado) return false; return canAct; };
