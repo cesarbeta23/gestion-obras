@@ -652,7 +652,7 @@ const [dupPrecios, setDupPrecios] = useState({});
         pisos: o.pisos.map(p => ({
           ...p, aptos: p.aptos.map(a => {
             if (a.tipologia !== editTip) return a;
-            return { ...a, elementos: tipForm.eids.map(eid => a.elementos?.find(e => e.elementoId === eid) || { elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad: 1 }) };
+            return { ...a, elementos: tipForm.eids.map(eid => a.elementos?.find(e => e.elementoId === eid) || { elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad: tip?.cantidades?.[eid] || 1 }) };
           })
         }))
       }));
@@ -718,7 +718,7 @@ const [dupPrecios, setDupPrecios] = useState({});
           const tip = tips.find(t => t.id === reg.tipId);
           if (!tip) return a;
           cnt++;
-          return { ...a, tipologia: tip.id, elementos: tip.elementoIds.map(eid => a.elementos?.find(e => e.elementoId === eid) || { elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad: 1 }) };
+          return { ...a, tipologia: tip.id, elementos: tip.elementoIds.map(eid => a.elementos?.find(e => e.elementoId === eid) || { elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad: tipForm.cantidades?.[eid] || 1 }) };
         })
       }))
     }));
