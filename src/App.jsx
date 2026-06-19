@@ -618,7 +618,7 @@ function ModalAccesos({ obraId, obras, users, updateObra, toast, onClose }) {
 
 // ── OBRA DETALLE ──────────────────────────────────────────
 function Obra({ obra, obras, updateObra, user, avanceApto, elems, users, goApto, openM, closeM, modals, toast, getPrecio }) {
-  const [tipForm, setTipForm] = useState({ nombre: "", eids: [], cantidades: {} });
+  const [tipForm, setTipForm] = useState({ nombre: "", eids: [], cantidades: {}, precios: {} });
   const [editTip, setEditTip] = useState(null);
   const [delTipId, setDelTipId] = useState(null);
   const [repModal, setRepModal] = useState(false);
@@ -639,16 +639,39 @@ const [nuevoPisoF, setNuevoPisoF] = useState({ numero: "", aptos: 1 });
   const cortes = getCorteFechas();
   const instsActivos = (cur.instaladoresAutorizados || []).map(id => users.find(u => u.id === id)).filter(Boolean);
 
-  const abrirNueva = () => { setEditTip(null); setTipForm({ nombre: "", eids: [], cantidades: {} }); openM("tip"); };
-  const abrirEditar = t => { setEditTip(t.id); setTipForm({ nombre: t.nombre, eids: [...t.elementoIds], cantidades: { ...(t.cantidades || {}) } }); openM("tip"); };
+  const abrirNueva = () => { setEditTip(null); setTipForm({ nombre: "", eids: [], cantidades: {}, precios: {} }); openM("tip"); };
+  const abrirEditar = t => {
+    const prefijo = `tip__${t.id}__`;
+    const precios = {};
+    Object.entries(cur.preciosOverride || {}).forEach(([k, v]) => {
+      if (k.startsWith(prefijo)) precios[k.slice(prefijo.length)] = v;
+    });
+    setEditTip(t.id);
+    setTipForm({ nombre: t.nombre, eids: [...t.elementoIds], cantidades: { ...(t.cantidades || {}) }, precios });
+    openM("tip");
+  };
 const [dupTip, setDupTip] = useState(null);
 const [dupPrecios, setDupPrecios] = useState({});
   async function guardarTip() {
     if (!tipForm.nombre) return;
+    // Aplica los precios por tipología sobre preciosOverride: setea key tip__<tipId>__<eid>
+    // si hay un valor numérico válido; la elimina si el campo quedó vacío (vuelve al precio base/corte).
+    const aplicarPrecios = (prev, tipId) => {
+      const po = { ...(prev || {}) };
+      tipForm.eids.forEach(eid => {
+        const key = `tip__${tipId}__${eid}`;
+        const raw = tipForm.precios?.[eid];
+        const num = (raw === "" || raw === null || raw === undefined) ? NaN : Number(raw);
+        if (Number.isFinite(num)) po[key] = num;
+        else delete po[key];
+      });
+      return po;
+    };
     if (editTip) {
       updateObra(obra.id, o => ({
         ...o,
         tipologias: (o.tipologias || []).map(t => t.id === editTip ? { ...t, nombre: tipForm.nombre, elementoIds: tipForm.eids, cantidades: tipForm.cantidades || {} } : t),
+        preciosOverride: aplicarPrecios(o.preciosOverride, editTip),
         pisos: o.pisos.map(p => ({
           ...p, aptos: p.aptos.map(a => {
             if (a.tipologia !== editTip) return a;
@@ -658,7 +681,7 @@ const [dupPrecios, setDupPrecios] = useState({});
       }));
     } else {
       const t = { id: `t${Date.now()}`, nombre: tipForm.nombre, elementoIds: tipForm.eids, cantidades: tipForm.cantidades || {} };
-      updateObra(obra.id, o => ({ ...o, tipologias: [...(o.tipologias || []), t] }));
+      updateObra(obra.id, o => ({ ...o, tipologias: [...(o.tipologias || []), t], preciosOverride: aplicarPrecios(o.preciosOverride, t.id) }));
     }
     toast("Tipología guardada", "ok"); closeM("tip"); setEditTip(null);
   }
@@ -1069,6 +1092,14 @@ const disponibles = misHabilitados.filter(a => {
                   onClick={x => x.stopPropagation()}
                   onChange={x => { x.stopPropagation(); setTipForm(f => ({ ...f, cantidades: { ...f.cantidades, [e.id]: Number(x.target.value) } })); }}
                   style={{ width: 64, padding: "2px 6px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 12, textAlign: "right" }}
+                />
+              )}
+              {tipForm.eids.includes(e.id) && (
+                <input type="number" min="0" step="1" placeholder={e.precio != null ? String(e.precio) : "Precio"}
+                  value={tipForm.precios?.[e.id] ?? ""}
+                  onClick={x => x.stopPropagation()}
+                  onChange={x => { x.stopPropagation(); setTipForm(f => ({ ...f, precios: { ...f.precios, [e.id]: x.target.value } })); }}
+                  style={{ width: 80, padding: "2px 6px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 12, textAlign: "right" }}
                 />
               )}
             </label>)}
