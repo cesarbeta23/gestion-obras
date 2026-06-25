@@ -654,6 +654,7 @@ const [dupTip, setDupTip] = useState(null);
 const [dupPrecios, setDupPrecios] = useState({});
   async function guardarTip() {
     console.log("tipForm.precios antes de guardar:", tipForm.precios);
+    console.log("tipForm.eids:", tipForm.eids);
     if (!tipForm.nombre) return;
     // Aplica los precios por tipología sobre preciosOverride: setea key tip__<tipId>__<eid>
     // si hay un valor numérico válido; la elimina si el campo quedó vacío (vuelve al precio base/corte).
@@ -666,6 +667,7 @@ const [dupPrecios, setDupPrecios] = useState({});
         if (Number.isFinite(num)) po[key] = num;
         else delete po[key];
       });
+      console.log("preciosOverride resultante:", po);
       return po;
     };
     if (editTip) {
