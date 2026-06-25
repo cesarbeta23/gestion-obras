@@ -653,8 +653,6 @@ const [nuevoPisoF, setNuevoPisoF] = useState({ numero: "", aptos: 1 });
 const [dupTip, setDupTip] = useState(null);
 const [dupPrecios, setDupPrecios] = useState({});
   async function guardarTip() {
-    console.log("tipForm.precios antes de guardar:", tipForm.precios);
-    console.log("tipForm.eids:", tipForm.eids);
     if (!tipForm.nombre) return;
     // Aplica los precios por tipología sobre preciosOverride: setea key tip__<tipId>__<eid>
     // si hay un valor numérico válido; la elimina si el campo quedó vacío (vuelve al precio base/corte).
@@ -667,7 +665,6 @@ const [dupPrecios, setDupPrecios] = useState({});
         if (Number.isFinite(num)) po[key] = num;
         else delete po[key];
       });
-      console.log("preciosOverride resultante:", po);
       return po;
     };
     if (editTip) {
@@ -1248,12 +1245,12 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
   const ajustes = curA.elementos?.filter(e => e.elementoId === "__pasajes__" || e.elementoId === "__bonificacion__") || [];
   const elsExtra = curA.elementosExtra?.filter(e => !e.esAdicional) || [];
 
-  const totNorm = elsNorm.filter(e => e.completado).reduce((s, el) => s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id) * (el.cantidad || 1), 0);
+  const totNorm = elsNorm.filter(e => e.completado).reduce((s, el) => s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, curA.tipologia) * (el.cantidad || 1), 0);
   const totAd = elsAd.filter(e => e.completado && e.aprobado).reduce((s, e) => s + e.valorUnitario * e.cantidad, 0);
   const totAj = ajustes.filter(e => e.aprobado).reduce((s, e) => s + (e.valorManual || 0), 0);
   const totExtra = elsExtra.filter(e => e.completado).reduce((s, el) => s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, el.tipologiaId) * (el.cantidad || 1), 0);
 const totLiq = totNorm + totAd + totAj + totExtra;
-  const totPend = Object.keys(pend).reduce((s, i) => { const el = elsNorm[parseInt(i)]; return s + getPrecio(el?.elementoId, obra.id, corteAct.label, curA.id) * (cnts[i] ?? el?.cantidad ?? 1); }, 0) + (Number(ajuste.pasajes) || 0) + (Number(ajuste.bonificacion) || 0);
+  const totPend = Object.keys(pend).reduce((s, i) => { const el = elsNorm[parseInt(i)]; return s + getPrecio(el?.elementoId, obra.id, corteAct.label, curA.id, curA.tipologia) * (cnts[i] ?? el?.cantidad ?? 1); }, 0) + (Number(ajuste.pasajes) || 0) + (Number(ajuste.bonificacion) || 0);
 
   return (
     <div>
@@ -1286,7 +1283,7 @@ const totLiq = totNorm + totAd + totAj + totExtra;
           const eP = !!pend[idx], marc = el.completado || eP;
           const cT = canToggle(idx);
           const ca = cnts[idx] ?? el.cantidad ?? 1;
-          const precio = getPrecio(el.elementoId, obra.id, corteAct.label, curA.id);
+          const precio = getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, curA.tipologia);
           // Indicar si tiene precio individual
           const tieneOvInd = cur?.preciosOverride?.[`apto__${curA.id}__${el.elementoId}`] !== undefined;
           return (
