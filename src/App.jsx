@@ -240,12 +240,12 @@ export default function App() {
       const kApto = `apto__${aptoId}__${eid}`;
       if (o?.preciosOverride?.[kApto] !== undefined) return o.preciosOverride[kApto];
     }
+    const k = `${corteLabel}__${eid}`;
+    if (o?.preciosOverride?.[k] !== undefined) return o.preciosOverride[k];
     if (tipId) {
       const kTip = `tip__${tipId}__${eid}`;
       if (o?.preciosOverride?.[kTip] !== undefined) return o.preciosOverride[kTip];
     }
-    const k = `${corteLabel}__${eid}`;
-    if (o?.preciosOverride?.[k] !== undefined) return o.preciosOverride[k];
     return elems.find(e => e.id === eid)?.precio || 0;
   };
 
