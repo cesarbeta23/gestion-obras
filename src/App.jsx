@@ -56,6 +56,12 @@ function enCorte(fs, d, h) {
   return f >= d && f <= h;
 }
 
+// Lee el ajuste (pasajes/bonificación) de un instalador para un corte. Tolera ausencia de .ajustes.
+function ajusteDe(usuarios, iid, corteLabel) {
+  const a = usuarios.find(x => x.id === iid)?.ajustes?.[corteLabel] || {};
+  return { pasajes: Number(a.pasajes) || 0, bonificacion: Number(a.bonificacion) || 0, aprobado: !!a.aprobado, editadoPor: a.editadoPor || "" };
+}
+
 function Modal({ title, onClose, children, wide }) {
   useEffect(() => { document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = ""; }; }, []);
   return (
@@ -1164,7 +1170,6 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const [pend, setPend] = useState({});
   const [cnts, setCnts] = useState({});
   const [instSel, setInstSel] = useState({});
-  const [ajuste, setAjuste] = useState({ pasajes: "", bonificacion: "" });
   const [nAd, setNAd] = useState({ desc: "", cant: 1, val: 0 });
   const [addAd, setAddAd] = useState(false);
   // ARREGLO 3: estado para precios individuales por elemento en este apto
@@ -1173,7 +1178,7 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
 
   const canAct = [ROLES.IN, ROLES.SA, ROLES.SV].includes(user.rol);
   const canEdit = user.rol === ROLES.SA || user.rol === ROLES.SV;
-  const hayPend = Object.keys(pend).length > 0 || ajuste.pasajes || ajuste.bonificacion || (canEdit && (curA.elementos?.some(e => e.completado) || (curA.elementosExtra || []).some(e => !e.esAdicional)));
+  const hayPend = Object.keys(pend).length > 0 || (canEdit && (curA.elementos?.some(e => e.completado) || (curA.elementosExtra || []).some(e => !e.esAdicional)));
   const corteAct = getCorteFechas()[0];
 
   const canToggle = idx => { const e = curA.elementos?.[idx]; if (!e || e.completado) return false; return canAct; };
@@ -1202,17 +1207,9 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
               if (pend[i]) { u.completado = true; u.instaladorId = instaladorPara(i); u.fecha = new Date().toLocaleDateString("es-CO"); }
               return u;
             });
-            const extras = [];
-            // SA/SV aprueban de inmediato; IN deja el ajuste pendiente de aprobación.
-            const aprobadoAjuste = user.rol === ROLES.SA || user.rol === ROLES.SV;
-            const ajustePrevio = id => newEls.find(e => e.elementoId === id);
-            // Pasajes: si el input trae valor, crear/reemplazar; si está vacío pero ya existía, conservarlo tal cual.
-            if (ajuste.pasajes) extras.push({ elementoId: "__pasajes__", completado: true, instaladorId: user.id, fecha: new Date().toLocaleDateString("es-CO"), cantidad: 1, valorManual: Number(ajuste.pasajes), aprobado: aprobadoAjuste });
-            else if (ajustePrevio("__pasajes__")) extras.push(ajustePrevio("__pasajes__"));
-            // Bonificación: misma lógica.
-            if (ajuste.bonificacion) extras.push({ elementoId: "__bonificacion__", completado: true, instaladorId: user.id, fecha: new Date().toLocaleDateString("es-CO"), cantidad: 1, valorManual: Number(ajuste.bonificacion), aprobado: aprobadoAjuste });
-            else if (ajustePrevio("__bonificacion__")) extras.push(ajustePrevio("__bonificacion__"));
-            const final = [...newEls.filter(e => e.elementoId !== "__pasajes__" && e.elementoId !== "__bonificacion__"), ...extras];
+            // Pasajes/bonificación ya no viven en el apto (se editan en Liquidación, en user.ajustes).
+            // Los __pasajes__/__bonificacion__ viejos que pudieran quedar se preservan tal cual y se ignoran en los cálculos.
+            const final = newEls;
             const done = newEls.filter(e => !e.esAdicional && !e.elementoId?.startsWith("__")).every(e => e.completado);
             if (done) SVs.forEach(s => toast(`🔔 ${s.nombre}: Apto completado en ${obra.nombre}`));
             // También guardar elementosExtra pendientes
@@ -1227,13 +1224,10 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
         };
       })
     }));
-    toast("Guardado", "ok"); setPend({}); setCnts({}); setInstSel({}); setAjuste({ pasajes: "", bonificacion: "" });
+    toast("Guardado", "ok"); setPend({}); setCnts({}); setInstSel({});
   }
 
   const desmarcar = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, completado: false, instaladorId: null, fecha: null }) }) }) }));
-  const aprobarAjuste = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, aprobado: true }) }) }) }));
-  // ARREGLO 2: rechazar/eliminar ajuste (pasajes o bonificación)
-  const rechazarAjuste = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.filter((_, i) => i !== idx) }) }) }));
 
   async function guardarAd() {
     if (!nAd.desc || !nAd.val) return;
@@ -1261,15 +1255,13 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
 
   const elsNorm = curA.elementos?.filter(e => !e.esAdicional && e.elementoId !== "__pasajes__" && e.elementoId !== "__bonificacion__") || [];
   const elsAd = curA.elementos?.filter(e => e.esAdicional) || [];
-  const ajustes = curA.elementos?.filter(e => e.elementoId === "__pasajes__" || e.elementoId === "__bonificacion__") || [];
   const elsExtra = curA.elementosExtra?.filter(e => !e.esAdicional) || [];
 
   const totNorm = elsNorm.filter(e => e.completado).reduce((s, el) => s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, curA.tipologia) * (el.cantidad || 1), 0);
   const totAd = elsAd.filter(e => e.completado).reduce((s, e) => s + e.valorUnitario * e.cantidad, 0);
-  const totAj = ajustes.filter(e => e.aprobado).reduce((s, e) => s + (e.valorManual || 0), 0);
   const totExtra = elsExtra.filter(e => e.completado).reduce((s, el) => s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, el.tipologiaId) * (el.cantidad || 1), 0);
-const totLiq = totNorm + totAd + totAj + totExtra;
-  const totPend = Object.keys(pend).reduce((s, i) => { const el = elsNorm[parseInt(i)]; return s + getPrecio(el?.elementoId, obra.id, corteAct.label, curA.id, curA.tipologia) * (cnts[i] ?? el?.cantidad ?? 1); }, 0) + (Number(ajuste.pasajes) || 0) + (Number(ajuste.bonificacion) || 0);
+const totLiq = totNorm + totAd + totExtra;
+  const totPend = Object.keys(pend).reduce((s, i) => { const el = elsNorm[parseInt(i)]; return s + getPrecio(el?.elementoId, obra.id, corteAct.label, curA.id, curA.tipologia) * (cnts[i] ?? el?.cantidad ?? 1); }, 0);
 
   return (
     <div>
@@ -1292,7 +1284,7 @@ const totLiq = totNorm + totAd + totAj + totExtra;
           </div>
         ))}
       </div>
-      {canEdit && <div style={{ marginBottom: 14, padding: "10px 14px", background: C.amL, border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#B45309", fontWeight: 500 }}>Puedes desmarcar elementos con ✕ y aprobar o rechazar ajustes.</div>}
+      {canEdit && <div style={{ marginBottom: 14, padding: "10px 14px", background: C.amL, border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#B45309", fontWeight: 500 }}>Puedes desmarcar elementos con ✕.</div>}
       {user.rol === ROLES.IN && <div style={{ marginBottom: 14, padding: "10px 14px", background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 10, fontSize: 13, color: C.orD, fontWeight: 500 }}>Marca los elementos terminados y presiona <strong>Guardar</strong>.{hayPend && <span style={{ marginLeft: 8 }}>+{fmt(totPend)}</span>}</div>}
 
       <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
@@ -1415,33 +1407,6 @@ const totLiq = totNorm + totAd + totAj + totExtra;
 </div>}
       </div>
 
-      {/* ARREGLO 2: Pasajes y Bonificación con opción de rechazar/eliminar */}
-      <div style={{ borderTop: `2px solid ${C.g1}`, paddingTop: 16, marginBottom: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: C.bk, marginBottom: 12 }}>Pasajes y Bonificación</div>
-        {ajustes.map((aj, i) => {
-          const ir = curA.elementos.indexOf(aj);
-          return <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: aj.aprobado ? C.gnL : C.amL, border: `1px solid ${aj.aprobado ? "#BBF7D0" : "#FDE68A"}`, borderRadius: 10, marginBottom: 8 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>{aj.elementoId === "__pasajes__" ? "Pasajes" : "Bonificación"}</div>
-              <div style={{ fontSize: 12, color: C.g5 }}>{aj.fecha} · {aj.aprobado ? "✓ Aprobado" : "⏳ Pendiente aprobación"}</div>
-            </div>
-            <div style={{ fontWeight: 700, fontSize: 14 }}>{fmt(aj.valorManual)}</div>
-            {/* ARREGLO 2: SA/SV pueden aprobar Y rechazar (eliminar el ajuste) */}
-            {canEdit && !aj.aprobado && <>
-              <Btn variant="success" onClick={() => aprobarAjuste(ir)}>Aprobar</Btn>
-              <Btn variant="danger" onClick={() => { rechazarAjuste(ir); toast("Ajuste rechazado y eliminado", "ok"); }}>Rechazar</Btn>
-            </>}
-            {canEdit && aj.aprobado && (
-              <Btn variant="danger" onClick={() => { rechazarAjuste(ir); toast("Ajuste eliminado", "ok"); }}>Eliminar</Btn>
-            )}
-          </div>;
-        })}
-        {[ROLES.IN, ROLES.SA, ROLES.SV].includes(user.rol) && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <Inp label="Pasajes ($)" type="number" min="0" value={ajuste.pasajes} onChange={e => setAjuste(a => ({ ...a, pasajes: e.target.value }))} placeholder="0" />
-          <Inp label="Bonificación ($)" type="number" min="0" value={ajuste.bonificacion} onChange={e => setAjuste(a => ({ ...a, bonificacion: e.target.value }))} placeholder="0" />
-        </div>}
-      </div>
-
       <div style={{ borderTop: `2px solid ${C.g1}`, paddingTop: 16, marginBottom: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: C.bk, marginBottom: 12 }}>Observaciones</div>
         <textarea
@@ -1541,7 +1506,7 @@ function Elementos({ elems, setElems, openM, closeM, modals }) {
 }
 
 // ── LIQUIDACIÓN ───────────────────────────────────────────
-function Liquidacion({ obras, elems, users, user, liqs, setLiqs, getPrecio }) {
+function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPrecio, toast }) {
   const cortes = getCorteFechas();
   const [ci, setCi] = useState(0);
   const [expM, setExpM] = useState(null);
@@ -1554,8 +1519,7 @@ function Liquidacion({ obras, elems, users, user, liqs, setLiqs, getPrecio }) {
     const rows = [];
     obras.forEach(o => o.pisos?.forEach(p => p.aptos?.forEach(a => a.elementos?.forEach(el => {
       if (el.completado && el.instaladorId === iid && enCorte(el.fecha, d, h)) {
-        if (el.elementoId === "__pasajes__") { rows.push({ obra: o.nombre, apto: a.nombre, el: "Pasajes", cant: 1, precio: el.valorManual || 0, fecha: el.fecha, adj: true, apr: el.aprobado }); return; }
-        if (el.elementoId === "__bonificacion__") { rows.push({ obra: o.nombre, apto: a.nombre, el: "Bonificación", cant: 1, precio: el.valorManual || 0, fecha: el.fecha, adj: true, apr: el.aprobado }); return; }
+        if (el.elementoId === "__pasajes__" || el.elementoId === "__bonificacion__") return; // migrados a user.ajustes
         if (el.esAdicional) { rows.push({ obra: o.nombre, apto: a.nombre, el: `[Adicional] ${el.descripcion}`, cant: el.cantidad || 1, precio: el.valorUnitario || 0, fecha: el.fecha, adj: false, apr: true }); return; }
         const elem = elems.find(e => e.id === el.elementoId);
         rows.push({ obra: o.nombre, apto: a.nombre, el: elem?.nombre, cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label, a.id), fecha: el.fecha, adj: false, apr: true });
@@ -1569,9 +1533,10 @@ function Liquidacion({ obras, elems, users, user, liqs, setLiqs, getPrecio }) {
     const bruto = rows.filter(r => !r.adj).reduce((s, r) => s + r.precio * r.cant, 0);
     const ret = Math.round(bruto * .10);
     const sub = bruto - ret;
-    const pas = rows.filter(r => r.adj && r.el === "Pasajes" && r.apr).reduce((s, r) => s + r.precio, 0);
-    const bon = rows.filter(r => r.adj && r.el === "Bonificación" && r.apr).reduce((s, r) => s + r.precio, 0);
-    const pendAdj = rows.filter(r => r.adj && !r.apr).length;
+    const aj = ajusteDe(users, iid, corte.label);
+    const pas = aj.aprobado ? aj.pasajes : 0;
+    const bon = aj.aprobado ? aj.bonificacion : 0;
+    const pendAdj = (!aj.aprobado && (aj.pasajes || aj.bonificacion)) ? 1 : 0;
     return { bruto, ret, sub, pas, bon, total: sub + pas + bon, pendAdj, rows };
   }
 
@@ -1582,6 +1547,34 @@ function Liquidacion({ obras, elems, users, user, liqs, setLiqs, getPrecio }) {
   }
 
   const cerrada = iid => liqs.some(l => l.inst_id === iid && l.corte === corte.label);
+
+  // ── Pasajes/Bonificación por instalador+corte (viven en user.ajustes) ──
+  const [ajTmp, setAjTmp] = useState({});  // buffer local; se confirma onBlur
+  async function upsertUsuario(u) {
+    const res = await dbUpsert("usuarios", u);
+    if (!res.ok) { const det = await res.text().catch(() => ""); console.error("dbUpsert usuarios falló:", res.status, det); toast("Error al guardar ajuste — ¿existe la columna 'ajustes' en Supabase?", "err"); return false; }
+    return true;
+  }
+  // IN propone (aprobado:false); SA edita (aprobado:true automático).
+  async function guardarAjuste(iid, patch) {
+    const u = users.find(x => x.id === iid); if (!u) return;
+    const prev = u.ajustes?.[corte.label] || {};
+    const nuevo = { pasajes: 0, bonificacion: 0, ...prev, ...patch, aprobado: user.rol === ROLES.SA, editadoPor: user.id };
+    const merged = { ...u, ajustes: { ...(u.ajustes || {}), [corte.label]: nuevo } };
+    if (await upsertUsuario(merged)) setUsers(xs => xs.map(x => x.id === iid ? merged : x));
+  }
+  async function aprobarAjuste(iid) {
+    const u = users.find(x => x.id === iid); if (!u) return;
+    const prev = u.ajustes?.[corte.label] || {};
+    const merged = { ...u, ajustes: { ...(u.ajustes || {}), [corte.label]: { ...prev, aprobado: true, editadoPor: user.id } } };
+    if (await upsertUsuario(merged)) { setUsers(xs => xs.map(x => x.id === iid ? merged : x)); toast("Ajuste aprobado", "ok"); }
+  }
+  async function eliminarAjuste(iid) {
+    const u = users.find(x => x.id === iid); if (!u) return;
+    const aj = { ...(u.ajustes || {}) }; delete aj[corte.label];
+    const merged = { ...u, ajustes: aj };
+    if (await upsertUsuario(merged)) { setUsers(xs => xs.map(x => x.id === iid ? merged : x)); toast("Ajuste eliminado", "ok"); }
+  }
 
   function excelTxt(inst, rows, res) {
     return [`Liquidación — ${inst.nombre} (C.C. ${inst.cedula}) — ${corte.label}`, `Tel: ${inst.telefono || "-"} | Banco: ${inst.banco || "-"} | Cta: ${inst.cuenta || "-"}`, "", ["Obra", "Apto", "Elemento", "Cant.", "Precio", "Total", "Fecha"].join("\t"), ...rows.map(r => [r.obra, r.apto, r.el, r.cant, r.precio, r.precio * r.cant, r.fecha].join("\t")), "", `Bruto\t\t\t\t\t${res.bruto}`, `Retención 10%\t\t\t\t\t-${res.ret}`, `Subtotal\t\t\t\t\t${res.sub}`, res.pas > 0 ? `Pasajes\t\t\t\t\t${res.pas}` : "", res.bon > 0 ? `Bonificación\t\t\t\t\t${res.bon}` : "", `TOTAL\t\t\t\t\t${res.total}`].filter(x => x !== undefined).join("\n");
@@ -1660,6 +1653,32 @@ function Liquidacion({ obras, elems, users, user, liqs, setLiqs, getPrecio }) {
                 ))}
                 <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0 0", fontWeight: 700, fontSize: 16, color: C.gnD }}><span>Total a pagar</span><span>{fmt(res.total)}</span></div>
               </div>}
+              {(() => {
+                const aj = users.find(u => u.id === inst.id)?.ajustes?.[corte.label] || {};
+                const edita = (user.rol === ROLES.SA || user.rol === ROLES.IN) && !cerr;   // SA edita; IN propone
+                const tmp = ajTmp[inst.id] || {};
+                if (!edita && !(aj.pasajes || aj.bonificacion)) return null;
+                return <div style={{ background: C.amL, border: "1px solid #FDE68A", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#B45309", marginBottom: 8, display: "flex", gap: 8, alignItems: "center" }}>
+                    Pasajes y Bonificación
+                    {aj.aprobado ? <span style={{ ...bdg("green"), fontSize: 10 }}>✓ Aprobado</span> : (aj.pasajes || aj.bonificacion) ? <span style={{ ...bdg("amber"), fontSize: 10 }}>⏳ Pendiente</span> : null}
+                  </div>
+                  {edita ? <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    <Inp label="Pasajes ($)" type="number" min="0"
+                      value={tmp.pasajes ?? aj.pasajes ?? ""}
+                      onChange={e => setAjTmp(s => ({ ...s, [inst.id]: { ...tmp, pasajes: e.target.value } }))}
+                      onBlur={e => guardarAjuste(inst.id, { pasajes: Number(e.target.value) || 0 })} />
+                    <Inp label="Bonificación ($)" type="number" min="0"
+                      value={tmp.bonificacion ?? aj.bonificacion ?? ""}
+                      onChange={e => setAjTmp(s => ({ ...s, [inst.id]: { ...tmp, bonificacion: e.target.value } }))}
+                      onBlur={e => guardarAjuste(inst.id, { bonificacion: Number(e.target.value) || 0 })} />
+                  </div> : <div style={{ fontSize: 13, color: C.g5 }}>Pasajes: {fmt(aj.pasajes || 0)} · Bonificación: {fmt(aj.bonificacion || 0)}</div>}
+                  {user.rol === ROLES.SA && !cerr && (aj.pasajes || aj.bonificacion) ? <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end" }}>
+                    {!aj.aprobado && <Btn variant="success" onClick={() => aprobarAjuste(inst.id)}>Aprobar</Btn>}
+                    <Btn variant="danger" onClick={() => eliminarAjuste(inst.id)}>Eliminar</Btn>
+                  </div> : null}
+                </div>;
+              })()}
               {rows.length === 0 && <p style={{ fontSize: 13, color: C.g3, margin: "8px 0" }}>Sin instalaciones en este corte.</p>}
               {canExp && rows.length > 0 && <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
                 <Btn variant="success" onClick={() => setExpM({ tipo: "excel", inst, rows, res, txt: excelTxt(inst, rows, res) })}>Excel</Btn>
@@ -1849,11 +1868,10 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra }) {
     obras.forEach(o => o.pisos?.forEach(p => p.aptos?.forEach(a => {
       (a.elementos || []).forEach(el => {
         if (!el.completado || el.instaladorId !== iId) return;
+        if (el.elementoId === "__pasajes__" || el.elementoId === "__bonificacion__") return; // migrados a user.ajustes
         const elem = elems.find(e => e.id === el.elementoId);
         let nombre, precio, adj = false, apr = true;
-        if (el.elementoId === "__pasajes__") { nombre = "Pasajes"; precio = el.valorManual || 0; adj = true; apr = !!el.aprobado; }
-        else if (el.elementoId === "__bonificacion__") { nombre = "Bonificación"; precio = el.valorManual || 0; adj = true; apr = !!el.aprobado; }
-        else if (el.esAdicional) { nombre = `[Ad] ${el.descripcion}`; precio = el.valorUnitario || 0; }
+        if (el.esAdicional) { nombre = `[Ad] ${el.descripcion}`; precio = el.valorUnitario || 0; }
         else { nombre = elem?.nombre || el.elementoId; precio = getPrecio(el.elementoId, o.id, "", a.id); }
         rows.push({ obra: o.nombre, apto: a.nombre, el: nombre, cant: el.cantidad || 1, precio, total: precio * (el.cantidad || 1), fecha: el.fecha || "", adj, apr });
       });
@@ -1867,8 +1885,10 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra }) {
     const bruto = rows.filter(r => !r.adj).reduce((s, r) => s + r.precio * r.cant, 0);
     const ret = Math.round(bruto * 0.1);
     const sub = bruto - ret;
-    const pas = rows.filter(r => r.adj && r.el === "Pasajes" && r.apr).reduce((s, r) => s + r.precio, 0);
-    const bon = rows.filter(r => r.adj && r.el === "Bonificación" && r.apr).reduce((s, r) => s + r.precio, 0);
+    // Histórico: suma pasajes/bonificación aprobados de TODOS los cortes del instalador.
+    const ajs = inst.ajustes || {};
+    const pas = Object.values(ajs).reduce((s, x) => s + (x?.aprobado ? Number(x.pasajes) || 0 : 0), 0);
+    const bon = Object.values(ajs).reduce((s, x) => s + (x?.aprobado ? Number(x.bonificacion) || 0 : 0), 0);
     return { inst, rows, bruto, ret, sub, pas, bon, total: sub + pas + bon };
   }
 
