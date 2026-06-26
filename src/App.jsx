@@ -1157,11 +1157,13 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const cur = obras.find(o => o.id === obra.id);
   const curP = cur?.pisos?.find(p => p.id === piso.id);
   const curA = curP?.aptos?.find(a => a.id === apto.id) || apto;
+  const asignados = curA.instaladoresAsignados || (curA.instaladorAsignado ? [curA.instaladorAsignado] : []);
   const tip = cur?.tipologias?.find(t => t.id === curA.tipologia);
   const av = avanceApto(curA);
   const SVs = users.filter(u => u.rol === ROLES.SV);
   const [pend, setPend] = useState({});
   const [cnts, setCnts] = useState({});
+  const [instSel, setInstSel] = useState({});
   const [ajuste, setAjuste] = useState({ pasajes: "", bonificacion: "" });
   const [nAd, setNAd] = useState({ desc: "", cant: 1, val: 0 });
   const [addAd, setAddAd] = useState(false);
@@ -1178,6 +1180,16 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const togglePend = idx => { if (!canToggle(idx)) return; setPend(p => { const c = { ...p }; if (c[idx] !== undefined) delete c[idx]; else c[idx] = true; return c; }); };
 
   async function guardar() {
+    // Atribución de instalador al marcar (solo cambia para SA/SV; IN siempre usa su propio id):
+    //  - 2+ asignados: el seleccionado en el dropdown (o el primero por defecto)
+    //  - 1 asignado: ese instalador automáticamente
+    //  - 0 asignados o no canEdit: el usuario actual
+    const instaladorPara = key => {
+      if (!canEdit) return user.id;
+      if (asignados.length >= 2) return instSel[key] ?? asignados[0];
+      if (asignados.length === 1) return asignados[0];
+      return user.id;
+    };
     updateObra(obra.id, o => ({
       ...o, pisos: o.pisos.map(p => {
         if (p.id !== piso.id) return p;
@@ -1187,7 +1199,7 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
             const newEls = a.elementos.map((el, i) => {
               let u = { ...el };
               if (cnts[i] !== undefined) u.cantidad = cnts[i];
-              if (pend[i]) { u.completado = true; u.instaladorId = user.id; u.fecha = new Date().toLocaleDateString("es-CO"); }
+              if (pend[i]) { u.completado = true; u.instaladorId = instaladorPara(i); u.fecha = new Date().toLocaleDateString("es-CO"); }
               return u;
             });
             const extras = [];
@@ -1207,7 +1219,7 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
 const newElsExtra = (a.elementosExtra || []).map((el, i) => {
   let u = { ...el };
   if (cnts[`x${i}`] !== undefined) u.cantidad = cnts[`x${i}`];
-  if (pend[`x${i}`]) { u.completado = true; u.instaladorId = user.id; u.fecha = new Date().toLocaleDateString("es-CO"); }
+  if (pend[`x${i}`]) { u.completado = true; u.instaladorId = instaladorPara(`x${i}`); u.fecha = new Date().toLocaleDateString("es-CO"); }
   return u;
 });
 return { ...a, elementos: final, elementosExtra: newElsExtra };
@@ -1215,7 +1227,7 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
         };
       })
     }));
-    toast("Guardado", "ok"); setPend({}); setCnts({}); setAjuste({ pasajes: "", bonificacion: "" });
+    toast("Guardado", "ok"); setPend({}); setCnts({}); setInstSel({}); setAjuste({ pasajes: "", bonificacion: "" });
   }
 
   const desmarcar = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, completado: false, instaladorId: null, fecha: null }) }) }) }));
@@ -1304,6 +1316,11 @@ const totLiq = totNorm + totAd + totAj + totExtra;
                 {eP && <div style={{ fontSize: 12, color: C.orD, fontWeight: 500 }}>Pendiente de guardar</div>}
                 {tieneOvInd && <div style={{ fontSize: 10, color: C.or, fontWeight: 600 }}>precio personalizado</div>}
               </div>
+              {canEdit && asignados.length >= 2 && !el.completado && (
+                <select onClick={e => e.stopPropagation()} value={instSel[idx] ?? asignados[0]} onChange={e => { e.stopPropagation(); setInstSel(s => ({ ...s, [idx]: e.target.value })); }} style={{ fontSize: 12, padding: "4px 6px", border: `1px solid ${C.g2}`, borderRadius: 6, maxWidth: 130 }}>
+                  {asignados.map(id => { const u = users.find(x => x.id === id); return <option key={id} value={id}>{u?.nombre || id}</option>; })}
+                </select>
+              )}
               {(elem?.unidad === "ml" || elem?.unidad === "m2") && <div onClick={e => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 12, color: C.g4 }}>{elem.unidad}</span>
                 <input type="number" min="0.1" step="0.1" value={ca} disabled={el.completado && user.rol === ROLES.IN} onChange={e => setCnts(c => ({ ...c, [idx]: Number(e.target.value) }))} style={{ width: 64, textAlign: "center", fontSize: 13, padding: "4px", border: `1px solid ${C.g2}`, borderRadius: 6 }} />
@@ -1381,6 +1398,11 @@ const totLiq = totNorm + totAd + totAj + totExtra;
               {el.completado && inst && <div style={{ fontSize: 12, color: C.gnD }}>{inst.nombre} · {el.fecha}</div>}
               {eP && <div style={{ fontSize: 12, color: C.orD }}>Pendiente de guardar</div>}
             </div>
+            {canEdit && asignados.length >= 2 && !el.completado && (
+              <select onClick={e => e.stopPropagation()} value={instSel[`x${irx}`] ?? asignados[0]} onChange={e => { e.stopPropagation(); setInstSel(s => ({ ...s, [`x${irx}`]: e.target.value })); }} style={{ fontSize: 12, padding: "4px 6px", border: `1px solid ${C.g2}`, borderRadius: 6, maxWidth: 130 }}>
+                {asignados.map(id => { const u = users.find(x => x.id === id); return <option key={id} value={id}>{u?.nombre || id}</option>; })}
+              </select>
+            )}
             <div style={{ textAlign: "right", minWidth: 90 }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>{fmt(precio * ca)}</div>
             </div>
