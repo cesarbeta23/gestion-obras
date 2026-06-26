@@ -1246,7 +1246,7 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
   const elsExtra = curA.elementosExtra?.filter(e => !e.esAdicional) || [];
 
   const totNorm = elsNorm.filter(e => e.completado).reduce((s, el) => s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, curA.tipologia) * (el.cantidad || 1), 0);
-  const totAd = elsAd.filter(e => e.completado && e.aprobado).reduce((s, e) => s + e.valorUnitario * e.cantidad, 0);
+  const totAd = elsAd.filter(e => e.completado).reduce((s, e) => s + e.valorUnitario * e.cantidad, 0);
   const totAj = ajustes.filter(e => e.aprobado).reduce((s, e) => s + (e.valorManual || 0), 0);
   const totExtra = elsExtra.filter(e => e.completado).reduce((s, el) => s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, el.tipologiaId) * (el.cantidad || 1), 0);
 const totLiq = totNorm + totAd + totAj + totExtra;
@@ -1786,7 +1786,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra }) {
       const completados = allEls.filter(e => e.completado && !e.esAdicional && !e.elementoId?.startsWith("__")).length;
       const totalPago = allEls.filter(e => e.completado).reduce((s, el) => {
         if (el.elementoId?.startsWith("__")) return el.aprobado ? s + (el.valorManual || 0) : s;
-        if (el.esAdicional) return el.aprobado ? s + (el.valorUnitario || 0) * (el.cantidad || 1) : s;
+        if (el.esAdicional) return s + (el.valorUnitario || 0) * (el.cantidad || 1);
         return s + getPrecio(el.elementoId, o.id, "", el.aptoId) * (el.cantidad || 1);
       }, 0);
       return { obra: o, av, tot, completados, totalPago };
