@@ -1191,8 +1191,15 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
               return u;
             });
             const extras = [];
-            if (ajuste.pasajes) extras.push({ elementoId: "__pasajes__", completado: true, instaladorId: user.id, fecha: new Date().toLocaleDateString("es-CO"), cantidad: 1, valorManual: Number(ajuste.pasajes), aprobado: false });
-            if (ajuste.bonificacion) extras.push({ elementoId: "__bonificacion__", completado: true, instaladorId: user.id, fecha: new Date().toLocaleDateString("es-CO"), cantidad: 1, valorManual: Number(ajuste.bonificacion), aprobado: false });
+            // SA/SV aprueban de inmediato; IN deja el ajuste pendiente de aprobación.
+            const aprobadoAjuste = user.rol === ROLES.SA || user.rol === ROLES.SV;
+            const ajustePrevio = id => newEls.find(e => e.elementoId === id);
+            // Pasajes: si el input trae valor, crear/reemplazar; si está vacío pero ya existía, conservarlo tal cual.
+            if (ajuste.pasajes) extras.push({ elementoId: "__pasajes__", completado: true, instaladorId: user.id, fecha: new Date().toLocaleDateString("es-CO"), cantidad: 1, valorManual: Number(ajuste.pasajes), aprobado: aprobadoAjuste });
+            else if (ajustePrevio("__pasajes__")) extras.push(ajustePrevio("__pasajes__"));
+            // Bonificación: misma lógica.
+            if (ajuste.bonificacion) extras.push({ elementoId: "__bonificacion__", completado: true, instaladorId: user.id, fecha: new Date().toLocaleDateString("es-CO"), cantidad: 1, valorManual: Number(ajuste.bonificacion), aprobado: aprobadoAjuste });
+            else if (ajustePrevio("__bonificacion__")) extras.push(ajustePrevio("__bonificacion__"));
             const final = [...newEls.filter(e => e.elementoId !== "__pasajes__" && e.elementoId !== "__bonificacion__"), ...extras];
             const done = newEls.filter(e => !e.esAdicional && !e.elementoId?.startsWith("__")).every(e => e.completado);
             if (done) SVs.forEach(s => toast(`🔔 ${s.nombre}: Apto completado en ${obra.nombre}`));
@@ -1407,7 +1414,7 @@ const totLiq = totNorm + totAd + totAj + totExtra;
             )}
           </div>;
         })}
-        {user.rol === ROLES.IN && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        {[ROLES.IN, ROLES.SA, ROLES.SV].includes(user.rol) && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Inp label="Pasajes ($)" type="number" min="0" value={ajuste.pasajes} onChange={e => setAjuste(a => ({ ...a, pasajes: e.target.value }))} placeholder="0" />
           <Inp label="Bonificación ($)" type="number" min="0" value={ajuste.bonificacion} onChange={e => setAjuste(a => ({ ...a, bonificacion: e.target.value }))} placeholder="0" />
         </div>}
