@@ -680,8 +680,29 @@ const [dupPrecios, setDupPrecios] = useState({});
         preciosOverride: aplicarPrecios(o.preciosOverride, editTip),
         pisos: o.pisos.map(p => ({
           ...p, aptos: p.aptos.map(a => {
-            if (a.tipologia !== editTip) return a;
-            return { ...a, elementos: tipForm.eids.map(eid => a.elementos?.find(e => e.elementoId === eid) || { elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad: tipForm.cantidades?.[eid] || 1 }) };
+            const esPrincipal = a.tipologia === editTip;
+            const esExtra = (a.tipologiasExtra || []).includes(editTip);
+            if (!esPrincipal && !esExtra) return a;
+            let na = a;
+            // Tipología principal: sobrescribe cantidades (incluye completados), conserva completado/instaladorId/fecha.
+            if (esPrincipal) {
+              na = { ...na, elementos: tipForm.eids.map(eid => {
+                const ex = na.elementos?.find(e => e.elementoId === eid);
+                const cantidad = tipForm.cantidades?.[eid] || 1;
+                return ex ? { ...ex, cantidad } : { elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad };
+              }) };
+            }
+            // Tipología extra: igual, sobre los elementosExtra de esta tipología (los de otras no se tocan).
+            if (esExtra) {
+              const otros = (na.elementosExtra || []).filter(e => e.tipologiaId !== editTip);
+              const deEsta = tipForm.eids.map(eid => {
+                const ex = (na.elementosExtra || []).find(e => e.elementoId === eid && e.tipologiaId === editTip);
+                const cantidad = tipForm.cantidades?.[eid] || 1;
+                return ex ? { ...ex, cantidad } : { elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad, tipologiaId: editTip };
+              });
+              na = { ...na, elementosExtra: [...otros, ...deEsta] };
+            }
+            return na;
           })
         }))
       }));
@@ -1522,7 +1543,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
         if (el.elementoId === "__pasajes__" || el.elementoId === "__bonificacion__") return; // migrados a user.ajustes
         if (el.esAdicional) { rows.push({ obra: o.nombre, apto: a.nombre, el: `[Adicional] ${el.descripcion}`, cant: el.cantidad || 1, precio: el.valorUnitario || 0, fecha: el.fecha, adj: false, apr: true }); return; }
         const elem = elems.find(e => e.id === el.elementoId);
-        rows.push({ obra: o.nombre, apto: a.nombre, el: elem?.nombre, cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label, a.id), fecha: el.fecha, adj: false, apr: true });
+        rows.push({ obra: o.nombre, apto: a.nombre, el: elem?.nombre, cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label, a.id, el.tipologiaId || a.tipologia), fecha: el.fecha, adj: false, apr: true });
       }
     }))));
     return rows;
@@ -1830,12 +1851,12 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra }) {
     return obras.map(o => {
       const av = avanceObra(o);
       const tot = o.pisos?.reduce((s, p) => s + (p.aptos?.length || 0), 0) || 0;
-      const allEls = o.pisos?.flatMap(p => p.aptos?.flatMap(a => (a.elementos || []).map(el => ({ ...el, aptoId: a.id }))) || []) || [];
+      const allEls = o.pisos?.flatMap(p => p.aptos?.flatMap(a => (a.elementos || []).map(el => ({ ...el, aptoId: a.id, tipId: el.tipologiaId || a.tipologia }))) || []) || [];
       const completados = allEls.filter(e => e.completado && !e.esAdicional && !e.elementoId?.startsWith("__")).length;
       const totalPago = allEls.filter(e => e.completado).reduce((s, el) => {
         if (el.elementoId?.startsWith("__")) return el.aprobado ? s + (el.valorManual || 0) : s;
         if (el.esAdicional) return s + (el.valorUnitario || 0) * (el.cantidad || 1);
-        return s + getPrecio(el.elementoId, o.id, "", el.aptoId) * (el.cantidad || 1);
+        return s + getPrecio(el.elementoId, o.id, "", el.aptoId, el.tipId) * (el.cantidad || 1);
       }, 0);
       return { obra: o, av, tot, completados, totalPago };
     });
@@ -1854,7 +1875,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra }) {
         if (el.elementoId === "__pasajes__") { nombre = "Pasajes"; precio = el.valorManual || 0; }
         else if (el.elementoId === "__bonificacion__") { nombre = "Bonificación"; precio = el.valorManual || 0; }
         else if (el.esAdicional) { nombre = `[Ad] ${el.descripcion}`; precio = el.valorUnitario || 0; }
-        else { nombre = elem?.nombre || el.elementoId; precio = getPrecio(el.elementoId, oId, "", a.id); }
+        else { nombre = elem?.nombre || el.elementoId; precio = getPrecio(el.elementoId, oId, "", a.id, el.tipologiaId || a.tipologia); }
         rows.push({ piso: p.numero, apto: a.nombre, el: nombre, cant: el.cantidad || 1, precio, total: precio * (el.cantidad || 1), inst: inst?.nombre || "—", fecha: el.fecha || "" });
       });
     }));
@@ -1872,7 +1893,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra }) {
         const elem = elems.find(e => e.id === el.elementoId);
         let nombre, precio, adj = false, apr = true;
         if (el.esAdicional) { nombre = `[Ad] ${el.descripcion}`; precio = el.valorUnitario || 0; }
-        else { nombre = elem?.nombre || el.elementoId; precio = getPrecio(el.elementoId, o.id, "", a.id); }
+        else { nombre = elem?.nombre || el.elementoId; precio = getPrecio(el.elementoId, o.id, "", a.id, el.tipologiaId || a.tipologia); }
         rows.push({ obra: o.nombre, apto: a.nombre, el: nombre, cant: el.cantidad || 1, precio, total: precio * (el.cantidad || 1), fecha: el.fecha || "", adj, apr });
       });
       (a.elementosExtra || []).forEach(el => {
