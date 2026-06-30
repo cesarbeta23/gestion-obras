@@ -1989,6 +1989,97 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra }) {
     return { inst, rows, bruto, ret, sub, pas, bon, total: sub + pas + bon };
   }
 
+  function pdfResumen(data) {
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 40;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(15);
+    doc.text("Resumen por obra", margin, 50);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(90);
+    doc.text("Gestión de Obras", margin, 66); doc.setTextColor(0);
+    autoTable(doc, {
+      startY: 80,
+      head: [["Obra", "Aptos", "Avance", "Completados", "Total pagado"]],
+      body: data.map(d => [d.obra.nombre, String(d.tot), `${d.av}%`, String(d.completados), fmt(d.totalPago)]),
+      margin: { left: margin, right: margin },
+      styles: { fontSize: 9, cellPadding: 5, overflow: "linebreak" },
+      headStyles: { fillColor: [234, 88, 12], textColor: 255, fontStyle: "bold" },
+      columnStyles: { 1: { halign: "center" }, 2: { halign: "center" }, 3: { halign: "center" }, 4: { halign: "right", fontStyle: "bold" } },
+      didDrawPage: () => { doc.setFontSize(8); doc.setTextColor(150); doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageW - margin, pageH - 20, { align: "right" }); doc.setTextColor(0); },
+    });
+    doc.save("Resumen_por_obra.pdf");
+  }
+
+  function pdfDetalleObra(o, rows) {
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 40;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(15);
+    doc.text(`Detalle — ${o?.nombre || "—"}`, margin, 50);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(90);
+    doc.text(o?.direccion || "", margin, 66); doc.setTextColor(0);
+    autoTable(doc, {
+      startY: 80,
+      head: [["Piso", "Apto", "Elemento", "Cant.", "Precio", "Total", "Instalador", "Fecha"]],
+      body: rows.map(r => [String(r.piso ?? ""), r.apto || "", r.el || "", String(r.cant ?? 1), fmt(r.precio || 0), fmt(r.total || 0), r.inst || "—", r.fecha || ""]),
+      margin: { left: margin, right: margin },
+      styles: { fontSize: 7.5, cellPadding: 3, overflow: "linebreak" },
+      headStyles: { fillColor: [234, 88, 12], textColor: 255, fontStyle: "bold" },
+      columnStyles: { 3: { halign: "center" }, 4: { halign: "right" }, 5: { halign: "right", fontStyle: "bold" } },
+      didDrawPage: () => { doc.setFontSize(8); doc.setTextColor(150); doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageW - margin, pageH - 20, { align: "right" }); doc.setTextColor(0); },
+    });
+    const slug = s => (s || "").toString().replace(/[^\w]+/g, "_");
+    doc.save(`Detalle_${slug(o?.nombre)}.pdf`);
+  }
+
+  function pdfInstalador(inst, rows, res) {
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 40;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(15);
+    doc.text(inst?.nombre || "—", margin, 50);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(90);
+    doc.text(`C.C. ${inst?.cedula || "-"}   ·   Tel: ${inst?.telefono || "-"}`, margin, 66);
+    doc.text(`${inst?.banco || "-"} ${inst?.cuenta || ""}`.trim(), margin, 79); doc.setTextColor(0);
+    const body = rows.filter(r => !r.adj || r.apr).map(r => [
+      r.obra || "", r.apto || "", r.el || "", String(r.cant ?? 1), fmt(r.precio || 0), fmt((r.precio || 0) * (r.cant || 1)),
+    ]);
+    autoTable(doc, {
+      startY: 92,
+      head: [["Obra", "Apto", "Elemento", "Cant.", "P. unit.", "Total"]],
+      body,
+      margin: { left: margin, right: margin },
+      styles: { fontSize: 8, cellPadding: 4, overflow: "linebreak" },
+      headStyles: { fillColor: [234, 88, 12], textColor: 255, fontStyle: "bold" },
+      columnStyles: { 3: { halign: "center", cellWidth: 40 }, 4: { halign: "right", cellWidth: 70 }, 5: { halign: "right", cellWidth: 78, fontStyle: "bold" } },
+      didDrawPage: () => { doc.setFontSize(8); doc.setTextColor(150); doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageW - margin, pageH - 20, { align: "right" }); doc.setTextColor(0); },
+    });
+    const resumen = [
+      ["Total bruto", fmt(res.bruto)],
+      ["Retención 10%", `- ${fmt(res.ret)}`],
+      ["Subtotal", fmt(res.sub)],
+      ...(res.pas > 0 ? [["Pasajes", fmt(res.pas)]] : []),
+      ...(res.bon > 0 ? [["Bonificación", fmt(res.bon)]] : []),
+      ["Total a pagar", fmt(res.total)],
+    ];
+    const totW = 240;
+    autoTable(doc, {
+      startY: doc.lastAutoTable.finalY + 18,
+      body: resumen,
+      theme: "plain",
+      margin: { left: pageW - margin - totW },
+      tableWidth: totW,
+      styles: { fontSize: 10, cellPadding: 3 },
+      columnStyles: { 0: { textColor: 80 }, 1: { halign: "right", fontStyle: "bold" } },
+      didParseCell: (data) => { if (data.row.index === resumen.length - 1) { data.cell.styles.fontStyle = "bold"; data.cell.styles.fontSize = 12; data.cell.styles.textColor = [22, 101, 52]; } },
+    });
+    const slug = s => (s || "").toString().replace(/[^\w]+/g, "_");
+    doc.save(`Reporte_${slug(inst?.nombre)}.pdf`);
+  }
+
   const thSt = { padding: "8px 10px", textAlign: "left", fontWeight: 700, color: C.g5, borderBottom: `2px solid ${C.g2}`, fontSize: 11, textTransform: "uppercase", letterSpacing: ".04em" };
   const tdSt = { padding: "7px 10px", borderBottom: `1px solid ${C.g1}` };
 
@@ -2008,12 +2099,16 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra }) {
               <span style={{ ...bdg("orange"), marginTop: 6, display: "inline-block" }}>Gestión de Obras</span>
             </div>
             {expM.tabla}
-            <div style={{ marginTop: 12, display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <Btn onClick={() => window.print()}>Imprimir</Btn>
-            </div>
           </div>
         )}
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}><Btn onClick={() => setExpM(null)}>Cerrar</Btn></div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+          {expM.tipo === "pdf" && <Btn variant="primary" onClick={() => {
+            if (expM.kind === "resumen") pdfResumen(expM.data);
+            else if (expM.kind === "detalle") pdfDetalleObra(expM.obra, expM.rows);
+            else if (expM.kind === "instalador") pdfInstalador(expM.inst, expM.rows, expM.res);
+          }}>Descargar PDF</Btn>}
+          <Btn onClick={() => setExpM(null)}>Cerrar</Btn>
+        </div>
       </Modal>}
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -2036,7 +2131,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra }) {
           <div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginBottom: 14 }}>
               <Btn variant="success" onClick={() => setExpM({ tipo: "excel", txt: excelTxt })}>Excel</Btn>
-              <Btn variant="primary" onClick={() => setExpM({ tipo: "pdf", titulo: "Resumen por obra", tabla: pdfTabla })}>PDF</Btn>
+              <Btn variant="primary" onClick={() => setExpM({ tipo: "pdf", kind: "resumen", titulo: "Resumen por obra", tabla: pdfTabla, data })}>PDF</Btn>
             </div>
             <div style={card}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
@@ -2069,7 +2164,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra }) {
               <div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginBottom: 14 }}>
                   <Btn variant="success" onClick={() => setExpM({ tipo: "excel", txt: excelTxt })}>Excel</Btn>
-                  <Btn variant="primary" onClick={() => setExpM({ tipo: "pdf", titulo: `Detalle — ${o?.nombre}`, tabla: pdfTabla })}>PDF</Btn>
+                  <Btn variant="primary" onClick={() => setExpM({ tipo: "pdf", kind: "detalle", titulo: `Detalle — ${o?.nombre}`, tabla: pdfTabla, obra: o, rows })}>PDF</Btn>
                 </div>
                 <div style={card}>
                   {rows.length === 0 ? <p style={{ color: C.g4, fontSize: 14 }}>Sin instalaciones registradas.</p> : (
@@ -2112,7 +2207,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra }) {
               <div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginBottom: 14 }}>
                   <Btn variant="success" onClick={() => setExpM({ tipo: "excel", txt: excelTxt })}>Excel</Btn>
-                  <Btn variant="primary" onClick={() => setExpM({ tipo: "pdf", titulo: `Reporte — ${inst?.nombre}`, tabla: pdfTabla })}>PDF</Btn>
+                  <Btn variant="primary" onClick={() => setExpM({ tipo: "pdf", kind: "instalador", titulo: `Reporte — ${inst?.nombre}`, tabla: pdfTabla, inst, rows, res: { bruto, ret, sub, pas, bon, total } })}>PDF</Btn>
                 </div>
                 <div style={card}>
                   <div style={{ marginBottom: 12 }}>
