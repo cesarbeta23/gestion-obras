@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 const SUPA_URL = "https://kboumpkcrdeuteiiodjp.supabase.co";
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtib3VtcGtjcmRldXRlaWlvZGpwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2ODA2MTQsImV4cCI6MjA5NDI1NjYxNH0.gTjqSnxI8F7ozcLSWB2rCDexP7ubgX1fwG2uOM3L0rI";
@@ -1601,6 +1603,77 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
     return [`Liquidación — ${inst.nombre} (C.C. ${inst.cedula}) — ${corte.label}`, `Tel: ${inst.telefono || "-"} | Banco: ${inst.banco || "-"} | Cta: ${inst.cuenta || "-"}`, "", ["Obra", "Apto", "Elemento", "Cant.", "Precio", "Total", "Fecha"].join("\t"), ...rows.map(r => [r.obra, r.apto, r.el, r.cant, r.precio, r.precio * r.cant, r.fecha].join("\t")), "", `Bruto\t\t\t\t\t${res.bruto}`, `Retención 10%\t\t\t\t\t-${res.ret}`, `Subtotal\t\t\t\t\t${res.sub}`, res.pas > 0 ? `Pasajes\t\t\t\t\t${res.pas}` : "", res.bon > 0 ? `Bonificación\t\t\t\t\t${res.bon}` : "", `TOTAL\t\t\t\t\t${res.total}`].filter(x => x !== undefined).join("\n");
   }
 
+  function descargarPDF(inst, rows, res) {
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 40;
+
+    // ── Encabezado ──
+    doc.setFont("helvetica", "bold"); doc.setFontSize(15);
+    doc.text(inst.nombre || "—", margin, 50);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(90);
+    doc.text(`C.C. ${inst.cedula || "-"}   ·   Tel: ${inst.telefono || "-"}`, margin, 66);
+    doc.text(`${inst.banco || "-"} ${inst.cuenta || ""}`.trim(), margin, 79);
+    doc.setFont("helvetica", "bold"); doc.setTextColor(234, 88, 12);
+    doc.text(`Corte: ${corte.label}`, margin, 95);
+    doc.setTextColor(0);
+
+    // ── Tabla de filas (paginación automática) ──
+    const body = rows.filter(r => !r.adj || r.apr).map(r => [
+      r.obra || "", r.apto || "", r.el || "",
+      String(r.cant ?? 1), fmt(r.precio || 0), fmt((r.precio || 0) * (r.cant || 1)),
+    ]);
+    autoTable(doc, {
+      startY: 108,
+      head: [["Obra", "Apto", "Elemento", "Cant.", "P. unit.", "Total"]],
+      body,
+      margin: { left: margin, right: margin },
+      styles: { fontSize: 8, cellPadding: 4, overflow: "linebreak" },
+      headStyles: { fillColor: [234, 88, 12], textColor: 255, fontStyle: "bold" },
+      columnStyles: {
+        3: { halign: "center", cellWidth: 40 },
+        4: { halign: "right", cellWidth: 70 },
+        5: { halign: "right", cellWidth: 78, fontStyle: "bold" },
+      },
+      didDrawPage: () => {
+        doc.setFontSize(8); doc.setTextColor(150);
+        doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageW - margin, pageH - 20, { align: "right" });
+        doc.setTextColor(0);
+      },
+    });
+
+    // ── Resumen de totales (alineado a la derecha; pagina solo si no cabe) ──
+    const resumen = [
+      ["Total bruto", fmt(res.bruto)],
+      ["Retención 10%", `- ${fmt(res.ret)}`],
+      ["Subtotal", fmt(res.sub)],
+      ...(res.pas > 0 ? [["Pasajes", fmt(res.pas)]] : []),
+      ...(res.bon > 0 ? [["Bonificación", fmt(res.bon)]] : []),
+      ["Total a pagar", fmt(res.total)],
+    ];
+    const totW = 240;
+    autoTable(doc, {
+      startY: doc.lastAutoTable.finalY + 18,
+      body: resumen,
+      theme: "plain",
+      margin: { left: pageW - margin - totW },
+      tableWidth: totW,
+      styles: { fontSize: 10, cellPadding: 3 },
+      columnStyles: { 0: { textColor: 80 }, 1: { halign: "right", fontStyle: "bold" } },
+      didParseCell: (data) => {
+        if (data.row.index === resumen.length - 1) {   // fila "Total a pagar"
+          data.cell.styles.fontStyle = "bold";
+          data.cell.styles.fontSize = 12;
+          data.cell.styles.textColor = [22, 101, 52];
+        }
+      },
+    });
+
+    const slug = s => (s || "").toString().replace(/[^\w]+/g, "_");
+    doc.save(`Liquidacion_${slug(inst.nombre)}_${slug(corte.label)}.pdf`);
+  }
+
   return (
     <div>
       {expM && <Modal title={expM.tipo === "pdf" ? "Reporte" : "Excel — Copiar"} onClose={() => setExpM(null)} wide>
@@ -1624,7 +1697,10 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
           <textarea readOnly value={expM.txt} style={{ width: "100%", height: 260, fontFamily: "monospace", fontSize: 12, padding: 12, borderRadius: 8, border: `1px solid ${C.g2}`, background: C.g0, boxSizing: "border-box", resize: "vertical" }} onFocus={e => e.target.select()} />
           <p style={{ fontSize: 12, color: C.g4, margin: "8px 0 0" }}>Clic en el área → Ctrl+A → Ctrl+C</p>
         </div>)}
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}><Btn onClick={() => setExpM(null)}>Cerrar</Btn></div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+          {expM.tipo === "pdf" && <Btn variant="primary" onClick={() => descargarPDF(expM.inst, expM.rows, expM.res)}>Descargar PDF</Btn>}
+          <Btn onClick={() => setExpM(null)}>Cerrar</Btn>
+        </div>
       </Modal>}
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
