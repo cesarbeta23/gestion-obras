@@ -1208,22 +1208,24 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const togglePend = idx => { if (!canToggle(idx)) return; setPend(p => { const c = { ...p }; if (c[idx] !== undefined) delete c[idx]; else c[idx] = true; return c; }); };
 
   async function guardar() {
-    // Atribución de instalador al marcar (solo cambia para SA/SV; IN siempre usa su propio id):
-    //  - 2+ asignados: el seleccionado en el dropdown (o el primero por defecto)
-    //  - 1 asignado: ese instalador automáticamente
-    //  - 0 asignados o no canEdit: el usuario actual
-    const instaladorPara = key => {
-      if (!canEdit) return user.id;
-      if (asignados.length >= 2) return instSel[key] ?? asignados[0];
-      if (asignados.length === 1) return asignados[0];
-      return user.id;
-    };
     updateObra(obra.id, o => ({
       ...o, pisos: o.pisos.map(p => {
         if (p.id !== piso.id) return p;
         return {
           ...p, aptos: p.aptos.map(a => {
             if (a.id !== apto.id) return a;
+            // Atribución de instalador al marcar (solo cambia para SA/SV; IN siempre usa su propio id).
+            // Se deriva de "a" fresco (no del closure del render) para evitar quedar vacío:
+            //  - 2+ asignados: el seleccionado en el dropdown (o el primero por defecto)
+            //  - 1 asignado: ese instalador automáticamente
+            //  - 0 asignados o no canEdit: el usuario actual
+            const asignadosA = a.instaladoresAsignados || (a.instaladorAsignado ? [a.instaladorAsignado] : []);
+            const instaladorPara = key => {
+              if (!canEdit) return user.id;
+              if (asignadosA.length >= 2) return instSel[key] ?? asignadosA[0];
+              if (asignadosA.length === 1) return asignadosA[0];
+              return user.id;
+            };
             const newEls = a.elementos.map((el, i) => {
               let u = { ...el };
               if (cnts[i] !== undefined) u.cantidad = cnts[i];
