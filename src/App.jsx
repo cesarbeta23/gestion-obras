@@ -1193,7 +1193,7 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const [pend, setPend] = useState({});
   const [cnts, setCnts] = useState({});
   const [instSel, setInstSel] = useState({});
-  const [nAd, setNAd] = useState({ desc: "", cant: 1, val: 0 });
+  const [nAd, setNAd] = useState({ desc: "", cant: 1, val: 0, inst: "" });
   const [addAd, setAddAd] = useState(false);
   // ARREGLO 3: estado para precios individuales por elemento en este apto
   const [precIndM, setPrecIndM] = useState(false);
@@ -1229,7 +1229,8 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
             const newEls = a.elementos.map((el, i) => {
               let u = { ...el };
               if (cnts[i] !== undefined) u.cantidad = cnts[i];
-              if (pend[i]) { u.completado = true; u.instaladorId = instaladorPara(i); u.fecha = new Date().toLocaleDateString("es-CO"); }
+              // Un adicional ya trae instalador atribuido desde su creación (ver guardarAd): respetarlo.
+              if (pend[i]) { u.completado = true; u.instaladorId = (el.esAdicional && el.instaladorId) ? el.instaladorId : instaladorPara(i); u.fecha = new Date().toLocaleDateString("es-CO"); }
               return u;
             });
             // Pasajes/bonificación ya no viven en el apto (se editan en Liquidación, en user.ajustes).
@@ -1256,9 +1257,20 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
 
   async function guardarAd() {
     if (!nAd.desc || !nAd.val) return;
-    const el = { elementoId: `__ad__${Date.now()}`, descripcion: nAd.desc, cantidad: Number(nAd.cant), valorUnitario: Number(nAd.val), completado: false, instaladorId: null, fecha: null, esAdicional: true, aprobado: false };
-    updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: [...(a.elementos || []), el] }) }) }));
-    setNAd({ desc: "", cant: 1, val: 0 }); setAddAd(false); toast("Adicional agregado", "ok");
+    updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => {
+      if (a.id !== apto.id) return a;
+      // Atribución del adicional, derivada de "a" fresco (no del closure del render):
+      //  - 2+ asignados: el seleccionado en el dropdown (o el primero por defecto), para cualquier rol
+      //  - 1 asignado: ese instalador automáticamente
+      //  - 0 asignados: el usuario actual
+      const asignadosA = a.instaladoresAsignados || (a.instaladorAsignado ? [a.instaladorAsignado] : []);
+      const instaladorId = asignadosA.length >= 2 ? (nAd.inst || asignadosA[0])
+        : asignadosA.length === 1 ? asignadosA[0]
+        : user.id;
+      const el = { elementoId: `__ad__${Date.now()}`, descripcion: nAd.desc, cantidad: Number(nAd.cant), valorUnitario: Number(nAd.val), completado: false, instaladorId, fecha: null, esAdicional: true, aprobado: false };
+      return { ...a, elementos: [...(a.elementos || []), el] };
+    }) }) }));
+    setNAd({ desc: "", cant: 1, val: 0, inst: "" }); setAddAd(false); toast("Adicional agregado", "ok");
   }
   const elimAd = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.filter((_, i) => i !== idx) }) }) }));
 
@@ -1364,6 +1376,11 @@ const totLiq = totNorm + totAd + totExtra;
             <Inp label="Cantidad" type="number" min="0.1" step="0.1" value={nAd.cant} onChange={e => setNAd(n => ({ ...n, cant: e.target.value }))} />
             <Inp label="Valor unitario ($)" type="number" min="0" value={nAd.val} onChange={e => setNAd(n => ({ ...n, val: e.target.value }))} />
           </div>
+          {asignados.length >= 2 && (
+            <Sel label="Instalador" value={nAd.inst || asignados[0]} onChange={e => setNAd(n => ({ ...n, inst: e.target.value }))}>
+              {asignados.map(id => { const u = users.find(x => x.id === id); return <option key={id} value={id}>{u?.nombre || id}</option>; })}
+            </Sel>
+          )}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: 13, color: C.gnD, fontWeight: 700 }}>Total: {fmt(Number(nAd.cant) * Number(nAd.val))}</span>
             <div style={{ display: "flex", gap: 8 }}><Btn onClick={() => setAddAd(false)}>Cancelar</Btn><Btn variant="primary" onClick={guardarAd}>Guardar</Btn></div>
