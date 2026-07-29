@@ -1542,14 +1542,19 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
 
   function detalle(iid, d, h) {
     const rows = [];
-    obras.forEach(o => o.pisos?.forEach(p => p.aptos?.forEach(a => a.elementos?.forEach(el => {
+    const proc = (o, a, el, esExtra) => {
       if (el.completado && el.instaladorId === iid && enCorte(el.fecha, d, h)) {
         if (el.elementoId === "__pasajes__" || el.elementoId === "__bonificacion__") return; // migrados a user.ajustes
         if (el.esAdicional) { rows.push({ obra: o.nombre, apto: a.nombre, el: `[Adicional] ${el.descripcion}`, cant: el.cantidad || 1, precio: el.valorUnitario || 0, fecha: el.fecha, adj: false, apr: true }); return; }
         const elem = elems.find(e => e.id === el.elementoId);
-        rows.push({ obra: o.nombre, apto: a.nombre, el: elem?.nombre, cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label, a.id, el.tipologiaId || a.tipologia), fecha: el.fecha, adj: false, apr: true });
+        const tip = esExtra ? el.tipologiaId : (el.tipologiaId || a.tipologia);
+        rows.push({ obra: o.nombre, apto: a.nombre, el: elem?.nombre, cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label, a.id, tip), fecha: el.fecha, adj: false, apr: true });
       }
-    }))));
+    };
+    obras.forEach(o => o.pisos?.forEach(p => p.aptos?.forEach(a => {
+      a.elementos?.forEach(el => proc(o, a, el, false));
+      a.elementosExtra?.forEach(el => proc(o, a, el, true));
+    })));
     return rows;
   }
 
