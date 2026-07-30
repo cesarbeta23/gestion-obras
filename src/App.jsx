@@ -9,6 +9,19 @@ const dbGet = async t => (await fetch(`${SUPA_URL}/rest/v1/${t}?select=*`, { hea
 const dbUpsert = async (t, d) => fetch(`${SUPA_URL}/rest/v1/${t}`, { method: "POST", headers: { ...H, "Prefer": "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(d) });
 const dbDel = async (t, id) => fetch(`${SUPA_URL}/rest/v1/${t}?id=eq.${id}`, { method: "DELETE", headers: H });
 
+// ── Frontera DB↔app para "liquidaciones" ──────────────────
+// La tabla usa nombres largos (retencion/subtotal/pasajes/bonificacion); la UI usa los cortos
+// (ret/sub/pas/bon). Todo el mapeo vive acá para que ningún componente conozca las columnas.
+// pendAdj es estado de UI y no se persiste.
+const liqToDb = l => ({
+  id: l.id, inst_id: l.inst_id, inst_nombre: l.inst_nombre, inst_cedula: l.inst_cedula,
+  inst_telefono: l.inst_telefono, inst_banco: l.inst_banco, inst_cuenta: l.inst_cuenta,
+  corte: l.corte, fecha_cierre: l.fecha_cierre, cerrado_por: l.cerrado_por, estado: l.estado,
+  bruto: l.bruto, retencion: l.ret, subtotal: l.sub, pasajes: l.pas, bonificacion: l.bon,
+  total: l.total, rows: l.rows,
+});
+const mapLiq = r => ({ ...r, ret: r.retencion ?? 0, sub: r.subtotal ?? 0, pas: r.pasajes ?? 0, bon: r.bonificacion ?? 0 });
+
 const ROLES = { SA: "superadmin", SV: "supervisor", AX: "auxiliar", IN: "instalador" };
 
 const C = {
@@ -211,7 +224,7 @@ export default function App() {
       if (!u.length) { await Promise.all(USUARIOS_DEF.map(x => dbUpsert("usuarios", x))); setUsers(USUARIOS_DEF); } else setUsers(u);
       if (!e.length) { await Promise.all(ELEMENTOS_DEF.map(x => dbUpsert("elementos", x))); setElems(ELEMENTOS_DEF); } else setElems(e);
       setObras(o.map(mapObra));
-      setLiqs(l);
+      setLiqs(l.map(mapLiq));
     } catch (e) { toast("Error conectando", "error"); }
     setLoading(false);
   }
@@ -1588,9 +1601,24 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
   }
 
   async function cerrar(inst) {
-    const { rows, ...res } = resumen(inst.id);
-    const l = { id: `l${Date.now()}${inst.id}`, inst_id: inst.id, inst_nombre: inst.nombre, inst_cedula: inst.cedula, inst_telefono: inst.telefono, inst_banco: inst.banco, inst_cuenta: inst.cuenta, corte: corte.label, fecha_cierre: new Date().toLocaleDateString("es-CO"), cerrado_por: user.nombre, rows, ...res, estado: "pagado" };
-    await dbUpsert("liquidaciones", l); setLiqs(x => [...x, l]);
+    // pendAdj no se destructura: es estado de UI, no columna.
+    const { rows, bruto, ret, sub, pas, bon, total } = resumen(inst.id);
+    const l = {
+      id: `l${Date.now()}${inst.id}`,
+      inst_id: inst.id, inst_nombre: inst.nombre, inst_cedula: inst.cedula,
+      inst_telefono: inst.telefono, inst_banco: inst.banco, inst_cuenta: inst.cuenta,
+      corte: corte.label, fecha_cierre: new Date().toLocaleDateString("es-CO"),
+      cerrado_por: user.nombre, estado: "pagado",
+      bruto, ret, sub, pas, bon, total, rows,
+    };
+    const r = await dbUpsert("liquidaciones", liqToDb(l));
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      toast(`No se pudo cerrar la liquidación (${r.status}). ${txt.slice(0, 140)}`, "error");
+      return;
+    }
+    setLiqs(x => [...x, l]);
+    toast("Liquidación cerrada", "ok");
   }
 
   const cerrada = iid => liqs.some(l => l.inst_id === iid && l.corte === corte.label);
@@ -1838,7 +1866,12 @@ function Historial({ liqs, setLiqs, user, users, toast }) {
   async function guardarEdicion() {
     const totales = recalcTotales(editRows);
     const updated = { ...editL, rows: editRows, ...totales };
-    await dbUpsert("liquidaciones", updated);
+    const r = await dbUpsert("liquidaciones", liqToDb(updated));
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      toast(`No se pudo guardar la liquidación (${r.status}). ${txt.slice(0, 140)}`, "error");
+      return;
+    }
     setLiqs(x => x.map(l => l.id === editL.id ? updated : l));
     setEditL(null);
     toast("Liquidación actualizada", "ok");
