@@ -1621,7 +1621,8 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
     toast("Liquidación cerrada", "ok");
   }
 
-  const cerrada = iid => liqs.some(l => l.inst_id === iid && l.corte === corte.label);
+  // .find (no .some): el objeto guardado es la fuente de verdad de una liq cerrada.
+  const cerrada = iid => liqs.find(l => l.inst_id === iid && l.corte === corte.label);
 
   // ── Pasajes/Bonificación por instalador+corte (viven en user.ajustes) ──
   const [ajTmp, setAjTmp] = useState({});  // buffer local; se confirma onBlur
@@ -1770,7 +1771,12 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
             <p style={{ fontSize: 12, color: C.g4, margin: "8px 0 0" }}>Del {corte.desde.toLocaleDateString("es-CO")} al {corte.hasta.toLocaleDateString("es-CO")}</p>
           </div>
           {INs.map(inst => {
-            const { rows, ...res } = resumen(inst.id); const cerr = cerrada(inst.id);
+            const cerr = cerrada(inst.id);
+            // Cerrada → snapshot inmutable de liqs. Abierta → recálculo desde obras.
+            // pendAdj:0 porque un ajuste pendiente ya no es accionable tras el cierre.
+            const { rows, ...res } = cerr
+              ? { rows: cerr.rows || [], bruto: cerr.bruto, ret: cerr.ret, sub: cerr.sub, pas: cerr.pas, bon: cerr.bon, total: cerr.total, pendAdj: 0 }
+              : resumen(inst.id);
             return <div key={inst.id} style={{ ...card, marginBottom: 16, borderLeft: `4px solid ${cerr ? C.gn : rows.length > 0 ? C.or : C.g2}` }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
                 <div>
@@ -1854,17 +1860,22 @@ function Historial({ liqs, setLiqs, user, users, toast }) {
   const totalPagado = items.reduce((s, l) => s + (l.total || 0), 0);
   const totalBruto = items.reduce((s, l) => s + (l.bruto || 0), 0);
 
-  function recalcTotales(rows) {
+  // Las filas persistidas nunca traen ajustes: detalle() las crea con adj:false y
+  // cerrar() guarda pas/bon aparte, desde user.ajustes. Sin filas adj se conservan
+  // los del snapshot (base) en vez de pisarlos con cero.
+  function recalcTotales(rows, base) {
     const bruto = rows.filter(r => !r.adj).reduce((s, r) => s + (r.precio || 0) * (r.cant || r.cantidad || 1), 0);
     const ret = Math.round(bruto * 0.1);
     const sub = bruto - ret;
-    const pas = rows.filter(r => r.adj && r.el === "Pasajes" && r.apr).reduce((s, r) => s + (r.precio || 0), 0);
-    const bon = rows.filter(r => r.adj && r.el === "Bonificación" && r.apr).reduce((s, r) => s + (r.precio || 0), 0);
+    const fPas = rows.filter(r => r.adj && r.el === "Pasajes" && r.apr);
+    const fBon = rows.filter(r => r.adj && r.el === "Bonificación" && r.apr);
+    const pas = fPas.length ? fPas.reduce((s, r) => s + (r.precio || 0), 0) : (base?.pas || 0);
+    const bon = fBon.length ? fBon.reduce((s, r) => s + (r.precio || 0), 0) : (base?.bon || 0);
     return { bruto, ret, sub, pas, bon, total: sub + pas + bon };
   }
 
   async function guardarEdicion() {
-    const totales = recalcTotales(editRows);
+    const totales = recalcTotales(editRows, editL);
     const updated = { ...editL, rows: editRows, ...totales };
     const r = await dbUpsert("liquidaciones", liqToDb(updated));
     if (!r.ok) {
@@ -1910,7 +1921,7 @@ function Historial({ liqs, setLiqs, user, users, toast }) {
             <Btn variant="primary" onClick={() => { if (!newRow.el || !Number(newRow.precio)) return; setEditRows(rows => [...rows, { el: newRow.el, cant: Number(newRow.cant), precio: Number(newRow.precio), adj: false, apr: true }]); setNewRow({ el: "", cant: 1, precio: 0 }); }}>+</Btn>
           </div>
         </div>
-        {(() => { const t = recalcTotales(editRows); return (
+        {(() => { const t = recalcTotales(editRows, editL); return (
           <div style={{ background: C.g0, borderRadius: 8, padding: "10px 14px", fontSize: 13, marginBottom: 14 }}>
             {[["Total bruto", t.bruto], ["Retención 10%", -t.ret], ["Subtotal", t.sub], t.pas > 0 ? ["Pasajes", t.pas] : null, t.bon > 0 ? ["Bonificación", t.bon] : null, ["Total a pagar", t.total]].filter(Boolean).map(([lb, v], i, a) => (
               <div key={lb} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontWeight: i === a.length - 1 ? 700 : 400, color: i === a.length - 1 ? C.gnD : C.bk }}><span>{lb}</span><span>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>
