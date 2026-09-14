@@ -1566,6 +1566,8 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
   const [ci, setCi] = useState(0);
   const [expM, setExpM] = useState(null);
   const [hist, setHist] = useState(false);
+  const [filtInst, setFiltInst] = useState("");
+  const [filtObra, setFiltObra] = useState("");
   const corte = cortes[ci];
   const INs = user.rol === ROLES.IN ? users.filter(u => u.id === user.id) : users.filter(u => u.rol === ROLES.IN);
   const canExp = [ROLES.SA, ROLES.SV, ROLES.AX].includes(user.rol);
@@ -1623,6 +1625,27 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
 
   // .find (no .some): el objeto guardado es la fuente de verdad de una liq cerrada.
   const cerrada = iid => liqs.find(l => l.inst_id === iid && l.corte === corte.label);
+
+  // Una sola pasada de filas por IN (snapshot si está cerrada, recálculo si no):
+  // la reusan los filtros y el render. [] en Historial para no calcular de más.
+  const datosPorIn = hist ? [] : INs.map(inst => {
+    const cerr = cerrada(inst.id);
+    // pendAdj:0 porque un ajuste pendiente ya no es accionable tras el cierre.
+    const { rows, ...res } = cerr
+      ? { rows: cerr.rows || [], bruto: cerr.bruto, ret: cerr.ret, sub: cerr.sub, pas: cerr.pas, bon: cerr.bon, total: cerr.total, pendAdj: 0 }
+      : resumen(inst.id);
+    return { inst, cerr, rows, res };
+  });
+
+  // Solo obras con trabajo real en este corte, no el catálogo completo de `obras`.
+  // Clave = nombre, porque es lo que guardan detalle() y el snapshot cerrado.
+  const obrasCorte = [...new Set(datosPorIn.flatMap(d => d.rows.map(r => r.obra)).filter(Boolean))].sort();
+
+  // AND: instalador Y obra. "" = sin filtrar.
+  const visibles = datosPorIn.filter(d =>
+    (!filtInst || d.inst.id === filtInst) &&
+    (!filtObra || d.rows.some(r => r.obra === filtObra))
+  );
 
   // ── Pasajes/Bonificación por instalador+corte (viven en user.ajustes) ──
   const [ajTmp, setAjTmp] = useState({});  // buffer local; se confirma onBlur
@@ -1756,9 +1779,25 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
         </div>
       </Modal>}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>Liquidación</h2>
-        <Btn onClick={() => setHist(!hist)} variant={hist ? "primary" : "default"}>{hist ? "Ver corte actual" : "Historial"}</Btn>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 8, marginBottom: -14 }}>
+          {!hist && user.rol !== ROLES.IN && <div style={{ width: 170 }}>
+            <Sel label="Instalador" value={filtInst} onChange={e => setFiltInst(e.target.value)}>
+              <option value="">Todos</option>
+              {INs.map(i => <option key={i.id} value={i.id}>{i.nombre}</option>)}
+            </Sel>
+          </div>}
+          {!hist && <div style={{ width: 170 }}>
+            <Sel label="Obra" value={filtObra} onChange={e => setFiltObra(e.target.value)}>
+              <option value="">Todas</option>
+              {obrasCorte.map(o => <option key={o} value={o}>{o}</option>)}
+            </Sel>
+          </div>}
+          <div style={{ marginBottom: 14 }}>
+            <Btn onClick={() => setHist(!hist)} variant={hist ? "primary" : "default"}>{hist ? "Ver corte actual" : "Historial"}</Btn>
+          </div>
+        </div>
       </div>
 
       {hist ? <Historial liqs={liqs} setLiqs={setLiqs} user={user} users={users} toast={toast} /> : (
@@ -1770,13 +1809,8 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
             </div>
             <p style={{ fontSize: 12, color: C.g4, margin: "8px 0 0" }}>Del {corte.desde.toLocaleDateString("es-CO")} al {corte.hasta.toLocaleDateString("es-CO")}</p>
           </div>
-          {INs.map(inst => {
-            const cerr = cerrada(inst.id);
-            // Cerrada → snapshot inmutable de liqs. Abierta → recálculo desde obras.
-            // pendAdj:0 porque un ajuste pendiente ya no es accionable tras el cierre.
-            const { rows, ...res } = cerr
-              ? { rows: cerr.rows || [], bruto: cerr.bruto, ret: cerr.ret, sub: cerr.sub, pas: cerr.pas, bon: cerr.bon, total: cerr.total, pendAdj: 0 }
-              : resumen(inst.id);
+          {visibles.length === 0 && (filtInst || filtObra) && <p style={{ fontSize: 13, color: C.g4 }}>Ningún instalador coincide con los filtros en este corte.</p>}
+          {visibles.map(({ inst, cerr, rows, res }) => {
             return <div key={inst.id} style={{ ...card, marginBottom: 16, borderLeft: `4px solid ${cerr ? C.gn : rows.length > 0 ? C.or : C.g2}` }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
                 <div>
