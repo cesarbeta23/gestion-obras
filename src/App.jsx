@@ -4,10 +4,14 @@ import autoTable from "jspdf-autotable";
 
 const SUPA_URL = "https://kboumpkcrdeuteiiodjp.supabase.co";
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtib3VtcGtjcmRldXRlaWlvZGpwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2ODA2MTQsImV4cCI6MjA5NDI1NjYxNH0.gTjqSnxI8F7ozcLSWB2rCDexP7ubgX1fwG2uOM3L0rI";
-const H = { "Content-Type": "application/json", "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}`, "Prefer": "return=representation" };
-const dbGet = async t => (await fetch(`${SUPA_URL}/rest/v1/${t}?select=*`, { headers: H })).json();
-const dbUpsert = async (t, d) => fetch(`${SUPA_URL}/rest/v1/${t}`, { method: "POST", headers: { ...H, "Prefer": "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(d) });
-const dbDel = async (t, id) => fetch(`${SUPA_URL}/rest/v1/${t}?id=eq.${id}`, { method: "DELETE", headers: H });
+// Pase de sesión que entrega /api/login. Con él la base sabe quién está pidiendo los datos.
+let _pase = null;
+const setPase = t => { _pase = t || null; };
+const H = () => ({ "Content-Type": "application/json", "apikey": SUPA_KEY, "Authorization": `Bearer ${_pase || SUPA_KEY}`, "Prefer": "return=representation" });
+const API = import.meta.env.DEV ? "http://localhost:3001" : "";
+const dbGet = async (t, sel = "*") => (await fetch(`${SUPA_URL}/rest/v1/${t}?select=${sel}`, { headers: H() })).json();
+const dbUpsert = async (t, d) => fetch(`${SUPA_URL}/rest/v1/${t}`, { method: "POST", headers: { ...H(), "Prefer": "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(d) });
+const dbDel = async (t, id) => fetch(`${SUPA_URL}/rest/v1/${t}?id=eq.${id}`, { method: "DELETE", headers: H() });
 
 // ── Frontera DB↔app para "liquidaciones" ──────────────────
 // La tabla usa nombres largos (retencion/subtotal/pasajes/bonificacion); la UI usa los cortos
@@ -141,53 +145,17 @@ const ELEMENTOS_DEF = [
   { id: "e17", nombre: "Zócalo", unidad: "ml", precio: 2500 },
 ];
 
-const USUARIOS_DEF = [
-  { id: "sa1", nombre: "César Betancur", rol: ROLES.SA, email: "cesar@obra.com", pin: "1111", cedula: "3113410458", telefono: "", banco: "", cuenta: "" },
-  { id: "sa2", nombre: "Sandra Marin", rol: ROLES.SA, email: "sandra@obra.com", pin: "2222", cedula: "3006903514", telefono: "", banco: "", cuenta: "" },
-  { id: "sa3", nombre: "Andres Londoño", rol: ROLES.SA, email: "andres@obra.com", pin: "3333", cedula: "3189180703", telefono: "", banco: "", cuenta: "" },
-  { id: "sa4", nombre: "Luz Toro", rol: ROLES.SA, email: "luz@obra.com", pin: "4444", cedula: "3046063039", telefono: "", banco: "", cuenta: "" },
-  { id: "ax1", nombre: "Lauren Zapata", rol: ROLES.AX, email: "lauren@obra.com", pin: "5555", cedula: "3180803364", telefono: "", banco: "", cuenta: "" },
-  { id: "i01", nombre: "Albeiro De Jesús Sanchez Alvarez", rol: ROLES.IN, email: "3366950@obra.com", pin: "6950", cedula: "3366950", telefono: "", banco: "", cuenta: "" },
-  { id: "i02", nombre: "Arnovis Enrique Romero Gaviria", rol: ROLES.IN, email: "10889524@obra.com", pin: "9524", cedula: "10889524", telefono: "", banco: "", cuenta: "" },
-  { id: "i03", nombre: "Alejandro Caballero Navas", rol: ROLES.IN, email: "1041894977@obra.com", pin: "4977", cedula: "1041894977", telefono: "", banco: "", cuenta: "" },
-  { id: "i04", nombre: "Andrés Polo Gomez", rol: ROLES.IN, email: "72238095@obra.com", pin: "8095", cedula: "72238095", telefono: "", banco: "", cuenta: "" },
-  { id: "i05", nombre: "Angie Guisela Gonzales Toro", rol: ROLES.IN, email: "32209550@obra.com", pin: "9550", cedula: "32209550", telefono: "", banco: "", cuenta: "" },
-  { id: "i06", nombre: "Carlos Albeiro Bedoya", rol: ROLES.IN, email: "98537380@obra.com", pin: "7380", cedula: "98537380", telefono: "", banco: "", cuenta: "" },
-  { id: "i07", nombre: "Claudia Marcela Uribe Lopez", rol: ROLES.IN, email: "1112765279@obra.com", pin: "5279", cedula: "1112765279", telefono: "", banco: "", cuenta: "" },
-  { id: "i08", nombre: "Claudia Patricia Higuita Muñoz", rol: ROLES.IN, email: "43164453@obra.com", pin: "4453", cedula: "43164453", telefono: "", banco: "", cuenta: "" },
-  { id: "i09", nombre: "Cristian Alexis Marin Gonzales", rol: ROLES.IN, email: "1015278020@obra.com", pin: "8020", cedula: "1015278020", telefono: "", banco: "", cuenta: "" },
-  { id: "i10", nombre: "Elfa Nataly Rueda Vargas", rol: ROLES.IN, email: "43991850@obra.com", pin: "1850", cedula: "43991850", telefono: "", banco: "", cuenta: "" },
-  { id: "i11", nombre: "Erika Baza Camacho", rol: ROLES.IN, email: "1096195897@obra.com", pin: "5897", cedula: "1096195897", telefono: "", banco: "", cuenta: "" },
-  { id: "i12", nombre: "Emiliano De Jesus Callejas Rios", rol: ROLES.IN, email: "70541496@obra.com", pin: "1496", cedula: "70541496", telefono: "", banco: "", cuenta: "" },
-  { id: "i13", nombre: "Greis Pola Jaraba Correa", rol: ROLES.IN, email: "1045691681@obra.com", pin: "1681", cedula: "1045691681", telefono: "", banco: "", cuenta: "" },
-  { id: "i14", nombre: "Harrison Martinez Lopez", rol: ROLES.IN, email: "1053796113@obra.com", pin: "6113", cedula: "1053796113", telefono: "", banco: "", cuenta: "" },
-  { id: "i15", nombre: "Jose Alfredo Taborda Marin", rol: ROLES.IN, email: "1033337255@obra.com", pin: "7255", cedula: "1033337255", telefono: "", banco: "", cuenta: "" },
-  { id: "i16", nombre: "José Gabriel Mesa Martínez", rol: ROLES.IN, email: "98642537@obra.com", pin: "2537", cedula: "98642537", telefono: "", banco: "", cuenta: "" },
-  { id: "i17", nombre: "Jose Luis Basanta Coa", rol: ROLES.IN, email: "1258625@obra.com", pin: "8625", cedula: "1258625", telefono: "", banco: "", cuenta: "" },
-  { id: "i18", nombre: "Jorge Leonardo Viloria Romero", rol: ROLES.IN, email: "1104413901@obra.com", pin: "3901", cedula: "1104413901", telefono: "", banco: "", cuenta: "" },
-  { id: "i19", nombre: "Juan Carlos Cardenas Vega", rol: ROLES.IN, email: "1098813472@obra.com", pin: "3472", cedula: "1098813472", telefono: "", banco: "", cuenta: "" },
-  { id: "i20", nombre: "Juan Martin Osorio Saldarriaga", rol: ROLES.IN, email: "71646955@obra.com", pin: "6955", cedula: "71646955", telefono: "", banco: "", cuenta: "" },
-  { id: "i21", nombre: "Kateryn Carmona", rol: ROLES.IN, email: "1214743439@obra.com", pin: "3439", cedula: "1214743439", telefono: "", banco: "", cuenta: "" },
-  { id: "i22", nombre: "Leder De Jesus Herrera Arrieta", rol: ROLES.IN, email: "1104410561@obra.com", pin: "0561", cedula: "1104410561", telefono: "", banco: "", cuenta: "" },
-  { id: "i23", nombre: "Leider Arturo Herrera Arrieta", rol: ROLES.IN, email: "1005677345@obra.com", pin: "7345", cedula: "1005677345", telefono: "", banco: "", cuenta: "" },
-  { id: "i24", nombre: "Leon Jaime Taborda Marin", rol: ROLES.IN, email: "1033339839@obra.com", pin: "9839", cedula: "1033339839", telefono: "", banco: "", cuenta: "" },
-  { id: "i25", nombre: "Luis Alberto Goez Goez", rol: ROLES.IN, email: "1152453118@obra.com", pin: "3118", cedula: "1152453118", telefono: "", banco: "", cuenta: "" },
-  { id: "i26", nombre: "Luis Felipe Meza Martinez", rol: ROLES.IN, email: "1148205348@obra.com", pin: "5348", cedula: "1148205348", telefono: "", banco: "", cuenta: "" },
-  { id: "i27", nombre: "Luis Fernando Aguirre Giraldo", rol: ROLES.IN, email: "71698074@obra.com", pin: "8074", cedula: "71698074", telefono: "", banco: "", cuenta: "" },
-  { id: "i28", nombre: "Maria Luz Dary Rincon", rol: ROLES.IN, email: "66916338@obra.com", pin: "6338", cedula: "66916338", telefono: "", banco: "", cuenta: "" },
-  { id: "i29", nombre: "Mario Lemus Arboleda", rol: ROLES.IN, email: "1001846248@obra.com", pin: "6248", cedula: "1001846248", telefono: "", banco: "", cuenta: "" },
-  { id: "i30", nombre: "Nelson Dario Correa Acosta", rol: ROLES.IN, email: "98527601@obra.com", pin: "7601", cedula: "98527601", telefono: "", banco: "", cuenta: "" },
-  { id: "i31", nombre: "Omar De Jesus Ortiz Montoya", rol: ROLES.IN, email: "98528420@obra.com", pin: "8420", cedula: "98528420", telefono: "", banco: "", cuenta: "" },
-  { id: "i32", nombre: "Oscar Mauricio Lopez", rol: ROLES.IN, email: "98538605@obra.com", pin: "8605", cedula: "98538605", telefono: "", banco: "", cuenta: "" },
-  { id: "i33", nombre: "Oved Dario Pulgarin", rol: ROLES.IN, email: "98693472@obra.com", pin: "3472", cedula: "98693472", telefono: "", banco: "", cuenta: "" },
-  { id: "i34", nombre: "Steve Brahayan Alvarez Reyes", rol: ROLES.IN, email: "PT1277581@obra.com", pin: "7581", cedula: "PT-1277581", telefono: "", banco: "", cuenta: "" },
-  { id: "i35", nombre: "Pedro Felix Moreno Cortes", rol: ROLES.IN, email: "98457089@obra.com", pin: "7089", cedula: "98457089", telefono: "", banco: "", cuenta: "" },
-  { id: "i36", nombre: "Robinson Alberto Orozco Muñoz", rol: ROLES.IN, email: "71386134@obra.com", pin: "6134", cedula: "71386134", telefono: "", banco: "", cuenta: "" },
-  { id: "i37", nombre: "Yefferson Sanchez Henao", rol: ROLES.IN, email: "1214720944@obra.com", pin: "0944", cedula: "1214720944", telefono: "", banco: "", cuenta: "" },
-];
+// La lista de usuarios vive solo en Supabase (antes estaba escrita aquí con cédulas y PIN).
 
 export default function App() {
-  const [user, setUser] = useState(() => { try { const s = localStorage.getItem("gs"); return s ? JSON.parse(s) : null; } catch { return null; } });
+  const [user, setUser] = useState(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem("gs") || "null");
+      if (!s?.token || !s?.exp || s.exp * 1000 < Date.now()) { localStorage.removeItem("gs"); return null; }
+      setPase(s.token);
+      return { ...s.user, _exp: s.exp };
+    } catch { return null; }
+  });
   const [obras, setObras] = useState([]);
   const [elems, setElems] = useState([]);
   const [users, setUsers] = useState([]);
@@ -220,15 +188,18 @@ export default function App() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [u, e, o, l] = await Promise.all([dbGet("usuarios"), dbGet("elementos"), dbGet("obras"), dbGet("liquidaciones")]);
-      if (!u.length) { await Promise.all(USUARIOS_DEF.map(x => dbUpsert("usuarios", x))); setUsers(USUARIOS_DEF); } else setUsers(u);
+      const [u, e, o, l] = await Promise.all([
+        dbGet("usuarios", "id,nombre,email,rol,cedula,telefono,banco,cuenta,ajustes"),   // sin PIN
+        dbGet("elementos"), dbGet("obras"), dbGet("liquidaciones"),
+      ]);
+      setUsers(u);
       if (!e.length) { await Promise.all(ELEMENTOS_DEF.map(x => dbUpsert("elementos", x))); setElems(ELEMENTOS_DEF); } else setElems(e);
       setObras(o.map(mapObra));
       setLiqs(l.map(mapLiq));
     } catch (e) { toast("Error conectando", "error"); }
     setLoading(false);
   }
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { if (user) loadAll(); }, [user]);
 
   const saveObra = async o => dbUpsert("obras", {
     id: o.id, nombre: o.nombre, direccion: o.direccion, estado: o.estado,
@@ -247,12 +218,21 @@ export default function App() {
     return updated;
   });
 
-  function doLogin() {
-    const u = users.find(x => x.email === login.email && x.pin === login.pin);
-    if (u) { setUser(u); localStorage.setItem("gs", JSON.stringify(u)); setLoginErr(""); }
-    else setLoginErr("Correo o PIN incorrecto");
+  async function doLogin() {
+    try {
+      const r = await fetch(`${API}/api/login`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: login.email, pin: login.pin }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data.token) { setLoginErr(data.error || "Correo o PIN incorrecto"); return; }
+      setPase(data.token);
+      localStorage.setItem("gs", JSON.stringify({ user: data.user, token: data.token, exp: data.exp }));
+      setUser({ ...data.user, _exp: data.exp });
+      setLoginErr("");
+    } catch { setLoginErr("Error de conexión"); }
   }
-  function doLogout() { setUser(null); localStorage.removeItem("gs"); }
+  function doLogout() { setPase(null); setUser(null); localStorage.removeItem("gs"); }
 
   // ARREGLO 3: getPrecio ahora también busca override por apto individual (key: aptoId__eid)
   const getPrecio = (eid, oid, corteLabel, aptoId, tipId) => {
@@ -2349,11 +2329,12 @@ function Usuarios({ users, setUsers, openM, closeM, modals }) {
   async function guardar() {
     if (!form.nombre || !form.email || (!editId && !form.pin)) return;
     const u = editId ? { ...users.find(x => x.id === editId), ...form } : { id: `u${Date.now()}`, ...form };
+    if (!form.pin) delete u.pin;   // PIN vacío = se deja el que ya tenía
     await dbUpsert("usuarios", u);
     if (editId) setUsers(x => x.map(y => y.id === editId ? u : y)); else setUsers(x => [...x, u]);
     setForm(emp); setEditId(null); closeM("usr");
   }
-  const editar = u => { setEditId(u.id); setForm({ nombre: u.nombre, email: u.email, rol: u.rol, pin: u.pin, cedula: u.cedula || "", telefono: u.telefono || "", banco: u.banco || "", cuenta: u.cuenta || "" }); openM("usr"); };
+  const editar = u => { setEditId(u.id); setForm({ nombre: u.nombre, email: u.email, rol: u.rol, pin: "", cedula: u.cedula || "", telefono: u.telefono || "", banco: u.banco || "", cuenta: u.cuenta || "" }); openM("usr"); };
 
   return (
     <div>
