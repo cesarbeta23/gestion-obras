@@ -191,7 +191,7 @@ export default function App() {
     setLoading(true);
     try {
       const [u, e, o, l] = await Promise.all([
-        dbGet("usuarios", "id,nombre,email,rol,cedula,telefono,banco,cuenta,ajustes"),   // sin PIN
+        dbGet("usuarios", "id,nombre,email,rol,oficio,cedula,telefono,banco,cuenta,ajustes"),   // sin PIN
         dbGet("elementos"), dbGet("obras"), dbGet("liquidaciones"),
       ]);
       setUsers(u);
