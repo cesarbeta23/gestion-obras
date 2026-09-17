@@ -633,6 +633,9 @@ function Obra({ obra, obras, updateObra, user, avanceApto, detListo, elems, user
   const [tipForm, setTipForm] = useState({ nombre: "", eids: [], cantidades: {}, precios: {} });
   const [editTip, setEditTip] = useState(null);
   const [delTipId, setDelTipId] = useState(null);
+  const [cambioMasivo, setCambioMasivo] = useState(null);   // { desde, hacia }
+  const [verGenerales, setVerGenerales] = useState(false);  // elementos viejos del catálogo global
+  const [buscaEl, setBuscaEl] = useState("");
   const [repModal, setRepModal] = useState(false);
   const [repSel, setRepSel] = useState({ reglas: [] });
   const [asign, setAsign] = useState(null);
@@ -753,6 +756,24 @@ const [dupPrecios, setDupPrecios] = useState({});
   toast("Tipología asignada", "ok");
   setAsign(null);
 }
+
+  // Cambia una tipología por otra en TODOS los aptos que la tengan.
+  // Los aptos quedan con los elementos de la tipología nueva, sin marcar.
+  function reemplazarTipologia(desdeId, haciaId) {
+    const tipNueva = tips.find(t => t.id === haciaId);
+    if (!tipNueva) return;
+    let n = 0;
+    updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => ({ ...p, aptos: p.aptos.map(a => {
+      if (a.tipologia !== desdeId) return a;
+      n++;
+      return { ...a, tipologia: haciaId, elementos: (tipNueva.elementoIds || []).map(eid => ({
+        elementoId: eid, completado: false, instaladorId: null, fecha: null,
+        cantidad: tipNueva.cantidades?.[eid] || 1,
+      })) };
+    }) })) }));
+    toast(`${n} apartamento(s) cambiados a ${tipNueva.nombre}`, "ok");
+    setCambioMasivo(null);
+  }
 
   function quitarTip(pisoId, aptoId, tipId) {
   updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : { ...p, aptos: p.aptos.map(a => {
@@ -931,6 +952,7 @@ const disponibles = misHabilitados.filter(a => {
                 <span onClick={() => abrirEditar(t)} style={{ cursor: "pointer", fontWeight: 700 }}>✎</span>
                 <span onClick={() => setDelTipId(t.id)} style={{ cursor: "pointer", fontWeight: 700, color: C.rd, marginLeft: 2 }}>🗑</span>
 <span onClick={() => { setDupTip(t); setDupPrecios({}); }} style={{ cursor: "pointer", fontWeight: 700, color: C.gnD, marginLeft: 2 }}>⧉</span>
+                <span title="Cambiar por otra en toda la obra" onClick={() => setCambioMasivo({ desde: t.id, hacia: "" })} style={{ cursor: "pointer", fontWeight: 700, color: C.bk, marginLeft: 2 }}>⇄</span>
               </>}
             </div>
           ))}
@@ -1068,6 +1090,30 @@ const disponibles = misHabilitados.filter(a => {
     }}>Crear tipología</Btn>
   </div>
 </Modal>}
+      {cambioMasivo && <Modal title="Cambiar tipología en toda la obra" onClose={() => setCambioMasivo(null)}>
+        {(() => {
+          const desde = tips.find(t => t.id === cambioMasivo.desde);
+          const cuantos = cur.pisos?.reduce((n, p) => n + (p.aptos?.filter(a => a.tipologia === cambioMasivo.desde).length || 0), 0) || 0;
+          return <>
+            <p style={{ fontSize: 14, marginBottom: 12 }}>
+              <strong>{desde?.nombre}</strong> está en <strong>{cuantos} apartamento(s)</strong>. Elegí por cuál se cambia:
+            </p>
+            <Sel label="Tipología nueva" value={cambioMasivo.hacia} onChange={e => setCambioMasivo(c => ({ ...c, hacia: e.target.value }))}>
+              <option value="">— Seleccionar —</option>
+              {tips.filter(t => t.id !== cambioMasivo.desde).map(t => <option key={t.id} value={t.id}>{t.nombre} · {t.elementoIds?.length || 0} elem.</option>)}
+            </Sel>
+            <div style={{ background: C.amL, border: "1px solid #FDE68A", borderRadius: 8, padding: "10px 14px", margin: "12px 0 16px", fontSize: 13, color: "#B45309" }}>
+              ⚠️ Esos apartamentos quedan con los elementos de la tipología nueva, <strong>sin marcar</strong>.
+              Lo que ya se pagó en cortes cerrados no se toca, pero lo marcado y no liquidado hay que volverlo a marcar.
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Btn onClick={() => setCambioMasivo(null)}>Cancelar</Btn>
+              <Btn variant="danger" disabled={!cambioMasivo.hacia} onClick={() => reemplazarTipologia(cambioMasivo.desde, cambioMasivo.hacia)}>Sí, cambiar {cuantos} apto(s)</Btn>
+            </div>
+          </>;
+        })()}
+      </Modal>}
+
       {delTipId && <Modal title="Eliminar tipología" onClose={() => setDelTipId(null)}>
         {(() => {
           const tip = tips.find(t => t.id === delTipId);
@@ -1119,15 +1165,38 @@ const disponibles = misHabilitados.filter(a => {
       {modals.tip && <Modal title={editTip ? "Editar tipología" : "Nueva tipología"} onClose={() => closeM("tip")}>
         <Inp label="Nombre" value={tipForm.nombre} onChange={e => setTipForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Ej: Tipo A — 3 alcobas" />
         <div style={{ marginBottom: 14 }}>
-          <label style={lbl()}>Elementos incluidos</label>
+          {(() => {
+            const propios = elems.filter(e => e.obra_id === obra.id && e.activo !== false).length;
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+                <label style={{ ...lbl(), marginBottom: 0 }}>Elementos incluidos</label>
+                <input placeholder="Buscar…" value={buscaEl} onChange={e => setBuscaEl(e.target.value)}
+                  style={{ flex: 1, minWidth: 140, padding: "6px 10px", border: `1px solid ${C.g2}`, borderRadius: 8, fontSize: 13 }} />
+                {propios > 0 && (
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.g5, cursor: "pointer" }}>
+                    <input type="checkbox" checked={verGenerales} onChange={e => setVerGenerales(e.target.checked)} />
+                    Ver elementos generales
+                  </label>
+                )}
+              </div>
+            );
+          })()}
           <div style={{ maxHeight: 260, overflowY: "auto", border: `1px solid ${C.g2}`, borderRadius: 8, padding: 8, background: C.wh }}>
-            {elems.filter(e => (e.activo !== false || tipForm.eids.includes(e.id))
-                && (!e.obra_id || e.obra_id === obra.id || tipForm.eids.includes(e.id)))
+            {(() => {
+              const hayPropios = elems.some(e => e.obra_id === obra.id && e.activo !== false);
+              const q = buscaEl.trim().toLowerCase();
+              return elems.filter(e =>
+                (e.activo !== false || tipForm.eids.includes(e.id)) &&
+                (!q || (e.nombre || "").toLowerCase().includes(q)) &&
+                (tipForm.eids.includes(e.id) ||                       // los ya elegidos siempre se ven
+                  (hayPropios && !verGenerales
+                    ? e.obra_id === obra.id                            // solo los de esta obra
+                    : (!e.obra_id || e.obra_id === obra.id))))
               .sort((a, b) => ((a.grupo || "Sin grupo") + a.nombre).localeCompare((b.grupo || "Sin grupo") + b.nombre))
               .map(e => <label key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", cursor: "pointer", fontSize: 14, borderRadius: 6, background: tipForm.eids.includes(e.id) ? C.orL : "transparent" }}>
               <input type="checkbox" checked={tipForm.eids.includes(e.id)} onChange={x => setTipForm(f => ({ ...f, eids: x.target.checked ? [...f.eids, e.id] : f.eids.filter(i => i !== e.id) }))} />
               <span style={{ flex: 1, color: C.bk }}>{e.nombre}<span style={{ fontSize: 11, color: C.g4, marginLeft: 6 }}>{e.grupo || "Sin grupo"}</span></span>
-              <span style={{ fontSize: 12, color: C.g4 }}>{e.unidad} · {fmt(e.precio)}</span>
+              <span style={{ fontSize: 12, color: C.g4 }}>{e.unidad} · {fmt(e.precio)}{Number(e.precio_detallado) ? ` + ${fmt(e.precio_detallado)}` : ""}</span>
               {tipForm.eids.includes(e.id) && (e.unidad === "ml" || e.unidad === "m2") && (
                 <input type="number" min="0.1" step="0.1" placeholder="Cant."
                   value={tipForm.cantidades?.[e.id] ?? ""}
@@ -1144,7 +1213,8 @@ const disponibles = misHabilitados.filter(a => {
                   style={{ width: 80, padding: "2px 6px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 12, textAlign: "right" }}
                 />
               )}
-            </label>)}
+            </label>);
+            })()}
           </div>
           <div style={{ fontSize: 12, color: C.g4, marginTop: 6 }}>{tipForm.eids.length} seleccionado(s)</div>
         </div>
@@ -1280,6 +1350,7 @@ const newElsExtra = (a.elementosExtra || []).map((el, i) => {
   let u = { ...el };
   if (cnts[`x${i}`] !== undefined) u.cantidad = cnts[`x${i}`];
   if (pend[`x${i}`]) { u.completado = true; u.instaladorId = instaladorPara(`x${i}`); u.fecha = new Date().toLocaleDateString("es-CO"); }
+  if (pend[`dx${i}`] && u.completado) { u.detCompletado = true; u.detId = detalladorPara(`dx${i}`); u.detFecha = new Date().toLocaleDateString("es-CO"); }
   return u;
 });
 return { ...a, elementos: final, elementosExtra: newElsExtra };
@@ -1506,36 +1577,41 @@ const totLiq = totNorm + totAd + totExtra;
     return <div key={tipId} style={{ marginBottom: 16 }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: C.bk, marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span>{tip?.nombre || "Tipología extra"}</span>
-        <span style={{ fontSize: 12, color: C.gnD, fontWeight: 600 }}>{fmt(elsDeEsta.filter(e => e.completado).reduce((s, el) => s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, tipId) * (el.cantidad || 1), 0))}</span>
+        <span style={{ fontSize: 12, color: C.gnD, fontWeight: 600 }}>{fmt(elsDeEsta.filter(e => esDet ? e.detCompletado : e.completado).reduce((s, el) => s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, tipId, esDet ? "det" : "inst") * (el.cantidad || 1), 0))}</span>
       </div>
       <div style={{ display: "grid", gap: 8 }}>
         {elsDeEsta.map((el, idx) => {
           const irx = curA.elementosExtra.indexOf(el);
           const elem = elems.find(e => e.id === el.elementoId);
-          const inst = users.find(u => u.id === el.instaladorId);
-          const eP = !!pend[`x${irx}`];
-          const marc = el.completado || eP;
-          const cT = !el.completado && canAct;
+          const hecho = esDet ? !!el.detCompletado : !!el.completado;
+          const inst = users.find(u => u.id === (esDet ? el.detId : el.instaladorId));
+          const cuando = esDet ? el.detFecha : el.fecha;
+          const kx = esDet ? `dx${irx}` : `x${irx}`;
+          const eP = !!pend[kx];
+          const marc = hecho || eP;
+          const esperaInst = esDet && !el.completado;
+          const cT = canAct && (esDet ? (!!el.completado && !el.detCompletado) : !el.completado);
           const ca = cnts[`x${irx}`] ?? el.cantidad ?? 1;
-          const precio = getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, tipId);
-          return <div key={irx} onClick={() => { if (!cT) return; setPend(p => { const c = {...p}; if (c[`x${irx}`] !== undefined) delete c[`x${irx}`]; else c[`x${irx}`] = true; return c; }); }} style={{ display: "flex", alignItems: "center", gap: 12, background: el.completado ? C.gnL : eP ? C.orL : C.wh, border: `1.5px solid ${el.completado ? "#BBF7D0" : eP ? C.orM : C.g2}`, borderRadius: 10, padding: "12px 14px", cursor: cT ? "pointer" : "default" }}>
-            <div style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0, border: `2.5px solid ${el.completado ? C.gn : eP ? C.or : C.g3}`, background: el.completado ? C.gn : eP ? C.or : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          const precio = getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, tipId, esDet ? "det" : "inst");
+          return <div key={irx} onClick={() => { if (!cT) return; setPend(p => { const c = {...p}; if (c[kx] !== undefined) delete c[kx]; else c[kx] = true; return c; }); }} style={{ display: "flex", alignItems: "center", gap: 12, opacity: esperaInst ? .55 : 1, background: hecho ? C.gnL : eP ? C.orL : C.wh, border: `1.5px solid ${hecho ? "#BBF7D0" : eP ? C.orM : C.g2}`, borderRadius: 10, padding: "12px 14px", cursor: cT ? "pointer" : "default" }}>
+            <div style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0, border: `2.5px solid ${hecho ? C.gn : eP ? C.or : C.g3}`, background: hecho ? C.gn : eP ? C.or : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
               {marc && <span style={{ color: C.wh, fontSize: 14, fontWeight: 700 }}>✓</span>}
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, fontSize: 14, color: el.completado ? C.gnD : eP ? C.orD : C.bk }}>{elem?.nombre || el.elementoId}</div>
-              {el.completado && inst && <div style={{ fontSize: 12, color: C.gnD }}>{inst.nombre} · {el.fecha}</div>}
+              <div style={{ fontWeight: 600, fontSize: 14, color: hecho ? C.gnD : eP ? C.orD : C.bk }}>{elem?.nombre || el.elementoId}</div>
+              {hecho && inst && <div style={{ fontSize: 12, color: C.gnD }}>{inst.nombre} · {cuando}</div>}
+              {esperaInst && <div style={{ fontSize: 12, color: C.g4 }}>Falta instalarlo</div>}
               {eP && <div style={{ fontSize: 12, color: C.orD }}>Pendiente de guardar</div>}
             </div>
-            {canEdit && asignados.length >= 2 && !el.completado && (
-              <select onClick={e => e.stopPropagation()} value={instSel[`x${irx}`] ?? asignados[0]} onChange={e => { e.stopPropagation(); setInstSel(s => ({ ...s, [`x${irx}`]: e.target.value })); }} style={{ fontSize: 12, padding: "4px 6px", border: `1px solid ${C.g2}`, borderRadius: 6, maxWidth: 130 }}>
+            {canEdit && asignados.length >= 2 && !hecho && (
+              <select onClick={e => e.stopPropagation()} value={instSel[kx] ?? asignados[0]} onChange={e => { e.stopPropagation(); setInstSel(s => ({ ...s, [kx]: e.target.value })); }} style={{ fontSize: 12, padding: "4px 6px", border: `1px solid ${C.g2}`, borderRadius: 6, maxWidth: 130 }}>
                 {asignados.map(id => { const u = users.find(x => x.id === id); return <option key={id} value={id}>{u?.nombre || id}</option>; })}
               </select>
             )}
             <div style={{ textAlign: "right", minWidth: 90 }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>{fmt(precio * ca)}</div>
             </div>
-            {canEdit && el.completado && <button onClick={e => { e.stopPropagation(); updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementosExtra: a.elementosExtra.map((x, i) => i !== irx ? x : { ...x, completado: false, instaladorId: null, fecha: null }) }) }) })); }} style={{ ...bdg("red"), cursor: "pointer", width: 28, height: 28, borderRadius: 6, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>}
+            {canEdit && hecho && <button onClick={e => { e.stopPropagation(); updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementosExtra: a.elementosExtra.map((x, i) => i !== irx ? x : (esDet ? { ...x, detCompletado: false, detId: null, detFecha: null } : { ...x, completado: false, instaladorId: null, fecha: null, detCompletado: false, detId: null, detFecha: null })) }) }) })); }} style={{ ...bdg("red"), cursor: "pointer", width: 28, height: 28, borderRadius: 6, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>}
           </div>;
         })}
       </div>
