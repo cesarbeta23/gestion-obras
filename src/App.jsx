@@ -237,19 +237,23 @@ export default function App() {
   function doLogout() { setPase(null); setUser(null); localStorage.removeItem("gs"); }
 
   // ARREGLO 3: getPrecio ahora también busca override por apto individual (key: aptoId__eid)
-  const getPrecio = (eid, oid, corteLabel, aptoId, tipId) => {
+  // act: "inst" (instalación) | "det" (detallado). El detallado usa sus propios
+  // overrides (mismas llaves con prefijo det__) y el precio_detallado del elemento.
+  const getPrecio = (eid, oid, corteLabel, aptoId, tipId, act = "inst") => {
     const o = obras.find(x => x.id === oid);
+    const pre = act === "det" ? "det__" : "";
     if (aptoId) {
-      const kApto = `apto__${aptoId}__${eid}`;
+      const kApto = `${pre}apto__${aptoId}__${eid}`;
       if (o?.preciosOverride?.[kApto] !== undefined) return o.preciosOverride[kApto];
     }
-    const k = `${corteLabel}__${eid}`;
+    const k = `${pre}${corteLabel}__${eid}`;
     if (o?.preciosOverride?.[k] !== undefined) return o.preciosOverride[k];
     if (tipId) {
-      const kTip = `tip__${tipId}__${eid}`;
+      const kTip = `${pre}tip__${tipId}__${eid}`;
       if (o?.preciosOverride?.[kTip] !== undefined) return o.preciosOverride[kTip];
     }
-    return elems.find(e => e.id === eid)?.precio || 0;
+    const elem = elems.find(e => e.id === eid);
+    return (act === "det" ? elem?.precio_detallado : elem?.precio) || 0;
   };
 
   const avanceObra = o => { let t = 0, c = 0; o.pisos?.forEach(p => p.aptos?.forEach(a => a.elementos?.forEach(e => { t++; if (e.completado) c++; }))); return t === 0 ? 0 : Math.round(c / t * 100); };
@@ -1183,7 +1187,8 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const cur = obras.find(o => o.id === obra.id);
   const curP = cur?.pisos?.find(p => p.id === piso.id);
   const curA = curP?.aptos?.find(a => a.id === apto.id) || apto;
-  const asignados = curA.instaladoresAsignados || (curA.instaladorAsignado ? [curA.instaladorAsignado] : []);
+  const asignadosInst = curA.instaladoresAsignados || (curA.instaladorAsignado ? [curA.instaladorAsignado] : []);
+  const asignadosDet  = curA.detalladoresAsignados || [];
   const tip = cur?.tipologias?.find(t => t.id === curA.tipologia);
   const av = avanceApto(curA);
   const SVs = users.filter(u => u.rol === ROLES.SV);
@@ -1196,13 +1201,27 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const [precIndM, setPrecIndM] = useState(false);
   const [precIndTmp, setPrecIndTmp] = useState({});
 
-  const canAct = [ROLES.IN, ROLES.SA, ROLES.SV].includes(user.rol);
+  // ── Actividad activa: instalación o detallado ──
+  const [act, setAct] = useState("inst");
+  const esDet = act === "det";
+  const asignados = esDet ? asignadosDet : asignadosInst;
+  const oficio = user.oficio || "instalador";
   const canEdit = user.rol === ROLES.SA || user.rol === ROLES.SV;
+  // Un instalador solo marca su oficio; el detallado además exige que ya esté instalado.
+  const canAct = canEdit || (user.rol === ROLES.IN && (
+    esDet ? ["detallador", "ambos"].includes(oficio) : ["instalador", "ambos"].includes(oficio)
+  ));
   const hayPend = Object.keys(pend).length > 0 || (canEdit && (curA.elementos?.some(e => e.completado) || (curA.elementosExtra || []).some(e => !e.esAdicional)));
+  const pk = i => esDet ? `d${i}` : i;   // llave de lo pendiente según la actividad
   const corteAct = getCorteFechas()[0];
 
-  const canToggle = idx => { const e = curA.elementos?.[idx]; if (!e || e.completado) return false; return canAct; };
-  const togglePend = idx => { if (!canToggle(idx)) return; setPend(p => { const c = { ...p }; if (c[idx] !== undefined) delete c[idx]; else c[idx] = true; return c; }); };
+  const canToggle = idx => {
+    const e = curA.elementos?.[idx];
+    if (!e || !canAct) return false;
+    if (esDet) return !!e.completado && !e.detCompletado;   // el detallado va después de instalar
+    return !e.completado;
+  };
+  const togglePend = idx => { if (!canToggle(idx)) return; const k = pk(idx); setPend(p => { const c = { ...p }; if (c[k] !== undefined) delete c[k]; else c[k] = true; return c; }); };
 
   async function guardar() {
     updateObra(obra.id, o => ({
@@ -1223,11 +1242,20 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
               if (asignadosA.length === 1) return asignadosA[0];
               return user.id;
             };
+            const asignadosDetA = a.detalladoresAsignados || [];
+            const detalladorPara = key => {
+              if (!canEdit) return user.id;
+              if (asignadosDetA.length >= 2) return instSel[key] ?? asignadosDetA[0];
+              if (asignadosDetA.length === 1) return asignadosDetA[0];
+              return user.id;
+            };
             const newEls = a.elementos.map((el, i) => {
               let u = { ...el };
               if (cnts[i] !== undefined) u.cantidad = cnts[i];
               // Un adicional ya trae instalador atribuido desde su creación (ver guardarAd): respetarlo.
               if (pend[i]) { u.completado = true; u.instaladorId = (el.esAdicional && el.instaladorId) ? el.instaladorId : instaladorPara(i); u.fecha = new Date().toLocaleDateString("es-CO"); }
+              // Detallado: segunda marca del mismo elemento, con su propio responsable y fecha.
+              if (pend[`d${i}`] && u.completado) { u.detCompletado = true; u.detId = detalladorPara(`d${i}`); u.detFecha = new Date().toLocaleDateString("es-CO"); }
               return u;
             });
             // Pasajes/bonificación ya no viven en el apto (se editan en Liquidación, en user.ajustes).
@@ -1250,7 +1278,16 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
     toast("Guardado", "ok"); setPend({}); setCnts({}); setInstSel({});
   }
 
-  const desmarcar = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, completado: false, instaladorId: null, fecha: null }) }) }) }));
+  // Al desmarcar la instalación también se cae el detallado (no puede quedar detallado sin instalar).
+  const desmarcar = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, completado: false, instaladorId: null, fecha: null, detCompletado: false, detId: null, detFecha: null }) }) }) }));
+  const desmarcarDet = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, detCompletado: false, detId: null, detFecha: null }) }) }) }));
+
+  // Asignar detalladores al apto (SA/SV)
+  const toggleDetallador = uid => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => {
+    if (a.id !== apto.id) return a;
+    const act2 = a.detalladoresAsignados || [];
+    return { ...a, detalladoresAsignados: act2.includes(uid) ? act2.filter(x => x !== uid) : [...act2, uid] };
+  }) }) }));
 
   async function guardarAd() {
     if (!nAd.desc || !nAd.val) return;
@@ -1295,7 +1332,13 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
   const totAd = elsAd.filter(e => e.completado).reduce((s, e) => s + e.valorUnitario * e.cantidad, 0);
   const totExtra = elsExtra.filter(e => e.completado).reduce((s, el) => s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, el.tipologiaId) * (el.cantidad || 1), 0);
 const totLiq = totNorm + totAd + totExtra;
-  const totPend = Object.keys(pend).reduce((s, i) => { const el = elsNorm[parseInt(i)]; return s + getPrecio(el?.elementoId, obra.id, corteAct.label, curA.id, curA.tipologia) * (cnts[i] ?? el?.cantidad ?? 1); }, 0);
+  const totPend = Object.keys(pend).reduce((s, k) => {
+    const det = String(k).startsWith("d");
+    const i = parseInt(String(k).replace(/^[dx]/, ""));
+    const el = elsNorm[i];
+    if (!el) return s;
+    return s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, curA.tipologia, det ? "det" : "inst") * (cnts[i] ?? el.cantidad ?? 1);
+  }, 0);
 
   return (
     <div>
@@ -1310,8 +1353,43 @@ const totLiq = totNorm + totAd + totExtra;
         )}
       </div>
 
+      {/* Pestañas de actividad */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 16, background: C.g1, padding: 4, borderRadius: 10, width: "fit-content" }}>
+        {[["inst", "🔧 Instalación"], ["det", "🎨 Detallado"]].map(([k, l]) => (
+          <button key={k} onClick={() => { setAct(k); setPend({}); setInstSel({}); }} style={{
+            padding: "8px 16px", border: "none", borderRadius: 8, cursor: "pointer", fontFamily: "system-ui",
+            fontSize: 13, fontWeight: act === k ? 700 : 500,
+            background: act === k ? C.bk : "transparent", color: act === k ? C.wh : C.g5,
+          }}>{l}</button>
+        ))}
+      </div>
+
+      {/* Detalladores del apto */}
+      {esDet && (
+        <div style={{ marginBottom: 14, padding: "10px 14px", background: C.wh, border: `1px solid ${C.g2}`, borderRadius: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: C.g5, textTransform: "uppercase", letterSpacing: ".05em" }}>Detalladores</span>
+          {asignadosDet.length === 0 && <span style={{ fontSize: 13, color: C.g4 }}>Sin asignar</span>}
+          {asignadosDet.map(id => (
+            <span key={id} style={{ ...bdg("amber"), display: "flex", alignItems: "center", gap: 6 }}>
+              {users.find(u => u.id === id)?.nombre || id}
+              {canEdit && <span onClick={() => toggleDetallador(id)} style={{ cursor: "pointer", fontWeight: 700 }}>✕</span>}
+            </span>
+          ))}
+          {canEdit && (
+            <select value="" onChange={e => e.target.value && toggleDetallador(e.target.value)}
+              style={{ fontSize: 12, padding: "5px 8px", border: `1px solid ${C.g2}`, borderRadius: 6, marginLeft: "auto" }}>
+              <option value="">+ Asignar detallador…</option>
+              {users.filter(u => u.rol === ROLES.IN && ["detallador", "ambos"].includes(u.oficio || "instalador") && !asignadosDet.includes(u.id))
+                .map(u => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+            </select>
+          )}
+        </div>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
-        {[["Avance", `${av}%`], ["Instalados", `${elsNorm.filter(e => e.completado).length}/${elsNorm.length}`], [user.rol === ROLES.IN ? "Mi liquidación" : "Liquidación", fmt(totLiq)]].map(([l, v]) => (
+        {[["Avance", `${av}%`],
+          [esDet ? "Detallados" : "Instalados", `${elsNorm.filter(e => esDet ? e.detCompletado : e.completado).length}/${elsNorm.length}`],
+          [user.rol === ROLES.IN ? "Mi liquidación" : "Liquidación", fmt(totLiq)]].map(([l, v]) => (
           <div key={l} style={{ background: C.wh, borderRadius: 10, padding: "14px 16px", border: `1px solid ${C.g2}` }}>
             <div style={{ fontSize: 11, color: C.g4, marginBottom: 4, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".06em" }}>{l}</div>
             <div style={{ fontSize: 18, fontWeight: 700, color: l === "Avance" ? (av === 100 ? C.gn : C.or) : C.gnD }}>{v}</div>
@@ -1324,26 +1402,31 @@ const totLiq = totNorm + totAd + totExtra;
       <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
         {elsNorm.map((el, idx) => {
           const elem = elems.find(e => e.id === el.elementoId);
-          const inst = users.find(u => u.id === el.instaladorId);
-          const eP = !!pend[idx], marc = el.completado || eP;
+          const hecho = esDet ? !!el.detCompletado : !!el.completado;
+          const quien = users.find(u => u.id === (esDet ? el.detId : el.instaladorId));
+          const cuando = esDet ? el.detFecha : el.fecha;
+          const eP = !!pend[pk(idx)], marc = hecho || eP;
           const cT = canToggle(idx);
           const ca = cnts[idx] ?? el.cantidad ?? 1;
-          const precio = getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, curA.tipologia);
+          const precio = getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, curA.tipologia, esDet ? "det" : "inst");
+          const esperaInst = esDet && !el.completado;   // no se puede detallar sin instalar
           // Indicar si tiene precio individual
           const tieneOvInd = cur?.preciosOverride?.[`apto__${curA.id}__${el.elementoId}`] !== undefined;
           return (
-            <div key={idx} onClick={() => cT && togglePend(idx)} style={{ display: "flex", alignItems: "center", gap: 12, background: el.completado ? C.gnL : eP ? C.orL : C.wh, border: `1.5px solid ${el.completado ? "#BBF7D0" : eP ? C.orM : C.g2}`, borderRadius: 10, padding: "12px 14px", cursor: cT ? "pointer" : "default", transition: "all .12s" }}>
-              <div style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0, border: `2.5px solid ${el.completado ? C.gn : eP ? C.or : C.g3}`, background: el.completado ? C.gn : eP ? C.or : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div key={idx} onClick={() => cT && togglePend(idx)} style={{ display: "flex", alignItems: "center", gap: 12, opacity: esperaInst ? .55 : 1, background: hecho ? C.gnL : eP ? C.orL : C.wh, border: `1.5px solid ${hecho ? "#BBF7D0" : eP ? C.orM : C.g2}`, borderRadius: 10, padding: "12px 14px", cursor: cT ? "pointer" : "default", transition: "all .12s" }}>
+              <div style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0, border: `2.5px solid ${hecho ? C.gn : eP ? C.or : C.g3}`, background: hecho ? C.gn : eP ? C.or : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {marc && <span style={{ color: C.wh, fontSize: 14, fontWeight: 700 }}>✓</span>}
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: 14, color: el.completado ? C.gnD : eP ? C.orD : C.bk }}>{elem?.nombre || el.elementoId}</div>
-                {el.completado && inst && <div style={{ fontSize: 12, color: C.gnD, fontWeight: 500 }}>{inst.nombre} · {el.fecha}</div>}
+                <div style={{ fontWeight: 600, fontSize: 14, color: hecho ? C.gnD : eP ? C.orD : C.bk }}>{elem?.nombre || el.elementoId}</div>
+                {hecho && quien && <div style={{ fontSize: 12, color: C.gnD, fontWeight: 500 }}>{quien.nombre} · {cuando}</div>}
+                {esperaInst && <div style={{ fontSize: 12, color: C.g4 }}>Falta instalarlo</div>}
+                {esDet && el.completado && !el.detCompletado && !eP && precio === 0 && <div style={{ fontSize: 11, color: C.or, fontWeight: 600 }}>sin precio de detallado</div>}
                 {eP && <div style={{ fontSize: 12, color: C.orD, fontWeight: 500 }}>Pendiente de guardar</div>}
                 {tieneOvInd && <div style={{ fontSize: 10, color: C.or, fontWeight: 600 }}>precio personalizado</div>}
               </div>
-              {canEdit && asignados.length >= 2 && !el.completado && (
-                <select onClick={e => e.stopPropagation()} value={instSel[idx] ?? asignados[0]} onChange={e => { e.stopPropagation(); setInstSel(s => ({ ...s, [idx]: e.target.value })); }} style={{ fontSize: 12, padding: "4px 6px", border: `1px solid ${C.g2}`, borderRadius: 6, maxWidth: 130 }}>
+              {canEdit && asignados.length >= 2 && !hecho && (
+                <select onClick={e => e.stopPropagation()} value={instSel[pk(idx)] ?? asignados[0]} onChange={e => { e.stopPropagation(); setInstSel(s => ({ ...s, [pk(idx)]: e.target.value })); }} style={{ fontSize: 12, padding: "4px 6px", border: `1px solid ${C.g2}`, borderRadius: 6, maxWidth: 130 }}>
                   {asignados.map(id => { const u = users.find(x => x.id === id); return <option key={id} value={id}>{u?.nombre || id}</option>; })}
                 </select>
               )}
@@ -1355,8 +1438,8 @@ const totLiq = totNorm + totAd + totExtra;
                 <div style={{ fontSize: 14, fontWeight: 700 }}>{fmt(precio * ca)}</div>
                 <div style={{ fontSize: 11, color: C.g4 }}>{elem?.unidad}</div>
               </div>
-              {canEdit && !el.completado && <button onClick={e => { e.stopPropagation(); updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.filter((_, i) => i !== idx) }) }) })); toast("Elemento eliminado", "ok"); }} style={{ marginLeft: 4, width: 28, height: 28, borderRadius: 6, ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14, fontWeight: 700 }}>🗑</button>}
-{canEdit && el.completado && <button onClick={e => { e.stopPropagation(); desmarcar(idx); }} style={{ marginLeft: 4, width: 28, height: 28, borderRadius: 6, ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14, fontWeight: 700 }}>✕</button>}
+              {canEdit && !esDet && !el.completado && <button onClick={e => { e.stopPropagation(); updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.filter((_, i) => i !== idx) }) }) })); toast("Elemento eliminado", "ok"); }} style={{ marginLeft: 4, width: 28, height: 28, borderRadius: 6, ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14, fontWeight: 700 }}>🗑</button>}
+{canEdit && hecho && <button onClick={e => { e.stopPropagation(); esDet ? desmarcarDet(idx) : desmarcar(idx); }} style={{ marginLeft: 4, width: 28, height: 28, borderRadius: 6, ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14, fontWeight: 700 }}>✕</button>}
             </div>
           );
         })}
@@ -1647,12 +1730,20 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
   function detalle(iid, d, h) {
     const rows = [];
     const proc = (o, a, el, esExtra) => {
+      // Detallado: segunda marca del mismo elemento, con su propio precio y corte.
+      if (el.detCompletado && el.detId === iid && enCorte(el.detFecha, d, h) && !el.esAdicional
+          && el.elementoId !== "__pasajes__" && el.elementoId !== "__bonificacion__") {
+        const elemD = elems.find(e => e.id === el.elementoId);
+        const tipD = esExtra ? el.tipologiaId : (el.tipologiaId || a.tipologia);
+        rows.push({ obra: o.nombre, apto: a.nombre, el: `[Detallado] ${elemD?.nombre || el.elementoId}`, actividad: "Detallado",
+          cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label, a.id, tipD, "det"), fecha: el.detFecha, adj: false, apr: true });
+      }
       if (el.completado && el.instaladorId === iid && enCorte(el.fecha, d, h)) {
         if (el.elementoId === "__pasajes__" || el.elementoId === "__bonificacion__") return; // migrados a user.ajustes
         if (el.esAdicional) { rows.push({ obra: o.nombre, apto: a.nombre, el: `[Adicional] ${el.descripcion}`, cant: el.cantidad || 1, precio: el.valorUnitario || 0, fecha: el.fecha, adj: false, apr: true }); return; }
         const elem = elems.find(e => e.id === el.elementoId);
         const tip = esExtra ? el.tipologiaId : (el.tipologiaId || a.tipologia);
-        rows.push({ obra: o.nombre, apto: a.nombre, el: elem?.nombre, cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label, a.id, tip), fecha: el.fecha, adj: false, apr: true });
+        rows.push({ obra: o.nombre, apto: a.nombre, el: elem?.nombre, actividad: "Instalación", cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label, a.id, tip), fecha: el.fecha, adj: false, apr: true });
       }
     };
     obras.forEach(o => o.pisos?.forEach(p => p.aptos?.forEach(a => {
