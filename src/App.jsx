@@ -2416,6 +2416,8 @@ function Usuarios({ users, setUsers, openM, closeM, modals }) {
   const [delId, setDelId] = useState(null);
   const rL = { superadmin: "Superadmin", supervisor: "Supervisor", auxiliar: "Auxiliar", instalador: "Instalador" };
   const rC = { superadmin: "orange", supervisor: "amber", auxiliar: "gray", instalador: "green" };
+  const oL = { instalador: "Instalador", detallador: "Detallador", ambos: "Instalador y detallador" };
+  const oC = { instalador: "green", detallador: "amber", ambos: "orange" };
 
   async function eliminar(id) { await dbDel("usuarios", id); setUsers(x => x.filter(u => u.id !== id)); setDelId(null); }
   async function guardar() {
@@ -2442,7 +2444,9 @@ function Usuarios({ users, setUsers, openM, closeM, modals }) {
             <div style={{ fontSize: 13, color: C.g5 }}>{u.email}{u.cedula ? ` · C.C. ${u.cedula}` : ""}</div>
             {u.rol === ROLES.IN && u.banco && <div style={{ fontSize: 12, color: C.g4 }}>{u.banco} — {u.cuenta}</div>}
           </div>
-          <span style={bdg(rC[u.rol] || "gray")}>{rL[u.rol]}</span>
+          {u.rol === ROLES.IN
+            ? <span style={bdg(oC[u.oficio || "instalador"])}>{oL[u.oficio || "instalador"]}</span>
+            : <span style={bdg(rC[u.rol] || "gray")}>{rL[u.rol]}</span>}
           <Btn onClick={() => editar(u)}>Editar</Btn>
           <Btn variant="danger" onClick={() => setDelId(u.id)}>Eliminar</Btn>
         </div>)}
