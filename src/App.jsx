@@ -258,6 +258,11 @@ export default function App() {
 
   const avanceObra = o => { let t = 0, c = 0; o.pisos?.forEach(p => p.aptos?.forEach(a => a.elementos?.forEach(e => { t++; if (e.completado) c++; }))); return t === 0 ? 0 : Math.round(c / t * 100); };
   const avanceApto = a => { const t = a.elementos?.length || 0, c = a.elementos?.filter(e => e.completado).length || 0; return t === 0 ? 0 : Math.round(c / t * 100); };
+  // El avance mide la instalación. El detallado solo pone su chulito cuando está todo hecho.
+  const detListo = a => {
+    const els = (a.elementos || []).filter(e => !e.elementoId?.startsWith("__"));
+    return els.length > 0 && els.every(e => e.detCompletado);
+  };
 
   if (loading) return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16, fontFamily: "system-ui", background: C.bk }}>
@@ -267,7 +272,7 @@ export default function App() {
   );
   if (!user) return <LoginScreen login={login} setLogin={setLogin} doLogin={doLogin} err={loginErr} />;
 
-  const sh = { obras, setObras, updateObra, saveObra, elems, setElems, users, setUsers, liqs, setLiqs, openM, closeM, modals, toast, user, getPrecio, avanceApto };
+  const sh = { obras, setObras, updateObra, saveObra, elems, setElems, users, setUsers, liqs, setLiqs, openM, closeM, modals, toast, user, getPrecio, avanceApto, detListo };
 
   return (
     <div style={{ fontFamily: "system-ui,sans-serif", maxWidth: 920, margin: "0 auto", padding: "1rem", background: C.g0, minHeight: "100vh" }}>
@@ -624,7 +629,7 @@ function ModalAccesos({ obraId, obras, users, updateObra, toast, onClose }) {
 }
 
 // ── OBRA DETALLE ──────────────────────────────────────────
-function Obra({ obra, obras, updateObra, user, avanceApto, elems, users, goApto, openM, closeM, modals, toast, getPrecio }) {
+function Obra({ obra, obras, updateObra, user, avanceApto, detListo, elems, users, goApto, openM, closeM, modals, toast, getPrecio }) {
   const [tipForm, setTipForm] = useState({ nombre: "", eids: [], cantidades: {}, precios: {} });
   const [editTip, setEditTip] = useState(null);
   const [delTipId, setDelTipId] = useState(null);
@@ -849,7 +854,10 @@ const disponibles = misHabilitados.filter(a => {
                 <div style={{ height: 5, background: C.g1, borderRadius: 10, overflow: "hidden", marginBottom: 4 }}>
                   <div style={{ height: "100%", width: `${av}%`, background: av === 100 ? C.gn : C.or, borderRadius: 10 }} />
                 </div>
-                <div style={{ fontSize: 11, color: C.g4, fontWeight: 600, marginBottom: 6 }}>{av}%</div>
+                <div style={{ fontSize: 11, color: C.g4, fontWeight: 600, marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
+                  {av}%
+                  {detListo(a) && <span title="Detallado terminado" style={{ color: C.gnD, fontWeight: 800 }}>✓</span>}
+                </div>
                 <button onClick={e => { e.stopPropagation(); liberar(a.pisoId, a.id); }} style={{ ...bdg("red"), cursor: "pointer", fontSize: 10, width: "100%", textAlign: "center" }}>Liberar</button>
               </div>;
             })}
@@ -981,7 +989,10 @@ const disponibles = misHabilitados.filter(a => {
                       <div style={{ height: 5, background: C.g1, borderRadius: 10, overflow: "hidden", marginBottom: 4 }}>
                         <div style={{ height: "100%", width: `${av}%`, background: av === 100 ? C.gn : C.or, borderRadius: 10 }} />
                       </div>
-                      <div style={{ fontSize: 10, color: C.g4, fontWeight: 600, marginBottom: 4 }}>{av}%</div>
+                      <div style={{ fontSize: 10, color: C.g4, fontWeight: 600, marginBottom: 4, display: "flex", alignItems: "center", gap: 5 }}>
+                        {av}%
+                        {detListo(apto) && <span title="Detallado terminado" style={{ color: C.gnD, fontWeight: 800 }}>✓ detallado</span>}
+                      </div>
                       {user.rol !== ROLES.AX && (
                         <div style={{ display: "flex", gap: 3 }} onClick={e => e.stopPropagation()}>
                           <select style={{ fontSize: 9, padding: "2px 3px", border: `1px solid ${C.g2}`, borderRadius: 4, flex: 1, color: C.g5 }} defaultValue="" onChange={e => { if (e.target.value) asignarTip(piso.id, apto.id, e.target.value); }}>
@@ -1091,7 +1102,7 @@ const disponibles = misHabilitados.filter(a => {
         </Sel>
         {precCorte && <><p style={{ fontSize: 13, color: C.g5, margin: "0 0 12px" }}>Modifica el precio para este corte. Vacío = precio estándar.</p>
           <div style={{ maxHeight: 300, overflowY: "auto", display: "grid", gap: 8 }}>
-            {elems.map(e => {
+            {elems.filter(e => e.activo !== false && (!e.obra_id || e.obra_id === obra.id)).map(e => {
               const k = `${precCorte}__${e.id}`; const ov = cur.preciosOverride?.[k];
               return <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: C.g0, borderRadius: 8 }}>
                 <div style={{ flex: 1, fontSize: 14 }}>{e.nombre} <span style={{ fontSize: 12, color: C.g4 }}>({fmt(e.precio)} std)</span></div>
@@ -1110,7 +1121,8 @@ const disponibles = misHabilitados.filter(a => {
         <div style={{ marginBottom: 14 }}>
           <label style={lbl()}>Elementos incluidos</label>
           <div style={{ maxHeight: 260, overflowY: "auto", border: `1px solid ${C.g2}`, borderRadius: 8, padding: 8, background: C.wh }}>
-            {elems.filter(e => e.activo !== false || tipForm.eids.includes(e.id))
+            {elems.filter(e => (e.activo !== false || tipForm.eids.includes(e.id))
+                && (!e.obra_id || e.obra_id === obra.id || tipForm.eids.includes(e.id)))
               .sort((a, b) => ((a.grupo || "Sin grupo") + a.nombre).localeCompare((b.grupo || "Sin grupo") + b.nombre))
               .map(e => <label key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", cursor: "pointer", fontSize: 14, borderRadius: 6, background: tipForm.eids.includes(e.id) ? C.orL : "transparent" }}>
               <input type="checkbox" checked={tipForm.eids.includes(e.id)} onChange={x => setTipForm(f => ({ ...f, eids: x.target.checked ? [...f.eids, e.id] : f.eids.filter(i => i !== e.id) }))} />
@@ -1183,7 +1195,7 @@ const disponibles = misHabilitados.filter(a => {
 }
 
 // ── APTO ──────────────────────────────────────────────────
-function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceApto, toast, getPrecio }) {
+function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceApto, detListo, toast, getPrecio }) {
   const cur = obras.find(o => o.id === obra.id);
   const curP = cur?.pisos?.find(p => p.id === piso.id);
   const curA = curP?.aptos?.find(a => a.id === apto.id) || apto;
@@ -1344,7 +1356,10 @@ const totLiq = totNorm + totAd + totExtra;
     <div>
       <div style={{ marginBottom: 18, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>Apto {curA.nombre || `${piso.numero}${String(apto.numero).padStart(2, "0")}`} — {tip?.nombre || "Sin tipología"}</h2>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk, display: "flex", alignItems: "center", gap: 10 }}>
+            Apto {curA.nombre || `${piso.numero}${String(apto.numero).padStart(2, "0")}`} — {tip?.nombre || "Sin tipología"}
+            {detListo(curA) && <span style={{ ...bdg("green"), fontSize: 12 }}>✓ Detallado</span>}
+          </h2>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: C.g5 }}>{obra.nombre} · Piso {piso.numero}</p>
         </div>
         {/* ARREGLO 3: botón precios individuales para SA */}
@@ -1592,13 +1607,14 @@ const totLiq = totNorm + totAd + totExtra;
 }
 
 // ── ELEMENTOS ─────────────────────────────────────────────
-function Elementos({ elems, setElems, openM, closeM, modals }) {
+function Elementos({ elems, setElems, obras = [], openM, closeM, modals }) {
   const vacio = { nombre: "", unidad: "und", precio: 0, precio_detallado: 0, grupo: "Otros", activo: true };
   const [form, setForm] = useState(vacio);
   const [editId, setEditId] = useState(null);
   const [busca, setBusca] = useState("");
   const [verInactivos, setVerInactivos] = useState(false);
   const [plegados, setPlegados] = useState({});
+  const [filtObra, setFiltObra] = useState("");
 
   async function guardar() {
     if (!form.nombre) return;
@@ -1625,7 +1641,8 @@ function Elementos({ elems, setElems, openM, closeM, modals }) {
   const q = busca.trim().toLowerCase();
   const visibles = elems.filter(e =>
     (verInactivos || e.activo !== false) &&
-    (!q || (e.nombre || "").toLowerCase().includes(q))
+    (!q || (e.nombre || "").toLowerCase().includes(q)) &&
+    (filtObra === "" || (filtObra === "gen" ? !e.obra_id : e.obra_id === filtObra))
   );
   const gruposUsados = [...GRUPOS, "Sin grupo"].filter(g =>
     visibles.some(e => (e.grupo || "Sin grupo") === g));
@@ -1645,6 +1662,12 @@ function Elementos({ elems, setElems, openM, closeM, modals }) {
           <input type="checkbox" checked={verInactivos} onChange={e => setVerInactivos(e.target.checked)} />
           Ver inactivos ({inactivos})
         </label>
+        <select value={filtObra} onChange={e => setFiltObra(e.target.value)}
+          style={{ padding: "8px 10px", border: `1px solid ${C.g2}`, borderRadius: 10, fontSize: 13 }}>
+          <option value="">Todos</option>
+          <option value="gen">Generales</option>
+          {obras.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
+        </select>
         <span style={{ fontSize: 13, color: C.g4 }}>{visibles.length} de {elems.length}</span>
       </div>
 
@@ -1668,6 +1691,7 @@ function Elementos({ elems, setElems, openM, closeM, modals }) {
                       <span style={{ fontWeight: 600, fontSize: 14 }}>{e.nombre}</span>
                       <span style={{ ...bdg("gray"), marginLeft: 6, fontSize: 11 }}>{e.unidad}</span>
                       {e.activo === false && <span style={{ ...bdg("red"), marginLeft: 6, fontSize: 11 }}>inactivo</span>}
+                      {e.obra_id && <span style={{ ...bdg("orange"), marginLeft: 6, fontSize: 11 }}>{obras.find(o => o.id === e.obra_id)?.nombre || "de obra"}</span>}
                     </div>
                     <div style={{ textAlign: "right", minWidth: 100 }}>
                       <div style={{ fontWeight: 700, fontSize: 14 }}>{fmt(e.precio)}</div>
