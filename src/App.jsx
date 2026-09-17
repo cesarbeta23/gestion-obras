@@ -199,7 +199,7 @@ export default function App() {
     } catch (e) { toast("Error conectando", "error"); }
     setLoading(false);
   }
-  useEffect(() => { if (user) loadAll(); }, [user]);
+  useEffect(() => { if (user) loadAll(); else setLoading(false); }, [user]);
 
   const saveObra = async o => dbUpsert("obras", {
     id: o.id, nombre: o.nombre, direccion: o.direccion, estado: o.estado,
