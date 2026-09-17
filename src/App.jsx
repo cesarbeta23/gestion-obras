@@ -49,6 +49,8 @@ const bV = {
 const fmt = n => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n || 0);
 const lbl = () => ({ fontSize: 12, color: C.g5, display: "block", marginBottom: 4, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" });
 
+const GRUPOS = ["Puertas", "Closets y vestier", "Cocinas", "Zócalos y molduras", "Pisos", "Otros"];
+
 function bdg(t) {
   const m = { green: { bg: C.gnL, c: C.gnD, b: "#BBF7D0" }, orange: { bg: C.orL, c: C.orD, b: C.orM }, amber: { bg: C.amL, c: "#B45309", b: "#FDE68A" }, red: { bg: C.rdL, c: C.rd, b: "#FECACA" }, gray: { bg: C.g1, c: C.g5, b: C.g2 } };
   const v = m[t] || m.gray;
@@ -1104,9 +1106,11 @@ const disponibles = misHabilitados.filter(a => {
         <div style={{ marginBottom: 14 }}>
           <label style={lbl()}>Elementos incluidos</label>
           <div style={{ maxHeight: 260, overflowY: "auto", border: `1px solid ${C.g2}`, borderRadius: 8, padding: 8, background: C.wh }}>
-            {elems.map(e => <label key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", cursor: "pointer", fontSize: 14, borderRadius: 6, background: tipForm.eids.includes(e.id) ? C.orL : "transparent" }}>
+            {elems.filter(e => e.activo !== false || tipForm.eids.includes(e.id))
+              .sort((a, b) => ((a.grupo || "Sin grupo") + a.nombre).localeCompare((b.grupo || "Sin grupo") + b.nombre))
+              .map(e => <label key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", cursor: "pointer", fontSize: 14, borderRadius: 6, background: tipForm.eids.includes(e.id) ? C.orL : "transparent" }}>
               <input type="checkbox" checked={tipForm.eids.includes(e.id)} onChange={x => setTipForm(f => ({ ...f, eids: x.target.checked ? [...f.eids, e.id] : f.eids.filter(i => i !== e.id) }))} />
-              <span style={{ flex: 1, color: C.bk }}>{e.nombre}</span>
+              <span style={{ flex: 1, color: C.bk }}>{e.nombre}<span style={{ fontSize: 11, color: C.g4, marginLeft: 6 }}>{e.grupo || "Sin grupo"}</span></span>
               <span style={{ fontSize: 12, color: C.g4 }}>{e.unidad} · {fmt(e.precio)}</span>
               {tipForm.eids.includes(e.id) && (e.unidad === "ml" || e.unidad === "m2") && (
                 <input type="number" min="0.1" step="0.1" placeholder="Cant."
@@ -1506,35 +1510,123 @@ const totLiq = totNorm + totAd + totExtra;
 
 // ── ELEMENTOS ─────────────────────────────────────────────
 function Elementos({ elems, setElems, openM, closeM, modals }) {
-  const [form, setForm] = useState({ nombre: "", unidad: "und", precio: 0 });
+  const vacio = { nombre: "", unidad: "und", precio: 0, precio_detallado: 0, grupo: "Otros", activo: true };
+  const [form, setForm] = useState(vacio);
   const [editId, setEditId] = useState(null);
+  const [busca, setBusca] = useState("");
+  const [verInactivos, setVerInactivos] = useState(false);
+  const [plegados, setPlegados] = useState({});
+
   async function guardar() {
     if (!form.nombre) return;
-    const el = editId ? { ...elems.find(e => e.id === editId), ...form, precio: Number(form.precio) } : { id: `e${Date.now()}`, ...form, precio: Number(form.precio) };
+    const base = { ...form, precio: Number(form.precio) || 0, precio_detallado: Number(form.precio_detallado) || 0 };
+    const el = editId ? { ...elems.find(e => e.id === editId), ...base } : { id: `e${Date.now()}`, ...base };
     await dbUpsert("elementos", el);
     if (editId) setElems(x => x.map(e => e.id === editId ? el : e)); else setElems(x => [...x, el]);
-    setEditId(null); setForm({ nombre: "", unidad: "und", precio: 0 }); closeM("el");
+    setEditId(null); setForm(vacio); closeM("el");
   }
+
+  async function toggleActivo(e) {
+    const el = { ...e, activo: e.activo === false ? true : false };
+    await dbUpsert("elementos", el);
+    setElems(x => x.map(y => y.id === el.id ? el : y));
+  }
+
+  const abrirEdit = e => {
+    setEditId(e.id);
+    setForm({ nombre: e.nombre, unidad: e.unidad || "und", precio: e.precio || 0,
+      precio_detallado: e.precio_detallado || 0, grupo: e.grupo || "Otros", activo: e.activo !== false });
+    openM("el");
+  };
+
+  const q = busca.trim().toLowerCase();
+  const visibles = elems.filter(e =>
+    (verInactivos || e.activo !== false) &&
+    (!q || (e.nombre || "").toLowerCase().includes(q))
+  );
+  const gruposUsados = [...GRUPOS, "Sin grupo"].filter(g =>
+    visibles.some(e => (e.grupo || "Sin grupo") === g));
+  const inactivos = elems.filter(e => e.activo === false).length;
+
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 12, flexWrap: "wrap" }}>
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>Elementos</h2>
-        <Btn variant="primary" onClick={() => { setEditId(null); setForm({ nombre: "", unidad: "und", precio: 0 }); openM("el"); }}>+ Nuevo</Btn>
+        <Btn variant="primary" onClick={() => { setEditId(null); setForm(vacio); openM("el"); }}>+ Nuevo</Btn>
       </div>
-      <div style={{ display: "grid", gap: 8 }}>
-        {elems.map(e => <div key={e.id} style={{ ...card, display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ flex: 1 }}><span style={{ fontWeight: 600, fontSize: 14 }}>{e.nombre}</span> <span style={{ ...bdg("gray"), marginLeft: 6, fontSize: 11 }}>{e.unidad}</span></div>
-          <div style={{ fontWeight: 700, fontSize: 14, minWidth: 110, textAlign: "right" }}>{fmt(e.precio)}</div>
-          <Btn onClick={() => { setEditId(e.id); setForm({ nombre: e.nombre, unidad: e.unidad, precio: e.precio }); openM("el"); }}>Editar</Btn>
-        </div>)}
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
+        <input placeholder="Buscar elemento…" value={busca} onChange={e => setBusca(e.target.value)}
+          style={{ flex: 1, minWidth: 220, padding: "9px 12px", border: `1px solid ${C.g2}`, borderRadius: 10, fontSize: 14, fontFamily: "system-ui" }} />
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: C.g5, cursor: "pointer" }}>
+          <input type="checkbox" checked={verInactivos} onChange={e => setVerInactivos(e.target.checked)} />
+          Ver inactivos ({inactivos})
+        </label>
+        <span style={{ fontSize: 13, color: C.g4 }}>{visibles.length} de {elems.length}</span>
       </div>
-      {modals.el && <Modal title={editId ? "Editar" : "Nuevo elemento"} onClose={() => closeM("el")}>
+
+      {gruposUsados.map(g => {
+        const delGrupo = visibles.filter(e => (e.grupo || "Sin grupo") === g)
+          .sort((a, b) => (a.nombre || "").localeCompare(b.nombre || ""));
+        const plegado = plegados[g];
+        return (
+          <div key={g} style={{ marginBottom: 14 }}>
+            <div onClick={() => setPlegados(p => ({ ...p, [g]: !p[g] }))}
+              style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "6px 2px", fontSize: 13, fontWeight: 700, color: C.bk, textTransform: "uppercase", letterSpacing: ".05em" }}>
+              <span style={{ color: C.g4 }}>{plegado ? "▸" : "▾"}</span>
+              {g}
+              <span style={{ ...bdg("gray"), fontSize: 11 }}>{delGrupo.length}</span>
+            </div>
+            {!plegado && (
+              <div style={{ display: "grid", gap: 6 }}>
+                {delGrupo.map(e => (
+                  <div key={e.id} style={{ ...card, display: "flex", alignItems: "center", gap: 12, opacity: e.activo === false ? .5 : 1, padding: "10px 14px" }}>
+                    <div style={{ flex: 1 }}>
+                      <span style={{ fontWeight: 600, fontSize: 14 }}>{e.nombre}</span>
+                      <span style={{ ...bdg("gray"), marginLeft: 6, fontSize: 11 }}>{e.unidad}</span>
+                      {e.activo === false && <span style={{ ...bdg("red"), marginLeft: 6, fontSize: 11 }}>inactivo</span>}
+                    </div>
+                    <div style={{ textAlign: "right", minWidth: 100 }}>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>{fmt(e.precio)}</div>
+                      <div style={{ fontSize: 11, color: C.g4 }}>instalación</div>
+                    </div>
+                    <div style={{ textAlign: "right", minWidth: 100 }}>
+                      <div style={{ fontWeight: 700, fontSize: 14, color: e.precio_detallado ? C.bk : C.g3 }}>
+                        {e.precio_detallado ? fmt(e.precio_detallado) : "—"}
+                      </div>
+                      <div style={{ fontSize: 11, color: C.g4 }}>detallado</div>
+                    </div>
+                    <Btn onClick={() => abrirEdit(e)}>Editar</Btn>
+                    <Btn onClick={() => toggleActivo(e)}>{e.activo === false ? "Activar" : "Inactivar"}</Btn>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {visibles.length === 0 && <p style={{ fontSize: 13, color: C.g4 }}>No hay elementos con ese nombre.</p>}
+
+      {modals.el && <Modal title={editId ? "Editar elemento" : "Nuevo elemento"} onClose={() => closeM("el")} wide>
         <Inp label="Nombre" value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} />
-        <Sel label="Unidad" value={form.unidad} onChange={e => setForm(f => ({ ...f, unidad: e.target.value }))}>
-          <option value="und">und</option><option value="ml">ml</option><option value="m2">m2</option><option value="gl">gl</option>
-        </Sel>
-        <Inp label="Precio ($)" type="number" min="0" value={form.precio} onChange={e => setForm(f => ({ ...f, precio: e.target.value }))} />
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn onClick={() => closeM("el")}>Cancelar</Btn><Btn variant="primary" onClick={guardar}>{editId ? "Guardar" : "Crear"}</Btn></div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+          <Sel label="Grupo" value={form.grupo} onChange={e => setForm(f => ({ ...f, grupo: e.target.value }))}>
+            {GRUPOS.map(g => <option key={g} value={g}>{g}</option>)}
+          </Sel>
+          <Sel label="Unidad" value={form.unidad} onChange={e => setForm(f => ({ ...f, unidad: e.target.value }))}>
+            <option value="und">und</option><option value="ml">ml</option><option value="m2">m2</option><option value="gl">gl</option>
+          </Sel>
+          <Inp label="Precio instalación ($)" type="number" min="0" value={form.precio} onChange={e => setForm(f => ({ ...f, precio: e.target.value }))} />
+          <Inp label="Precio detallado ($)" type="number" min="0" value={form.precio_detallado} onChange={e => setForm(f => ({ ...f, precio_detallado: e.target.value }))} />
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, cursor: "pointer", margin: "6px 0 14px" }}>
+          <input type="checkbox" checked={form.activo} onChange={e => setForm(f => ({ ...f, activo: e.target.checked }))} />
+          Activo (aparece al armar tipologías)
+        </label>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <Btn onClick={() => closeM("el")}>Cancelar</Btn>
+          <Btn variant="primary" onClick={guardar}>{editId ? "Guardar" : "Crear"}</Btn>
+        </div>
       </Modal>}
     </div>
   );
@@ -2318,7 +2410,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra }) {
 
 // ── USUARIOS ──────────────────────────────────────────────
 function Usuarios({ users, setUsers, openM, closeM, modals }) {
-  const emp = { nombre: "", email: "", rol: ROLES.IN, pin: "", cedula: "", telefono: "", banco: "", cuenta: "" };
+  const emp = { nombre: "", email: "", rol: ROLES.IN, oficio: "instalador", pin: "", cedula: "", telefono: "", banco: "", cuenta: "" };
   const [form, setForm] = useState(emp);
   const [editId, setEditId] = useState(null);
   const [delId, setDelId] = useState(null);
@@ -2334,7 +2426,7 @@ function Usuarios({ users, setUsers, openM, closeM, modals }) {
     if (editId) setUsers(x => x.map(y => y.id === editId ? u : y)); else setUsers(x => [...x, u]);
     setForm(emp); setEditId(null); closeM("usr");
   }
-  const editar = u => { setEditId(u.id); setForm({ nombre: u.nombre, email: u.email, rol: u.rol, pin: "", cedula: u.cedula || "", telefono: u.telefono || "", banco: u.banco || "", cuenta: u.cuenta || "" }); openM("usr"); };
+  const editar = u => { setEditId(u.id); setForm({ nombre: u.nombre, email: u.email, rol: u.rol, oficio: u.oficio || "instalador", pin: "", cedula: u.cedula || "", telefono: u.telefono || "", banco: u.banco || "", cuenta: u.cuenta || "" }); openM("usr"); };
 
   return (
     <div>
@@ -2377,6 +2469,11 @@ function Usuarios({ users, setUsers, openM, closeM, modals }) {
           <Inp label={editId ? "Nuevo PIN (vacío = no cambiar)" : "PIN (4 dígitos)"} type="password" maxLength={4} value={form.pin} onChange={e => setForm(f => ({ ...f, pin: e.target.value }))} placeholder="••••" />
         </div>
         {form.rol === ROLES.IN && <>
+          <Sel label="Oficio" value={form.oficio} onChange={e => setForm(f => ({ ...f, oficio: e.target.value }))}>
+            <option value="instalador">Instalador</option>
+            <option value="detallador">Detallador</option>
+            <option value="ambos">Instalador y detallador</option>
+          </Sel>
           <div style={{ fontSize: 12, fontWeight: 600, margin: "4px 0 10px", color: C.g5, borderTop: `1px solid ${C.g2}`, paddingTop: 12, textTransform: "uppercase", letterSpacing: ".06em" }}>Datos bancarios</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
             <Inp label="Banco" value={form.banco} onChange={e => setForm(f => ({ ...f, banco: e.target.value }))} placeholder="Ej: Bancolombia" />
