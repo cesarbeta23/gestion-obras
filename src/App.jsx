@@ -493,7 +493,8 @@ function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra,
         </div>
       )}
 
-       {editM && <Modal title="Editar obra" onClose={() => setEditM(null)} wide>
+
+      {editM && <Modal title="Editar obra" onClose={() => setEditM(null)} wide>
   <Inp label="Nombre" value={editF.nombre} onChange={e => setEditF(f => ({ ...f, nombre: e.target.value }))} />
   <Inp label="Dirección" value={editF.direccion} onChange={e => setEditF(f => ({ ...f, direccion: e.target.value }))} />
   <Sel label="Coordinador" value={editF.coordinadorId} onChange={e => setEditF(f => ({ ...f, coordinadorId: e.target.value }))}>
@@ -694,6 +695,56 @@ function Obra({ obra, obras, updateObra, user, avanceApto, detListo, elems, user
 const [nuevoPisoF, setNuevoPisoF] = useState({ numero: "", aptos: 1 });
 
   const cur = obras.find(o => o.id === obra.id) || obra;
+  const [repNom, setRepNom] = useState(null);   // { pisoId, desde, hasta, crear }
+
+  // Copia la nomenclatura de aptos de un piso a un rango de pisos.
+  // Ej: piso 5 con 501, 502A, 502B → piso 7 queda con 701, 702A, 702B.
+  function replicarNomenclatura() {
+    const origen = (cur?.pisos || []).find(p => p.id === repNom.pisoId);
+    if (!origen) return;
+    const desde = Number(repNom.desde), hasta = Number(repNom.hasta);
+    if (!desde || !hasta || hasta < desde) { toast("Revisa el rango de pisos", "error"); return; }
+
+    // Sufijo de cada apto: lo que queda al quitarle el número del piso al nombre
+    const sufijos = (origen.aptos || []).map(a => {
+      const nom = String(a.nombre || "");
+      const pref = String(origen.numero);
+      return nom.startsWith(pref) ? nom.slice(pref.length) : nom;
+    });
+    if (!sufijos.length) { toast("Ese piso no tiene aptos", "error"); return; }
+
+    let creados = 0, tocados = 0;
+    updateObra(cur.id, o => {
+      const pisos = [...(o.pisos || [])];
+      for (let n = desde; n <= hasta; n++) {
+        if (n === origen.numero) continue;
+        let piso = pisos.find(p => String(p.numero) === String(n));
+        if (!piso) {
+          if (!repNom.crear) continue;
+          piso = { id: `p${Date.now()}${n}`, numero: n, aptos: [] };
+          pisos.push(piso); creados++;
+        }
+        const existentes = piso.aptos || [];
+        const nuevos = sufijos.map((suf, i) => {
+          const nombre = `${n}${suf}`;
+          const ya = existentes.find(a => String(a.nombre) === nombre);
+          return ya || {
+            id: `a${Date.now()}${n}${i}`, numero: i + 1, nombre,
+            tipologia: "", elementos: [], instaladorAsignado: null, observaciones: "",
+          };
+        });
+        // los aptos que ya tenían trabajo marcado no se tocan
+        const conDatos = existentes.filter(a =>
+          !nuevos.some(x => x.id === a.id) && (a.elementos?.some(e => e.completado || e.detCompletado)));
+        piso.aptos = [...nuevos, ...conDatos];
+        tocados++;
+      }
+      return { ...o, pisos: pisos.sort((a, b) => a.numero - b.numero) };
+    });
+    toast(`Nomenclatura replicada en ${tocados} piso(s)${creados ? `, ${creados} creados` : ""}`, "ok");
+    setRepNom(null);
+  }
+
   const tips = cur.tipologias || [];
   const nums = [...new Set(cur.pisos?.flatMap(p => p.aptos?.map(a => String(a.numero))) || [])].sort((a, b) => Number(a) - Number(b));
   const cortes = getCorteFechas();
@@ -1013,6 +1064,8 @@ const disponibles = misHabilitados.filter(a => {
               <div style={{ fontSize: 13, fontWeight: 700, color: C.g5, textTransform: "uppercase", letterSpacing: ".06em" }}>Piso {piso.numero}</div>
               {user.rol === ROLES.SA && !vistaInst && <div style={{ display: "flex", gap: 6 }}>
   <button onClick={() => setPisoEditM(piso.id)} style={{ ...bdg("gray"), cursor: "pointer", fontSize: 11 }}>✎ Editar aptos</button>
+  <button onClick={() => setRepNom({ pisoId: piso.id, desde: piso.numero + 1, hasta: piso.numero + 1, crear: true })}
+    style={{ ...bdg("orange"), cursor: "pointer", fontSize: 11 }}>⧉ Replicar nomenclatura</button>
   <button onClick={() => {
     const tieneDatos = piso.aptos?.some(a => a.elementos?.some(e => e.completado));
     if (tieneDatos) { toast("No se puede eliminar: tiene instalaciones registradas", "error"); return; }
@@ -1173,6 +1226,31 @@ const disponibles = misHabilitados.filter(a => {
           </>;
         })()}
       </Modal>}
+
+      {repNom && (() => {
+        const origen = (cur?.pisos || []).find(p => p.id === repNom.pisoId);
+        return <Modal title={`Replicar nomenclatura del piso ${origen?.numero}`} onClose={() => setRepNom(null)}>
+          <p style={{ fontSize: 13, color: C.g5, marginBottom: 12 }}>
+            Se copian los aptos <strong>{(origen?.aptos || []).map(a => a.nombre).join(", ")}</strong> a los pisos que elijas,
+            cambiando el número del piso.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+            <Inp label="Desde el piso" type="number" value={repNom.desde} onChange={e => setRepNom(r => ({ ...r, desde: e.target.value }))} />
+            <Inp label="Hasta el piso" type="number" value={repNom.hasta} onChange={e => setRepNom(r => ({ ...r, hasta: e.target.value }))} />
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, cursor: "pointer", margin: "4px 0 14px" }}>
+            <input type="checkbox" checked={repNom.crear} onChange={e => setRepNom(r => ({ ...r, crear: e.target.checked }))} />
+            Crear los pisos que no existan
+          </label>
+          <div style={{ background: C.amL, border: "1px solid #FDE68A", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#B45309", marginBottom: 14 }}>
+            Los aptos que ya tengan trabajo marcado se conservan. El piso de origen no se toca.
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+            <Btn onClick={() => setRepNom(null)}>Cancelar</Btn>
+            <Btn variant="primary" onClick={replicarNomenclatura}>Replicar</Btn>
+          </div>
+        </Modal>;
+      })()}
 
       {pisoEditM && (() => {
         const p = cur.pisos?.find(x => x.id === pisoEditM);
