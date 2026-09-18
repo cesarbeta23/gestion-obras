@@ -1305,6 +1305,18 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   };
   const togglePend = idx => { if (!canToggle(idx)) return; const k = pk(idx); setPend(p => { const c = { ...p }; if (c[k] !== undefined) delete c[k]; else c[k] = true; return c; }); };
 
+  // Marcar de una vez todo lo que falte en la pestaña actual (el apto llegó completo)
+  const puedeExtra = el => canAct && (esDet ? (!!el.completado && !el.detCompletado) : !el.completado);
+  function marcarTodo() {
+    const nuevo = {};
+    (curA.elementos || []).forEach((el, i) => { if (canToggle(i)) nuevo[pk(i)] = true; });
+    (curA.elementosExtra || []).forEach((el, i) => { if (puedeExtra(el)) nuevo[esDet ? `dx${i}` : `x${i}`] = true; });
+    if (!Object.keys(nuevo).length) { toast(esDet ? "No hay nada pendiente de detallar" : "No hay nada pendiente de instalar", "ok"); return; }
+    setPend(p => ({ ...p, ...nuevo }));
+  }
+  const faltantes = (curA.elementos || []).filter((el, i) => canToggle(i)).length
+    + (curA.elementosExtra || []).filter(el => puedeExtra(el)).length;
+
   async function guardar() {
     updateObra(obra.id, o => ({
       ...o, pisos: o.pisos.map(p => {
@@ -1364,6 +1376,18 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
   // Al desmarcar la instalación también se cae el detallado (no puede quedar detallado sin instalar).
   const desmarcar = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, completado: false, instaladorId: null, fecha: null, detCompletado: false, detId: null, detFecha: null }) }) }) }));
   const desmarcarDet = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, detCompletado: false, detId: null, detFecha: null }) }) }) }));
+
+  // Quitar una tipología extra del apto (con sus elementos), solo si no hay nada marcado en ella
+  function quitarTipExtra(tipId) {
+    const els = (curA.elementosExtra || []).filter(e => e.tipologiaId === tipId);
+    if (els.some(e => e.completado || e.detCompletado)) { toast("Esa tipología ya tiene elementos marcados", "error"); return; }
+    updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : ({
+      ...a,
+      tipologiasExtra: (a.tipologiasExtra || []).filter(t => t !== tipId),
+      elementosExtra: (a.elementosExtra || []).filter(e => e.tipologiaId !== tipId),
+    })) }) }));
+    toast("Tipología extra quitada", "ok");
+  }
 
   // Asignar detalladores al apto (SA/SV)
   const toggleDetallador = uid => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => {
@@ -1485,6 +1509,15 @@ const totLiq = totNorm + totAd + totExtra;
       {canEdit && <div style={{ marginBottom: 14, padding: "10px 14px", background: C.amL, border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#B45309", fontWeight: 500 }}>Puedes desmarcar elementos con ✕.</div>}
       {user.rol === ROLES.IN && <div style={{ marginBottom: 14, padding: "10px 14px", background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 10, fontSize: 13, color: C.orD, fontWeight: 500 }}>Marca los elementos terminados y presiona <strong>Guardar</strong>.{hayPend && <span style={{ marginLeft: 8 }}>+{fmt(totPend)}</span>}</div>}
 
+      {canAct && faltantes > 0 && (
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 10 }}>
+          {Object.keys(pend).length > 0 && <Btn onClick={() => setPend({})}>Quitar selección</Btn>}
+          <Btn onClick={marcarTodo}>
+            ✓ Marcar todo {esDet ? "el detallado" : "lo instalado"} ({faltantes})
+          </Btn>
+        </div>
+      )}
+
       <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
         {elsNorm.map((el, idx) => {
           const elem = elems.find(e => e.id === el.elementoId);
@@ -1576,7 +1609,11 @@ const totLiq = totNorm + totAd + totExtra;
     if (!elsDeEsta.length) return null;
     return <div key={tipId} style={{ marginBottom: 16 }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: C.bk, marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span>{tip?.nombre || "Tipología extra"}</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {tip?.nombre || "Tipología extra"}
+          {canEdit && <span title="Quitar esta tipología del apto" onClick={() => quitarTipExtra(tipId)}
+            style={{ cursor: "pointer", color: C.rd, fontWeight: 700, fontSize: 15 }}>✕</span>}
+        </span>
         <span style={{ fontSize: 12, color: C.gnD, fontWeight: 600 }}>{fmt(elsDeEsta.filter(e => esDet ? e.detCompletado : e.completado).reduce((s, el) => s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, tipId, esDet ? "det" : "inst") * (el.cantidad || 1), 0))}</span>
       </div>
       <div style={{ display: "grid", gap: 8 }}>
