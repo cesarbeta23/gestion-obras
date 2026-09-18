@@ -352,6 +352,35 @@ function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra,
   const [delM, setDelM] = useState(null);
   const [editM, setEditM] = useState(null);
   const [editF, setEditF] = useState({});
+  const [genPisos, setGenPisos] = useState({ inicio: 1, cantidad: 1, aptos: 1 });
+
+  // Genera varios pisos con sus aptos de una vez, igual que al crear la obra.
+  // Los pisos que ya existan se conservan.
+  function generarPisos() {
+    const obra = obras.find(o => o.id === editM);
+    if (!obra) return;
+    const inicio = Number(genPisos.inicio) || 1;
+    const cuantos = Number(genPisos.cantidad) || 0;
+    const porPiso = Number(genPisos.aptos) || 0;
+    if (cuantos < 1 || porPiso < 1) { toast("Indica cuántos pisos y cuántos aptos por piso", "error"); return; }
+    const existentes = new Set((obra.pisos || []).map(p => String(p.numero)));
+    const nuevos = [];
+    for (let pi = 0; pi < cuantos; pi++) {
+      const numero = inicio + pi;
+      if (existentes.has(String(numero))) continue;
+      nuevos.push({
+        id: `p${Date.now()}${pi}`, numero,
+        aptos: Array.from({ length: porPiso }, (_, ai) => ({
+          id: `a${Date.now()}${pi}${ai}`, numero: ai + 1,
+          nombre: `${numero}${String(ai + 1).padStart(2, "0")}`,
+          tipologia: "", elementos: [], instaladorAsignado: null, observaciones: "",
+        })),
+      });
+    }
+    if (!nuevos.length) { toast("Esos pisos ya existen", "error"); return; }
+    updateObra(editM, o => ({ ...o, pisos: [...(o.pisos || []), ...nuevos].sort((a, b) => a.numero - b.numero) }));
+    toast(`${nuevos.length} piso(s) creados`, "ok");
+  }
   const SAs = users.filter(u => u.rol === ROLES.SA);
 
   async function crear() {
@@ -513,6 +542,22 @@ function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra,
       const nuevoPiso = { id: `p${Date.now()}`, numero: ultimoPiso + 1, aptos: [] };
       updateObra(editM, o => ({ ...o, pisos: [...o.pisos, nuevoPiso] }));
     }} style={{ ...bdg("green"), cursor: "pointer" }}>+ Agregar piso</button>
+
+    <div style={{ marginTop: 14, padding: "12px 14px", background: C.g0, border: `1px solid ${C.g2}`, borderRadius: 10 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: C.g5, marginBottom: 10 }}>CREAR VARIOS PISOS DE UNA VEZ</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 10, alignItems: "end" }}>
+        <Inp label="Piso inicial" type="number" min="1" value={genPisos.inicio}
+          onChange={e => setGenPisos(g => ({ ...g, inicio: e.target.value }))} />
+        <Inp label="Cantidad de pisos" type="number" min="1" value={genPisos.cantidad}
+          onChange={e => setGenPisos(g => ({ ...g, cantidad: e.target.value }))} />
+        <Inp label="Aptos por piso" type="number" min="1" value={genPisos.aptos}
+          onChange={e => setGenPisos(g => ({ ...g, aptos: e.target.value }))} />
+        <div style={{ marginBottom: 14 }}><Btn variant="primary" onClick={generarPisos}>Generar</Btn></div>
+      </div>
+      <div style={{ fontSize: 11, color: C.g4 }}>
+        Ej: piso inicial 5, cantidad 21 → pisos 5 al 25. Nomenclatura: 501, 502… Los pisos que ya existan no se tocan.
+      </div>
+    </div>
   </div>
 
   <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn onClick={() => setEditM(null)}>Cancelar</Btn><Btn variant="primary" onClick={editar}>Guardar</Btn></div>
