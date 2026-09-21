@@ -1426,6 +1426,8 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const SVs = users.filter(u => u.rol === ROLES.SV);
   const [pend, setPend] = useState({});
   const [cnts, setCnts] = useState({});
+  // Cuántas unidades se marcan cuando el elemento trae varias (ej: 1 de 2 puertas)
+  const [parcial, setParcial] = useState({});
   const [instSel, setInstSel] = useState({});
   const [nAd, setNAd] = useState({ desc: "", cant: 1, val: 0, inst: "" });
   const [addAd, setAddAd] = useState(false);
@@ -1493,14 +1495,35 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
               if (asignadosDetA.length === 1) return asignadosDetA[0];
               return user.id;
             };
-            const newEls = a.elementos.map((el, i) => {
+            const hoy = new Date().toLocaleDateString("es-CO");
+            const newEls = a.elementos.flatMap((el, i) => {
               let u = { ...el };
               if (cnts[i] !== undefined) u.cantidad = cnts[i];
-              // Un adicional ya trae instalador atribuido desde su creación (ver guardarAd): respetarlo.
-              if (pend[i]) { u.completado = true; u.instaladorId = (el.esAdicional && el.instaladorId) ? el.instaladorId : instaladorPara(i); u.fecha = new Date().toLocaleDateString("es-CO"); }
+              const unidadEl = elems.find(e => e.id === el.elementoId)?.unidad;
+              const porUnidad = unidadEl !== "ml" && unidadEl !== "m2";   // puertas, closets: se pueden partir
+              const out = [u];
+
+              // Instalación. Si trae varias y se marcaron menos, se parte: lo marcado queda
+              // pagado a quien lo hizo y el resto sigue pendiente en el mismo apto.
+              if (pend[i]) {
+                const total = Number(u.cantidad || 1);
+                const n = porUnidad ? Math.min(total, Number(parcial[i] || total)) : total;
+                out[0] = { ...u, cantidad: n, completado: true, fecha: hoy,
+                  // Un adicional ya trae instalador atribuido desde su creación (ver guardarAd): respetarlo.
+                  instaladorId: (el.esAdicional && el.instaladorId) ? el.instaladorId : instaladorPara(i) };
+                if (n < total) out.push({ ...u, cantidad: total - n, completado: false, instaladorId: null, fecha: null,
+                  detCompletado: false, detId: null, detFecha: null });
+              }
+
               // Detallado: segunda marca del mismo elemento, con su propio responsable y fecha.
-              if (pend[`d${i}`] && u.completado) { u.detCompletado = true; u.detId = detalladorPara(`d${i}`); u.detFecha = new Date().toLocaleDateString("es-CO"); }
-              return u;
+              if (pend[`d${i}`] && out[0].completado) {
+                const base = out[0];
+                const total = Number(base.cantidad || 1);
+                const n = porUnidad ? Math.min(total, Number(parcial[`d${i}`] || total)) : total;
+                out[0] = { ...base, cantidad: n, detCompletado: true, detId: detalladorPara(`d${i}`), detFecha: hoy };
+                if (n < total) out.splice(1, 0, { ...base, cantidad: total - n, detCompletado: false, detId: null, detFecha: null });
+              }
+              return out;
             });
             // Pasajes/bonificación ya no viven en el apto (se editan en Liquidación, en user.ajustes).
             // Los __pasajes__/__bonificacion__ viejos que pudieran quedar se preservan tal cual y se ignoran en los cálculos.
@@ -1520,7 +1543,7 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
         };
       })
     }));
-    toast("Guardado", "ok"); setPend({}); setCnts({}); setInstSel({});
+    toast("Guardado", "ok"); setPend({}); setCnts({}); setInstSel({}); setParcial({});
   }
 
   // Al desmarcar la instalación también se cae el detallado (no puede quedar detallado sin instalar).
@@ -1594,7 +1617,7 @@ const totLiq = totNorm + totAd + totExtra;
     const i = parseInt(String(k).replace(/^[dx]/, ""));
     const el = elsNorm[i];
     if (!el) return s;
-    return s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, curA.tipologia, det ? "det" : "inst") * (cnts[i] ?? el.cantidad ?? 1);
+    return s + getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, curA.tipologia, det ? "det" : "inst") * (parcial[k] ?? cnts[i] ?? el.cantidad ?? 1);
   }, 0);
 
   return (
@@ -1699,13 +1722,23 @@ const totLiq = totNorm + totAd + totExtra;
                   {asignados.map(id => { const u = users.find(x => x.id === id); return <option key={id} value={id}>{u?.nombre || id}</option>; })}
                 </select>
               )}
+              {elem?.unidad !== "ml" && elem?.unidad !== "m2" && Number(ca) > 1 && cT && (
+                <div onClick={e => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ fontSize: 11, color: C.g5 }}>{esDet ? "detalló" : "instaló"}</span>
+                  <select value={parcial[pk(idx)] ?? ca}
+                    onChange={e => { const v = Number(e.target.value); setParcial(p => ({ ...p, [pk(idx)]: v })); if (!pend[pk(idx)]) togglePend(idx); }}
+                    style={{ fontSize: 12, padding: "3px 6px", border: `1px solid ${C.g2}`, borderRadius: 6 }}>
+                    {Array.from({ length: Number(ca) }, (_, k) => k + 1).map(n => <option key={n} value={n}>{n} de {ca}</option>)}
+                  </select>
+                </div>
+              )}
               {(elem?.unidad === "ml" || elem?.unidad === "m2") && <div onClick={e => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 12, color: C.g4 }}>{elem.unidad}</span>
                 <input type="number" min="0.1" step="0.1" value={ca} disabled={el.completado && user.rol === ROLES.IN} onChange={e => setCnts(c => ({ ...c, [idx]: Number(e.target.value) }))} style={{ width: 64, textAlign: "center", fontSize: 13, padding: "4px", border: `1px solid ${C.g2}`, borderRadius: 6 }} />
               </div>}
               <div style={{ textAlign: "right", minWidth: 90 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>{fmt(precio * ca)}</div>
-                <div style={{ fontSize: 11, color: C.g4 }}>{elem?.unidad}</div>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>{fmt(precio * (eP && parcial[pk(idx)] ? parcial[pk(idx)] : ca))}</div>
+                <div style={{ fontSize: 11, color: C.g4 }}>{Number(ca) > 1 && elem?.unidad !== "ml" && elem?.unidad !== "m2" ? `${ca} ${elem?.unidad || "und"}` : elem?.unidad}</div>
               </div>
               {canEdit && !esDet && !el.completado && <button onClick={e => { e.stopPropagation(); updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.filter((_, i) => i !== idx) }) }) })); toast("Elemento eliminado", "ok"); }} style={{ marginLeft: 4, width: 28, height: 28, borderRadius: 6, ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14, fontWeight: 700 }}>🗑</button>}
 {canEdit && hecho && <button onClick={e => { e.stopPropagation(); esDet ? desmarcarDet(idx) : desmarcar(idx); }} style={{ marginLeft: 4, width: 28, height: 28, borderRadius: 6, ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14, fontWeight: 700 }}>✕</button>}
