@@ -95,7 +95,10 @@ function enCorte(fs, d, h) {
 // Lee el ajuste (pasajes/bonificación) de un instalador para un corte. Tolera ausencia de .ajustes.
 function ajusteDe(usuarios, iid, corteLabel) {
   const a = usuarios.find(x => x.id === iid)?.ajustes?.[corteLabel] || {};
-  return { pasajes: Number(a.pasajes) || 0, bonificacion: Number(a.bonificacion) || 0, aprobado: !!a.aprobado, editadoPor: a.editadoPor || "" };
+  // Días laborados: jornales pagados en el corte, por obra. No llevan retención (igual que pasajes).
+  const dias = Array.isArray(a.dias) ? a.dias.filter(d => Number(d.dias) > 0) : [];
+  const diasVal = dias.reduce((s, d) => s + Number(d.dias || 0) * Number(d.valorDia || 0), 0);
+  return { pasajes: Number(a.pasajes) || 0, bonificacion: Number(a.bonificacion) || 0, dias, diasVal, aprobado: !!a.aprobado, editadoPor: a.editadoPor || "" };
 }
 
 function Modal({ title, onClose, children, wide }) {
@@ -2092,13 +2095,18 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
     const aj = ajusteDe(users, iid, corte.label);
     const pas = aj.aprobado ? aj.pasajes : 0;
     const bon = aj.aprobado ? aj.bonificacion : 0;
-    const pendAdj = (!aj.aprobado && (aj.pasajes || aj.bonificacion)) ? 1 : 0;
-    return { bruto, ret, sub, pas, bon, total: sub + pas + bon, pendAdj, rows };
+    const dia = aj.aprobado ? aj.diasVal : 0;
+    const pendAdj = (!aj.aprobado && (aj.pasajes || aj.bonificacion || aj.diasVal)) ? 1 : 0;
+    const filasDias = aj.dias.map(d => ({
+      obra: obras.find(o => o.id === d.obraId)?.nombre || "—", apto: "—", el: "Día laborado", actividad: "Día laborado",
+      cant: Number(d.dias), precio: Number(d.valorDia || 0), fecha: "", adj: true, apr: aj.aprobado,
+    }));
+    return { bruto, ret, sub, pas, bon, dia, total: sub + pas + bon + dia, pendAdj, rows: [...rows, ...filasDias] };
   }
 
   async function cerrar(inst) {
     // pendAdj no se destructura: es estado de UI, no columna.
-    const { rows, bruto, ret, sub, pas, bon, total } = resumen(inst.id);
+    const { rows, bruto, ret, sub, pas, bon, dia, total } = resumen(inst.id);
     const l = {
       id: `l${Date.now()}${inst.id}`,
       inst_id: inst.id, inst_nombre: inst.nombre, inst_cedula: inst.cedula,
@@ -2126,7 +2134,8 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
     const cerr = cerrada(inst.id);
     // pendAdj:0 porque un ajuste pendiente ya no es accionable tras el cierre.
     const { rows, ...res } = cerr
-      ? { rows: cerr.rows || [], bruto: cerr.bruto, ret: cerr.ret, sub: cerr.sub, pas: cerr.pas, bon: cerr.bon, total: cerr.total, pendAdj: 0 }
+      ? { rows: cerr.rows || [], bruto: cerr.bruto, ret: cerr.ret, sub: cerr.sub, pas: cerr.pas, bon: cerr.bon, total: cerr.total, pendAdj: 0,
+          dia: (cerr.rows || []).filter(r => r.adj && r.el === "Día laborado" && r.apr).reduce((x, r) => x + (r.precio || 0) * (r.cant || 1), 0) }
       : resumen(inst.id);
     return { inst, cerr, rows, res };
   });
@@ -2331,7 +2340,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
                 </div>)}
               </div>}
               {rows.length > 0 && <div style={{ background: C.g0, borderRadius: 8, padding: "10px 14px", fontSize: 13, marginBottom: 12 }}>
-                {[["Total bruto", res.bruto], ["Retención 10%", -res.ret], ["Subtotal", res.sub], res.pas > 0 ? ["Pasajes", res.pas] : null, res.bon > 0 ? ["Bonificación", res.bon] : null].filter(Boolean).map(([l, v]) => (
+                {[["Total bruto", res.bruto], ["Retención 10%", -res.ret], ["Subtotal", res.sub], res.pas > 0 ? ["Pasajes", res.pas] : null, res.bon > 0 ? ["Bonificación", res.bon] : null, res.dia > 0 ? ["Días laborados", res.dia] : null].filter(Boolean).map(([l, v]) => (
                   <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: `1px solid ${C.g2}` }}><span style={{ color: C.g5 }}>{l}</span><span style={{ fontWeight: 500 }}>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>
                 ))}
                 <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0 0", fontWeight: 700, fontSize: 16, color: C.gnD }}><span>Total a pagar</span><span>{fmt(res.total)}</span></div>
@@ -2340,11 +2349,13 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
                 const aj = users.find(u => u.id === inst.id)?.ajustes?.[corte.label] || {};
                 const edita = (user.rol === ROLES.SA || user.rol === ROLES.IN) && !cerr;   // SA edita; IN propone
                 const tmp = ajTmp[inst.id] || {};
-                if (!edita && !(aj.pasajes || aj.bonificacion)) return null;
+                const diasAj = Array.isArray(aj.dias) ? aj.dias : [];
+                if (!edita && !(aj.pasajes || aj.bonificacion || diasAj.length)) return null;
+                const guardarDias = nuevos => guardarAjuste(inst.id, { dias: nuevos });
                 return <div style={{ background: C.amL, border: "1px solid #FDE68A", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "#B45309", marginBottom: 8, display: "flex", gap: 8, alignItems: "center" }}>
-                    Pasajes y Bonificación
-                    {aj.aprobado ? <span style={{ ...bdg("green"), fontSize: 10 }}>✓ Aprobado</span> : (aj.pasajes || aj.bonificacion) ? <span style={{ ...bdg("amber"), fontSize: 10 }}>⏳ Pendiente</span> : null}
+                    Pasajes, bonificación y días laborados
+                    {aj.aprobado ? <span style={{ ...bdg("green"), fontSize: 10 }}>✓ Aprobado</span> : (aj.pasajes || aj.bonificacion || diasAj.length) ? <span style={{ ...bdg("amber"), fontSize: 10 }}>⏳ Pendiente</span> : null}
                   </div>
                   {edita ? <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     <Inp label="Pasajes ($)" type="number" min="0"
@@ -2356,7 +2367,40 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
                       onChange={e => setAjTmp(s => ({ ...s, [inst.id]: { ...tmp, bonificacion: e.target.value } }))}
                       onBlur={e => guardarAjuste(inst.id, { bonificacion: Number(e.target.value) || 0 })} />
                   </div> : <div style={{ fontSize: 13, color: C.g5 }}>Pasajes: {fmt(aj.pasajes || 0)} · Bonificación: {fmt(aj.bonificacion || 0)}</div>}
-                  {user.rol === ROLES.SA && !cerr && (aj.pasajes || aj.bonificacion) ? <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end" }}>
+
+                  {/* Días laborados: jornales del corte, por obra */}
+                  <div style={{ marginTop: 10, borderTop: "1px dashed #FDE68A", paddingTop: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#B45309", marginBottom: 6 }}>Días laborados</div>
+                    {diasAj.length === 0 && !edita && <div style={{ fontSize: 13, color: C.g5 }}>Sin días laborados.</div>}
+                    {diasAj.map((d, k) => (
+                      <div key={k} style={{ display: "grid", gridTemplateColumns: edita ? "1.6fr 70px 110px 90px 28px" : "1.6fr 70px 110px 90px", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                        {edita ? <>
+                          <select value={d.obraId || ""} onChange={e => guardarDias(diasAj.map((x, j) => j === k ? { ...x, obraId: e.target.value } : x))}
+                            style={{ padding: "6px 8px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 13 }}>
+                            <option value="">— Obra —</option>
+                            {obras.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
+                          </select>
+                          <input type="number" min="0" step="0.5" placeholder="Días" defaultValue={d.dias}
+                            onBlur={e => guardarDias(diasAj.map((x, j) => j === k ? { ...x, dias: Number(e.target.value) || 0 } : x))}
+                            style={{ padding: "6px 8px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 13, textAlign: "right" }} />
+                          <input type="number" min="0" placeholder="Valor día" defaultValue={d.valorDia}
+                            onBlur={e => guardarDias(diasAj.map((x, j) => j === k ? { ...x, valorDia: Number(e.target.value) || 0 } : x))}
+                            style={{ padding: "6px 8px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 13, textAlign: "right" }} />
+                        </> : <>
+                          <span style={{ fontSize: 13 }}>{obras.find(o => o.id === d.obraId)?.nombre || "—"}</span>
+                          <span style={{ fontSize: 13, textAlign: "right" }}>{d.dias} día(s)</span>
+                          <span style={{ fontSize: 13, textAlign: "right" }}>{fmt(d.valorDia)}</span>
+                        </>}
+                        <span style={{ fontSize: 13, fontWeight: 700, textAlign: "right" }}>{fmt(Number(d.dias || 0) * Number(d.valorDia || 0))}</span>
+                        {edita && <span onClick={() => guardarDias(diasAj.filter((_, j) => j !== k))} title="Quitar"
+                          style={{ cursor: "pointer", color: C.rd, fontWeight: 700, textAlign: "center" }}>✕</span>}
+                      </div>
+                    ))}
+                    {edita && <button onClick={() => guardarDias([...diasAj, { obraId: "", dias: 1, valorDia: 0 }])}
+                      style={{ ...bdg("amber"), cursor: "pointer", fontSize: 12 }}>+ Agregar días</button>}
+                  </div>
+
+                  {user.rol === ROLES.SA && !cerr && (aj.pasajes || aj.bonificacion || diasAj.length) ? <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end" }}>
                     {!aj.aprobado && <Btn variant="success" onClick={() => aprobarAjuste(inst.id)}>Aprobar</Btn>}
                     <Btn variant="danger" onClick={() => eliminarAjuste(inst.id)}>Eliminar</Btn>
                   </div> : null}
@@ -2399,7 +2443,8 @@ function Historial({ liqs, setLiqs, user, users, toast }) {
     const fBon = rows.filter(r => r.adj && r.el === "Bonificación" && r.apr);
     const pas = fPas.length ? fPas.reduce((s, r) => s + (r.precio || 0), 0) : (base?.pas || 0);
     const bon = fBon.length ? fBon.reduce((s, r) => s + (r.precio || 0), 0) : (base?.bon || 0);
-    return { bruto, ret, sub, pas, bon, total: sub + pas + bon };
+    const dia = rows.filter(r => r.adj && r.el === "Día laborado" && r.apr).reduce((s, r) => s + (r.precio || 0) * (r.cant || 1), 0);
+    return { bruto, ret, sub, pas, bon, total: sub + pas + bon + dia };
   }
 
   async function guardarEdicion() {
