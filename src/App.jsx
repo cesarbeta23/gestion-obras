@@ -1446,7 +1446,7 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   // Cuántas unidades se marcan cuando el elemento trae varias (ej: 1 de 2 puertas)
   const [parcial, setParcial] = useState({});
   const [instSel, setInstSel] = useState({});
-  const [nAd, setNAd] = useState({ desc: "", cant: 1, val: 0, inst: "" });
+  const [nAd, setNAd] = useState({ desc: "", cant: 1, val: 0, inst: "", resp: "", memo: "" });
   const [addAd, setAddAd] = useState(false);
   // ARREGLO 3: estado para precios individuales por elemento en este apto
   const [precIndM, setPrecIndM] = useState(false);
@@ -1466,9 +1466,12 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const pk = i => esDet ? `d${i}` : i;   // llave de lo pendiente según la actividad
   const corteAct = getCorteFechas()[0];
 
+  // Un adicional de la obra sin memorando no se paga: no se deja marcar hasta tenerlo
+  const sinMemo = e => !!e?.esAdicional && e.responsable === "obra" && !String(e.memorando || "").trim();
   const canToggle = idx => {
     const e = curA.elementos?.[idx];
     if (!e || !canAct) return false;
+    if (sinMemo(e)) return false;
     if (esDet) return !!e.completado && !e.detCompletado;   // el detallado va después de instalar
     return !e.completado;
   };
@@ -1588,6 +1591,7 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
 
   async function guardarAd() {
     if (!nAd.desc || !nAd.val) return;
+    if (!nAd.resp) { toast("Elige si el adicional es de la obra o de Santa Lucía", "error"); return; }
     updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => {
       if (a.id !== apto.id) return a;
       // Atribución del adicional, derivada de "a" fresco (no del closure del render):
@@ -1598,11 +1602,17 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
       const instaladorId = asignadosA.length >= 2 ? (nAd.inst || asignadosA[0])
         : asignadosA.length === 1 ? asignadosA[0]
         : user.id;
-      const el = { elementoId: `__ad__${Date.now()}`, descripcion: nAd.desc, cantidad: Number(nAd.cant), valorUnitario: Number(nAd.val), completado: false, instaladorId, fecha: null, esAdicional: true, aprobado: false };
+      // responsable: "obra" = se le cobra a la constructora · "santalucia" = lo asumimos nosotros
+      const el = { elementoId: `__ad__${Date.now()}`, descripcion: nAd.desc, cantidad: Number(nAd.cant), valorUnitario: Number(nAd.val), completado: false, instaladorId, fecha: null, esAdicional: true, aprobado: false, responsable: nAd.resp,
+        memorando: nAd.resp === "obra" ? (String(nAd.memo || "").trim() || null) : null };
       return { ...a, elementos: [...(a.elementos || []), el] };
     }) }) }));
-    setNAd({ desc: "", cant: 1, val: 0, inst: "" }); setAddAd(false); toast("Adicional agregado", "ok");
+    if (nAd.resp === "obra" && !String(nAd.memo || "").trim()) toast("Adicional agregado. Sin memorando no se le paga al instalador.", "info");
+    else toast("Adicional agregado", "ok");
+    setNAd({ desc: "", cant: 1, val: 0, inst: "", resp: "", memo: "" }); setAddAd(false);
   }
+  const setMemoAd = (idx, memo) => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, memorando: String(memo || "").trim() || null }) }) }) }));
+  const setRespAd = (idx, resp) => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, responsable: resp }) }) }) }));
   const elimAd = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.filter((_, i) => i !== idx) }) }) }));
 
   // Precio individual del apto: instalación usa apto__…, detallado usa det__apto__…
@@ -1802,6 +1812,27 @@ const totLiq = totNorm + totAd + totExtra;
             <Inp label="Cantidad" type="number" min="0.1" step="0.1" value={nAd.cant} onChange={e => setNAd(n => ({ ...n, cant: e.target.value }))} />
             <Inp label="Valor unitario ($)" type="number" min="0" value={nAd.val} onChange={e => setNAd(n => ({ ...n, val: e.target.value }))} />
           </div>
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.g5, marginBottom: 6 }}>¿De quién es este adicional? *</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              {[["obra", "🏗️ De la obra", "Se le cobra a la constructora"], ["santalucia", "🪵 Santa Lucía", "Lo asumimos nosotros"]].map(([k, t, d]) => (
+                <button key={k} type="button" onClick={() => setNAd(n => ({ ...n, resp: k }))} style={{
+                  textAlign: "left", padding: "10px 12px", borderRadius: 8, cursor: "pointer", fontFamily: "system-ui",
+                  border: `2px solid ${nAd.resp === k ? (k === "obra" ? C.gn : C.rd) : C.g2}`,
+                  background: nAd.resp === k ? (k === "obra" ? C.gnL : C.rdL) : C.wh,
+                }}>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{t}</div>
+                  <div style={{ fontSize: 11, color: C.g5 }}>{d}</div>
+                </button>
+              ))}
+            </div>
+            {nAd.resp === "obra" && (
+              <div style={{ marginTop: 10 }}>
+                <Inp label="N° de memorando de la obra" value={nAd.memo} onChange={e => setNAd(n => ({ ...n, memo: e.target.value }))}
+                  placeholder="Ej: 3819" hint="Sin memorando el adicional no se le paga al instalador" />
+              </div>
+            )}
+          </div>
           {asignados.length >= 2 && (
             <Sel label="Instalador" value={nAd.inst || asignados[0]} onChange={e => setNAd(n => ({ ...n, inst: e.target.value }))}>
               {asignados.map(id => { const u = users.find(x => x.id === id); return <option key={id} value={id}>{u?.nombre || id}</option>; })}
@@ -1821,8 +1852,28 @@ const totLiq = totNorm + totAd + totExtra;
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 600, fontSize: 14 }}>{el.descripcion}</div>
-              <div style={{ fontSize: 12, color: C.g4 }}>Adicional · {el.cantidad} · {fmt(el.valorUnitario)} c/u</div>
+              <div style={{ fontSize: 12, color: C.g4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                Adicional · {el.cantidad} · {fmt(el.valorUnitario)} c/u
+                {el.responsable === "obra" && <span style={{ ...bdg("green"), fontSize: 10 }}>🏗️ De la obra{el.memorando ? ` · memo ${el.memorando}` : ""}</span>}
+                {el.responsable === "santalucia" && <span style={{ ...bdg("red"), fontSize: 10 }}>🪵 Santa Lucía</span>}
+                {!el.responsable && canEdit && (
+                  <select onClick={e => e.stopPropagation()} value="" onChange={e => { e.stopPropagation(); if (e.target.value) setRespAd(ir, e.target.value); }}
+                    style={{ fontSize: 11, padding: "2px 6px", border: `1px solid ${C.am}`, borderRadius: 6, color: "#B45309" }}>
+                    <option value="">⚠️ Sin clasificar…</option>
+                    <option value="obra">🏗️ De la obra</option>
+                    <option value="santalucia">🪵 Santa Lucía</option>
+                  </select>
+                )}
+              </div>
               {el.completado && <div style={{ fontSize: 12, color: C.gnD, fontWeight: 500 }}>{users.find(u => u.id === el.instaladorId)?.nombre} · {el.fecha}</div>}
+              {sinMemo(el) && (
+                <div onClick={e => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, color: C.rd, fontWeight: 700 }}>⛔ Sin memorando, no se paga</span>
+                  {canEdit && <input placeholder="N° memorando" onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                    onBlur={e => { if (e.target.value.trim()) setMemoAd(ir, e.target.value); }}
+                    style={{ width: 110, padding: "3px 6px", border: `1px solid ${C.rd}`, borderRadius: 6, fontSize: 12 }} />}
+                </div>
+              )}
             </div>
             <div style={{ textAlign: "right", minWidth: 90 }}><div style={{ fontSize: 14, fontWeight: 700 }}>{fmt(el.valorUnitario * el.cantidad)}</div></div>
             {canEdit && <button onClick={e => { e.stopPropagation(); el.completado ? desmarcar(ir) : elimAd(ir); }} style={{ ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, width: 28, height: 28, borderRadius: 6, fontSize: 14, fontWeight: 700 }}>✕</button>}
@@ -2104,7 +2155,11 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
       }
       if (el.completado && el.instaladorId === iid && enCorte(el.fecha, d, h)) {
         if (el.elementoId === "__pasajes__" || el.elementoId === "__bonificacion__") return; // migrados a user.ajustes
-        if (el.esAdicional) { rows.push({ obra: o.nombre, apto: a.nombre, el: `[Adicional] ${el.descripcion}`, cant: el.cantidad || 1, precio: el.valorUnitario || 0, fecha: el.fecha, adj: false, apr: true }); return; }
+        if (el.esAdicional) {
+          if (el.responsable === "obra" && !String(el.memorando || "").trim()) return;   // sin memorando no se paga
+          rows.push({ obra: o.nombre, apto: a.nombre, el: `[Adicional] ${el.descripcion}`, responsable: el.responsable || null, memorando: el.memorando || null, cant: el.cantidad || 1, precio: el.valorUnitario || 0, fecha: el.fecha, adj: false, apr: true });
+          return;
+        }
         const elem = elems.find(e => e.id === el.elementoId);
         const tip = esExtra ? el.tipologiaId : (el.tipologiaId || a.tipologia);
         rows.push({ obra: o.nombre, apto: a.nombre, el: elem?.nombre, actividad: "Instalación", cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label, a.id, tip), fecha: el.fecha, adj: false, apr: true });
