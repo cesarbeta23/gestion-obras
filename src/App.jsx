@@ -1605,6 +1605,21 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
   }
   const elimAd = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.filter((_, i) => i !== idx) }) }) }));
 
+  // Precio individual del apto: instalación usa apto__…, detallado usa det__apto__…
+  const keyPrecioApto = eid => `${esDet ? "det__" : ""}apto__${curA.id}__${eid}`;
+  const [precEdit, setPrecEdit] = useState(null);   // elementoId cuyo precio se está editando en la fila
+
+  function guardarPrecioUno(eid, valor) {
+    const k = keyPrecioApto(eid);
+    updateObra(obra.id, o => {
+      const po = { ...(o.preciosOverride || {}) };
+      if (valor === "" || valor === null) delete po[k]; else po[k] = Number(valor);
+      return { ...o, preciosOverride: po };
+    });
+    setPrecEdit(null);
+    toast(valor === "" ? "Precio vuelve al estándar" : "Precio de este apto actualizado", "ok");
+  }
+
   // ARREGLO 3: guardar precios individuales por elemento en este apto
   function guardarPreciosInd() {
     updateObra(obra.id, o => ({
@@ -1614,7 +1629,7 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
         ...Object.fromEntries(
           Object.entries(precIndTmp)
             .filter(([, v]) => v !== "")
-            .map(([eid, v]) => [`apto__${curA.id}__${eid}`, Number(v)])
+            .map(([eid, v]) => [keyPrecioApto(eid), Number(v)])
         )
       }
     }));
@@ -1720,7 +1735,7 @@ const totLiq = totNorm + totAd + totExtra;
           const precio = getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, curA.tipologia, esDet ? "det" : "inst");
           const esperaInst = esDet && !el.completado;   // no se puede detallar sin instalar
           // Indicar si tiene precio individual
-          const tieneOvInd = cur?.preciosOverride?.[`apto__${curA.id}__${el.elementoId}`] !== undefined;
+          const tieneOvInd = cur?.preciosOverride?.[keyPrecioApto(el.elementoId)] !== undefined;
           return (
             <div key={idx} onClick={() => cT && togglePend(idx)} style={{ display: "flex", alignItems: "center", gap: 12, opacity: esperaInst ? .55 : 1, background: hecho ? C.gnL : eP ? C.orL : C.wh, border: `1.5px solid ${hecho ? "#BBF7D0" : eP ? C.orM : C.g2}`, borderRadius: 10, padding: "12px 14px", cursor: cT ? "pointer" : "default", transition: "all .12s" }}>
               <div style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0, border: `2.5px solid ${hecho ? C.gn : eP ? C.or : C.g3}`, background: hecho ? C.gn : eP ? C.or : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -1753,8 +1768,20 @@ const totLiq = totNorm + totAd + totExtra;
                 <span style={{ fontSize: 12, color: C.g4 }}>{elem.unidad}</span>
                 <input type="number" min="0.1" step="0.1" value={ca} disabled={el.completado && user.rol === ROLES.IN} onChange={e => setCnts(c => ({ ...c, [idx]: Number(e.target.value) }))} style={{ width: 64, textAlign: "center", fontSize: 13, padding: "4px", border: `1px solid ${C.g2}`, borderRadius: 6 }} />
               </div>}
-              <div style={{ textAlign: "right", minWidth: 90 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>{fmt(precio * (eP && parcial[pk(idx)] ? parcial[pk(idx)] : ca))}</div>
+              <div style={{ textAlign: "right", minWidth: 90 }} onClick={e => e.stopPropagation()}>
+                {precEdit === el.elementoId ? (
+                  <input type="number" min="0" autoFocus defaultValue={precio}
+                    onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") setPrecEdit(null); }}
+                    onBlur={e => { const v = e.target.value; if (Number(v) !== precio) guardarPrecioUno(el.elementoId, v); else setPrecEdit(null); }}
+                    style={{ width: 96, padding: "4px 6px", border: `1.5px solid ${C.or}`, borderRadius: 6, fontSize: 13, textAlign: "right" }} />
+                ) : (
+                  <div title={canEdit ? "Clic para cambiar el precio unitario en este apto" : ""}
+                    onClick={() => canEdit && setPrecEdit(el.elementoId)}
+                    style={{ fontSize: 14, fontWeight: 700, cursor: canEdit ? "pointer" : "default", borderBottom: canEdit ? `1px dashed ${C.g3}` : "none" }}>
+                    {fmt(precio * (eP && parcial[pk(idx)] ? parcial[pk(idx)] : ca))}
+                  </div>
+                )}
+                {Number(ca) > 1 && precEdit !== el.elementoId && <div style={{ fontSize: 10, color: C.g4 }}>{fmt(precio)} c/u</div>}
                 <div style={{ fontSize: 11, color: C.g4 }}>{Number(ca) > 1 && elem?.unidad !== "ml" && elem?.unidad !== "m2" ? `${ca} ${elem?.unidad || "und"}` : elem?.unidad}</div>
               </div>
               {canEdit && !esDet && !el.completado && <button onClick={e => { e.stopPropagation(); updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.filter((_, i) => i !== idx) }) }) })); toast("Elemento eliminado", "ok"); }} style={{ marginLeft: 4, width: 28, height: 28, borderRadius: 6, ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14, fontWeight: 700 }}>🗑</button>}
@@ -1882,7 +1909,7 @@ const totLiq = totNorm + totAd + totExtra;
       </div>}
 
       {/* ARREGLO 3: Modal precios individuales por apto */}
-      {precIndM && <Modal title={`Precios individuales — Apto ${curA.nombre}`} onClose={() => setPrecIndM(false)} wide>
+      {precIndM && <Modal title={`Precios ${esDet ? "de detallado" : "de instalación"} — Apto ${curA.nombre}`} onClose={() => setPrecIndM(false)} wide>
         <p style={{ fontSize: 13, color: C.g5, margin: "0 0 12px" }}>
           Ajusta el precio de cada elemento solo para este apartamento. No modifica el precio base ni otros aptos.<br />
           Deja vacío para usar el precio estándar del corte.
@@ -1891,8 +1918,8 @@ const totLiq = totNorm + totAd + totExtra;
           {elsNorm.map(el => {
             const elem = elems.find(e => e.id === el.elementoId);
             if (!elem) return null;
-            const precioStd = getPrecio(el.elementoId, obra.id, corteAct.label);
-            const keyInd = `apto__${curA.id}__${el.elementoId}`;
+            const precioStd = getPrecio(el.elementoId, obra.id, corteAct.label, null, curA.tipologia, esDet ? "det" : "inst");
+            const keyInd = keyPrecioApto(el.elementoId);
             const ovActual = cur?.preciosOverride?.[keyInd];
             return <div key={el.elementoId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: ovActual !== undefined ? C.orL : C.g0, borderRadius: 8, border: `1px solid ${ovActual !== undefined ? C.orM : C.g2}` }}>
               <div style={{ flex: 1, fontSize: 14 }}>
