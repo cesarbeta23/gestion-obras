@@ -64,6 +64,9 @@ const bV = {
 const fmt = n => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n || 0);
 const lbl = () => ({ fontSize: 12, color: C.g5, display: "block", marginBottom: 4, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.04em" });
 
+// Un elemento que nació del contrato puede servir para varias torres (obras) del mismo proyecto
+const esDeObra = (e, obraId) => e.obra_id === obraId || (e.obras_extra || []).includes(obraId);
+
 const GRUPOS = ["Puertas", "Closets y vestier", "Cocinas", "Zócalos y molduras", "Pisos", "Otros"];
 
 function bdg(t) {
@@ -1306,7 +1309,7 @@ const disponibles = misHabilitados.filter(a => {
         </Sel>
         {precCorte && <><p style={{ fontSize: 13, color: C.g5, margin: "0 0 12px" }}>Modifica el precio para este corte. Vacío = precio estándar.</p>
           <div style={{ maxHeight: 300, overflowY: "auto", display: "grid", gap: 8 }}>
-            {elems.filter(e => e.activo !== false && (!e.obra_id || e.obra_id === obra.id)).map(e => {
+            {elems.filter(e => e.activo !== false && (!e.obra_id || esDeObra(e, obra.id))).map(e => {
               const k = `${precCorte}__${e.id}`; const ov = cur.preciosOverride?.[k];
               return <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: C.g0, borderRadius: 8 }}>
                 <div style={{ flex: 1, fontSize: 14 }}>{e.nombre} <span style={{ fontSize: 12, color: C.g4 }}>({fmt(e.precio)} std)</span></div>
@@ -1324,7 +1327,7 @@ const disponibles = misHabilitados.filter(a => {
         <Inp label="Nombre" value={tipForm.nombre} onChange={e => setTipForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Ej: Tipo A — 3 alcobas" />
         <div style={{ marginBottom: 14 }}>
           {(() => {
-            const propios = elems.filter(e => e.obra_id === obra.id && e.activo !== false).length;
+            const propios = elems.filter(e => esDeObra(e, obra.id) && e.activo !== false).length;
             return (
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
                 <label style={{ ...lbl(), marginBottom: 0 }}>Elementos incluidos</label>
@@ -1341,15 +1344,15 @@ const disponibles = misHabilitados.filter(a => {
           })()}
           <div style={{ maxHeight: 260, overflowY: "auto", border: `1px solid ${C.g2}`, borderRadius: 8, padding: 8, background: C.wh }}>
             {(() => {
-              const hayPropios = elems.some(e => e.obra_id === obra.id && e.activo !== false);
+              const hayPropios = elems.some(e => esDeObra(e, obra.id) && e.activo !== false);
               const q = buscaEl.trim().toLowerCase();
               return elems.filter(e =>
                 (e.activo !== false || tipForm.eids.includes(e.id)) &&
                 (!q || (e.nombre || "").toLowerCase().includes(q)) &&
                 (tipForm.eids.includes(e.id) ||                       // los ya elegidos siempre se ven
                   (hayPropios && !verGenerales
-                    ? e.obra_id === obra.id                            // solo los de esta obra
-                    : (!e.obra_id || e.obra_id === obra.id))))
+                    ? esDeObra(e, obra.id)                             // solo los de esta obra
+                    : (!e.obra_id || esDeObra(e, obra.id)))))
               .sort((a, b) => ((a.grupo || "Sin grupo") + a.nombre).localeCompare((b.grupo || "Sin grupo") + b.nombre))
               .map(e => <label key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", cursor: "pointer", fontSize: 14, borderRadius: 6, background: tipForm.eids.includes(e.id) ? C.orL : "transparent" }}>
               <input type="checkbox" checked={tipForm.eids.includes(e.id)} onChange={x => setTipForm(f => ({ ...f, eids: x.target.checked ? [...f.eids, e.id] : f.eids.filter(i => i !== e.id) }))} />
@@ -1952,7 +1955,7 @@ function Elementos({ elems, setElems, obras = [], openM, closeM, modals }) {
   const visibles = elems.filter(e =>
     (verInactivos || e.activo !== false) &&
     (!q || (e.nombre || "").toLowerCase().includes(q)) &&
-    (filtObra === "" || (filtObra === "gen" ? !e.obra_id : e.obra_id === filtObra))
+    (filtObra === "" || (filtObra === "gen" ? !e.obra_id : esDeObra(e, filtObra)))
   );
   const gruposUsados = [...GRUPOS, "Sin grupo"].filter(g =>
     visibles.some(e => (e.grupo || "Sin grupo") === g));
