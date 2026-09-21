@@ -166,6 +166,17 @@ const ELEMENTOS_DEF = [
 
 export default function App() {
   const [user, setUser] = useState(() => {
+    // Llegó desde el ERP con un pase: se guarda como sesión y se limpia la URL
+    try {
+      const m = window.location.hash.match(/^#sso=(.+)$/);
+      if (m) {
+        const data = JSON.parse(decodeURIComponent(escape(atob(decodeURIComponent(m[1])))));
+        if (data?.token && data?.exp && data.exp * 1000 > Date.now()) {
+          localStorage.setItem("gs", JSON.stringify({ user: data.user, token: data.token, exp: data.exp }));
+        }
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    } catch { /* pase dañado: se sigue con el login normal */ }
     try {
       const s = JSON.parse(localStorage.getItem("gs") || "null");
       if (!s?.token || !s?.exp || s.exp * 1000 < Date.now()) { localStorage.removeItem("gs"); return null; }
