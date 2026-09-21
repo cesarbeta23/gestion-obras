@@ -9,6 +9,21 @@ let _pase = null;
 const setPase = t => { _pase = t || null; };
 const H = () => ({ "Content-Type": "application/json", "apikey": SUPA_KEY, "Authorization": `Bearer ${_pase || SUPA_KEY}`, "Prefer": "return=representation" });
 const API = import.meta.env.DEV ? "http://localhost:3001" : "";
+const ERP_URL = "https://santa-lucia-erp.vercel.app";
+
+// Abre el ERP con la sesión actual, sin volver a ingresar
+async function irAlERP(toast) {
+  // la pestaña se abre de una para que el navegador no la bloquee
+  const ventana = window.open("about:blank", "_blank");
+  try {
+    const r = await fetch(`${API}/api/pase-erp`, { method: "POST", headers: { Authorization: `Bearer ${_pase}` } });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.token) { ventana?.close(); toast(data.error || "No se pudo abrir el ERP", "error"); return; }
+    const sso = btoa(unescape(encodeURIComponent(JSON.stringify(data))));
+    const url = `${ERP_URL}/#sso=${encodeURIComponent(sso)}`;
+    if (ventana) ventana.location.href = url; else window.location.href = url;
+  } catch { ventana?.close(); toast("Error de conexión", "error"); }
+}
 const dbGet = async (t, sel = "*") => (await fetch(`${SUPA_URL}/rest/v1/${t}?select=${sel}`, { headers: H() })).json();
 const dbUpsert = async (t, d) => fetch(`${SUPA_URL}/rest/v1/${t}`, { method: "POST", headers: { ...H(), "Prefer": "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(d) });
 const dbDel = async (t, id) => fetch(`${SUPA_URL}/rest/v1/${t}?id=eq.${id}`, { method: "DELETE", headers: H() });
@@ -277,7 +292,7 @@ export default function App() {
   return (
     <div style={{ fontFamily: "system-ui,sans-serif", maxWidth: 920, margin: "0 auto", padding: "1rem", background: C.g0, minHeight: "100vh" }}>
       <Toast items={toasts} setItems={setToasts} />
-      <Header user={user} doLogout={doLogout} view={view} setView={setView} selObra={selObra} setSelObra={setSelObra} setSelPiso={setSelPiso} setSelApto={setSelApto} />
+      <Header toast={toast} user={user} doLogout={doLogout} view={view} setView={setView} selObra={selObra} setSelObra={setSelObra} setSelPiso={setSelPiso} setSelApto={setSelApto} />
       {view === "obras" && <Obras {...sh} avanceObra={avanceObra} goObra={o => { setSelObra(o); setView("obra"); }} />}
       {view === "obra" && selObra && <Obra {...sh} obra={obras.find(o => o.id === selObra.id) || selObra} goApto={(a, p) => { setSelApto(a); setSelPiso(p); setView("apto"); }} />}
       {view === "apto" && selApto && selObra && <Apto {...sh} apto={selApto} piso={selPiso} obra={obras.find(o => o.id === selObra.id)} />}
@@ -307,7 +322,7 @@ function LoginScreen({ login, setLogin, doLogin, err }) {
   );
 }
 
-function Header({ user, doLogout, view, setView, selObra, setSelObra, setSelPiso, setSelApto }) {
+function Header({ user, doLogout, view, setView, selObra, setSelObra, setSelPiso, setSelApto, toast }) {
   const rL = { superadmin: "Superadmin", supervisor: "Supervisor", auxiliar: "Auxiliar", instalador: "Instalador" };
   const nav = [
     { k: "obras", l: "Obras", r: [ROLES.SA, ROLES.SV, ROLES.AX, ROLES.IN] },
@@ -326,7 +341,13 @@ function Header({ user, doLogout, view, setView, selObra, setSelObra, setSelPiso
             <span style={{ ...bdg("orange"), fontSize: 11, padding: "2px 8px" }}>{rL[user.rol]}</span>
           </div>
         </div>
-        <button onClick={doLogout} style={{ background: "transparent", border: `1px solid ${C.g8}`, color: C.g3, borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 13, fontFamily: "system-ui" }}>Salir</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          {user.rol !== ROLES.IN && (
+            <button onClick={() => irAlERP(toast)} title="Abrir el ERP sin volver a ingresar"
+              style={{ background: C.or, border: "none", color: C.wh, borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "system-ui" }}>↗ ERP</button>
+          )}
+          <button onClick={doLogout} style={{ background: "transparent", border: `1px solid ${C.g8}`, color: C.g3, borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 13, fontFamily: "system-ui" }}>Salir</button>
+        </div>
       </div>
       {(view === "obra" || view === "apto") && (
         <div style={{ fontSize: 13, color: C.g5, marginBottom: 8, display: "flex", gap: 6, alignItems: "center", padding: "0 4px" }}>
@@ -1320,14 +1341,20 @@ const disponibles = misHabilitados.filter(a => {
               <input type="checkbox" checked={tipForm.eids.includes(e.id)} onChange={x => setTipForm(f => ({ ...f, eids: x.target.checked ? [...f.eids, e.id] : f.eids.filter(i => i !== e.id) }))} />
               <span style={{ flex: 1, color: C.bk }}>{e.nombre}<span style={{ fontSize: 11, color: C.g4, marginLeft: 6 }}>{e.grupo || "Sin grupo"}</span></span>
               <span style={{ fontSize: 12, color: C.g4 }}>{e.unidad} · {fmt(e.precio)}{Number(e.precio_detallado) ? ` + ${fmt(e.precio_detallado)}` : ""}</span>
-              {tipForm.eids.includes(e.id) && (e.unidad === "ml" || e.unidad === "m2") && (
-                <input type="number" min="0.1" step="0.1" placeholder="Cant."
-                  value={tipForm.cantidades?.[e.id] ?? ""}
-                  onClick={x => x.stopPropagation()}
-                  onChange={x => { x.stopPropagation(); setTipForm(f => ({ ...f, cantidades: { ...f.cantidades, [e.id]: Number(x.target.value) } })); }}
-                  style={{ width: 64, padding: "2px 6px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 12, textAlign: "right" }}
-                />
-              )}
+              {tipForm.eids.includes(e.id) && (() => {
+                const decimal = e.unidad === "ml" || e.unidad === "m2";
+                return (
+                  <span onClick={x => x.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ fontSize: 11, color: C.g4 }}>Cant.</span>
+                    <input type="number" min={decimal ? "0.1" : "1"} step={decimal ? "0.1" : "1"} placeholder="1"
+                      value={tipForm.cantidades?.[e.id] ?? ""}
+                      onClick={x => x.stopPropagation()}
+                      onChange={x => { x.stopPropagation(); setTipForm(f => ({ ...f, cantidades: { ...f.cantidades, [e.id]: Number(x.target.value) || 1 } })); }}
+                      style={{ width: 56, padding: "2px 6px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 12, textAlign: "right" }}
+                    />
+                  </span>
+                );
+              })()}
               {tipForm.eids.includes(e.id) && (
                 <input type="number" min="0" step="1" placeholder={e.precio != null ? String(e.precio) : "Precio"}
                   value={tipForm.precios?.[e.id] ?? ""}
