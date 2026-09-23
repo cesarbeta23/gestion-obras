@@ -3028,6 +3028,12 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
                   </>)}
                 </div>
 
+
+              </div>
+            );
+          })()}
+        </div>
+      )}
       {/* ── Retenidos por instalador (todas las obras) ── */}
       {tipo === "retenidos" && (() => {
         const filas = retenidosDe(instId);
@@ -3141,12 +3147,6 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
           </div>
         );
       })()}
-
-              </div>
-            );
-          })()}
-        </div>
-      )}
     </div>
   );
 }
