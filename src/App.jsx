@@ -391,6 +391,7 @@ function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra,
   const [editM, setEditM] = useState(null);
   const [editF, setEditF] = useState({});
   const [genPisos, setGenPisos] = useState({ inicio: 1, cantidad: 1, aptos: 1 });
+  const [buscaObra, setBuscaObra] = useState("");
 
   // Genera varios pisos con sus aptos de una vez, igual que al crear la obra.
   // Los pisos que ya existan se conservan.
@@ -456,15 +457,36 @@ function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra,
     toast("Solicitud enviada", "ok");
   }
 
-  const visibles = obras.filter(o => user.rol === ROLES.SA || user.rol === ROLES.SV || user.rol === ROLES.AX || (user.rol === ROLES.IN && (o.instaladoresAutorizados || []).includes(user.id)));
+  const conAcceso = obras.filter(o => user.rol === ROLES.SA || user.rol === ROLES.SV || user.rol === ROLES.AX || (user.rol === ROLES.IN && (o.instaladoresAutorizados || []).includes(user.id)));
+  const q = buscaObra.trim().toLowerCase();
+  const visibles = [...conAcceso]
+    .filter(o => !q || (o.nombre || "").toLowerCase().includes(q) || (o.direccion || "").toLowerCase().includes(q))
+    .sort((a, b) => (a.nombre || "").localeCompare(b.nombre || ""));
   const sinAcceso = user.rol === ROLES.IN ? obras.filter(o => !(o.instaladoresAutorizados || []).includes(user.id)) : [];
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>Obras</h2>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>Obras <span style={{ fontSize: 14, color: C.g4, fontWeight: 500 }}>({conAcceso.length})</span></h2>
         {user.rol === ROLES.SA && <Btn variant="primary" onClick={() => openM("nObra")}>+ Nueva obra</Btn>}
       </div>
+
+      {/* Buscar una obra o ir directo a ella, sin bajar por toda la lista */}
+      {conAcceso.length > 3 && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+          <input placeholder="🔎 Buscar obra…" value={buscaObra} onChange={e => setBuscaObra(e.target.value)}
+            style={{ flex: 1, minWidth: 180, padding: "9px 12px", border: `1px solid ${C.g2}`, borderRadius: 10, fontSize: 14, fontFamily: "system-ui" }} />
+          <select value="" onChange={e => { const o = conAcceso.find(x => x.id === e.target.value); if (o) goObra(o); }}
+            style={{ minWidth: 190, padding: "9px 12px", border: `1px solid ${C.g2}`, borderRadius: 10, fontSize: 14, fontFamily: "system-ui", background: C.wh }}>
+            <option value="">Ir a una obra…</option>
+            {[...conAcceso].sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "")).map(o => (
+              <option key={o.id} value={o.id}>{o.nombre}</option>
+            ))}
+          </select>
+          {buscaObra && <Btn onClick={() => setBuscaObra("")}>Limpiar</Btn>}
+        </div>
+      )}
+      {q && visibles.length === 0 && <p style={{ fontSize: 13, color: C.g4, marginBottom: 12 }}>Ninguna obra con ese nombre.</p>}
 
       {visibles.length === 0 && user.rol !== ROLES.IN && (
         <div style={{ textAlign: "center", padding: "4rem", color: C.g4, background: C.wh, borderRadius: 12, border: `1px solid ${C.g2}` }}>
