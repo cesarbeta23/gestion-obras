@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
 
 const SUPA_URL = "https://kboumpkcrdeuteiiodjp.supabase.co";
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtib3VtcGtjcmRldXRlaWlvZGpwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2ODA2MTQsImV4cCI6MjA5NDI1NjYxNH0.gTjqSnxI8F7ozcLSWB2rCDexP7ubgX1fwG2uOM3L0rI";
@@ -40,6 +41,11 @@ const liqToDb = l => ({
   total: l.total, rows: l.rows,
 });
 const mapLiq = r => ({ ...r, ret: r.retencion ?? 0, sub: r.subtotal ?? 0, pas: r.pasajes ?? 0, bon: r.bonificacion ?? 0 });
+
+// En Gestión de Obras la oficina (superadmin, supervisor y auxiliar) tiene acceso completo;
+// los instaladores siguen con su vista limitada.
+const OFICINA = ["superadmin", "supervisor", "auxiliar"];
+const esOficina = u => OFICINA.includes(u?.rol);
 
 const ROLES = { SA: "superadmin", SV: "supervisor", AX: "auxiliar", IN: "instalador" };
 
@@ -313,10 +319,10 @@ export default function App() {
       {view === "obras" && <Obras {...sh} avanceObra={avanceObra} goObra={o => { setSelObra(o); setView("obra"); }} />}
       {view === "obra" && selObra && <Obra {...sh} obra={obras.find(o => o.id === selObra.id) || selObra} goApto={(a, p) => { setSelApto(a); setSelPiso(p); setView("apto"); }} />}
       {view === "apto" && selApto && selObra && <Apto {...sh} apto={selApto} piso={selPiso} obra={obras.find(o => o.id === selObra.id)} />}
-      {view === "elems" && user.rol === ROLES.SA && <Elementos {...sh} />}
+      {view === "elems" && esOficina(user) && <Elementos {...sh} />}
       {view === "liqs" && <Liquidacion {...sh} avanceObra={avanceObra} />}
-      {view === "reportes" && [ROLES.SA, ROLES.SV].includes(user.rol) && <Reportes obras={obras} elems={elems} users={users} user={user} getPrecio={getPrecio} avanceObra={avanceObra} liqs={liqs} />}
-      {view === "users" && user.rol === ROLES.SA && <Usuarios {...sh} />}
+      {view === "reportes" && esOficina(user) && <Reportes obras={obras} elems={elems} users={users} user={user} getPrecio={getPrecio} avanceObra={avanceObra} liqs={liqs} />}
+      {view === "users" && esOficina(user) && <Usuarios {...sh} />}
     </div>
   );
 }
@@ -343,10 +349,10 @@ function Header({ user, doLogout, view, setView, selObra, setSelObra, setSelPiso
   const rL = { superadmin: "Superadmin", supervisor: "Supervisor", auxiliar: "Auxiliar", instalador: "Instalador" };
   const nav = [
     { k: "obras", l: "Obras", r: [ROLES.SA, ROLES.SV, ROLES.AX, ROLES.IN] },
-    { k: "elems", l: "Elementos", r: [ROLES.SA] },
+    { k: "elems", l: "Elementos", r: [ROLES.SA, ROLES.SV, ROLES.AX] },
     { k: "liqs", l: "Liquidación", r: [ROLES.SA, ROLES.SV, ROLES.AX, ROLES.IN] },
-    { k: "reportes", l: "Reportes", r: [ROLES.SA, ROLES.SV] },
-    { k: "users", l: "Usuarios", r: [ROLES.SA] }
+    { k: "reportes", l: "Reportes", r: [ROLES.SA, ROLES.SV, ROLES.AX] },
+    { k: "users", l: "Usuarios", r: [ROLES.SA, ROLES.SV, ROLES.AX] }
   ];
   return (
     <div style={{ marginBottom: 20 }}>
@@ -468,7 +474,7 @@ function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra,
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>Obras <span style={{ fontSize: 14, color: C.g4, fontWeight: 500 }}>({conAcceso.length})</span></h2>
-        {user.rol === ROLES.SA && <Btn variant="primary" onClick={() => openM("nObra")}>+ Nueva obra</Btn>}
+        {esOficina(user) && <Btn variant="primary" onClick={() => openM("nObra")}>+ Nueva obra</Btn>}
       </div>
 
       {/* Buscar una obra o ir directo a ella, sin bajar por toda la lista */}
@@ -492,7 +498,7 @@ function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra,
         <div style={{ textAlign: "center", padding: "4rem", color: C.g4, background: C.wh, borderRadius: 12, border: `1px solid ${C.g2}` }}>
           <div style={{ fontSize: 48, marginBottom: 12 }}>🏢</div>
           <p>No hay obras</p>
-          {user.rol === ROLES.SA && <Btn variant="primary" onClick={() => openM("nObra")}>Crear primera obra</Btn>}
+          {esOficina(user) && <Btn variant="primary" onClick={() => openM("nObra")}>Crear primera obra</Btn>}
         </div>
       )}
 
@@ -512,9 +518,9 @@ function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra,
                   {coord && <div style={{ fontSize: 12, color: C.or, marginTop: 3, fontWeight: 600 }}>👤 {coord.nombre}</div>}
                 </div>
                 <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                  {pend > 0 && user.rol === ROLES.SA && <span onClick={e => { e.stopPropagation(); setAccM(o.id); }} style={{ ...bdg("amber"), cursor: "pointer" }}>{pend} sol.</span>}
+                  {pend > 0 && esOficina(user) && <span onClick={e => { e.stopPropagation(); setAccM(o.id); }} style={{ ...bdg("amber"), cursor: "pointer" }}>{pend} sol.</span>}
                   <span style={bdg("green")}>{o.estado}</span>
-                  {user.rol === ROLES.SA && <>
+                  {esOficina(user) && <>
                     <button onClick={e => { e.stopPropagation(); setEditF({ nombre: o.nombre, direccion: o.direccion, coordinadorId: o.coordinadorId || "" }); setEditM(o.id); }} style={{ ...bdg("gray"), cursor: "pointer" }}>✎</button>
                     <button onClick={e => { e.stopPropagation(); setAccM(o.id); }} style={{ ...bdg("gray"), cursor: "pointer" }}>👷</button>
                     <button onClick={e => { e.stopPropagation(); setDelM(o.id); }} style={{ ...bdg("red"), cursor: "pointer" }}>🗑</button>
@@ -1084,7 +1090,7 @@ const disponibles = misHabilitados.filter(a => {
           <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>{obra.nombre}</h2>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: C.g5 }}>{obra.direccion}</p>
         </div>
-        {user.rol === ROLES.SA && <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {esOficina(user) && <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <Btn onClick={() => { setPrecTmp({}); setPrecCorte(""); setPreciosM(true); }}>💰 Precios</Btn>
           <Btn onClick={() => setAccModal(true)}>👷 Accesos</Btn>
           <Btn onClick={() => setRepModal(true)}>Replicar</Btn>
@@ -1104,7 +1110,7 @@ const disponibles = misHabilitados.filter(a => {
           {tips.map(t => (
             <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 6, ...bdg("orange") }}>
               <span>{t.nombre} · {t.elementoIds?.length || 0} elem.</span>
-              {user.rol === ROLES.SA && <>
+              {esOficina(user) && <>
                 <span onClick={() => abrirEditar(t)} style={{ cursor: "pointer", fontWeight: 700 }}>✎</span>
                 <span onClick={() => setDelTipId(t.id)} style={{ cursor: "pointer", fontWeight: 700, color: C.rd, marginLeft: 2 }}>🗑</span>
 <span onClick={() => { setDupTip(t); setDupPrecios({}); }} style={{ cursor: "pointer", fontWeight: 700, color: C.gnD, marginLeft: 2 }}>⧉</span>
@@ -1122,7 +1128,7 @@ const disponibles = misHabilitados.filter(a => {
           <div key={piso.id} style={{ marginBottom: 20 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, borderBottom: `2px solid ${C.g1}`, paddingBottom: 8 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: C.g5, textTransform: "uppercase", letterSpacing: ".06em" }}>Piso {piso.numero}</div>
-              {user.rol === ROLES.SA && !vistaInst && <div style={{ display: "flex", gap: 6 }}>
+              {esOficina(user) && !vistaInst && <div style={{ display: "flex", gap: 6 }}>
   <button onClick={() => setPisoEditM(piso.id)} style={{ ...bdg("gray"), cursor: "pointer", fontSize: 11 }}>✎ Editar aptos</button>
   <button onClick={() => setRepNom({ pisoId: piso.id, desde: piso.numero + 1, hasta: piso.numero + 1, crear: true })}
     style={{ ...bdg("orange"), cursor: "pointer", fontSize: 11 }}>⧉ Replicar nomenclatura</button>
@@ -1153,7 +1159,7 @@ const disponibles = misHabilitados.filter(a => {
   }
   return habPara.length > 0 ? <div style={{ fontSize: 10, color: C.am, marginBottom: 4 }}>🔓 {habPara.join(", ")}</div> : null;
 })()}
-                    {user.rol === ROLES.SA && apto.tipologia && (() => {
+                    {esOficina(user) && apto.tipologia && (() => {
   const asignados = apto.instaladoresAsignados || (apto.instaladorAsignado ? [apto.instaladorAsignado] : []);
   const disponibles = instsActivos.filter(i => !asignados.includes(i.id));
   if (asignados.length >= 5) return null;
@@ -1190,7 +1196,7 @@ const disponibles = misHabilitados.filter(a => {
                         </select>
                         : <button onClick={e => { e.stopPropagation(); setAsign(apto.id); }} style={{ fontSize: 10, ...bdg("orange"), cursor: "pointer", marginTop: 4 }}>+ tipología</button>
                     ) : <div style={{ fontSize: 10, color: C.g4 }}>Sin asignar</div>}
-                    {user.rol === ROLES.SA && (() => {
+                    {esOficina(user) && (() => {
   const asignados = apto.instaladoresAsignados || (apto.instaladorAsignado ? [apto.instaladorAsignado] : []);
   if (!asignados.length) return null;
   return <div onClick={e => e.stopPropagation()} style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3 }}>
@@ -1208,7 +1214,7 @@ const disponibles = misHabilitados.filter(a => {
   if (!t) return null;
   return <div key={tipId} style={{ fontSize: 9, ...bdg("amber"), marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
     <span>+{t.nombre}</span>
-    {user.rol === ROLES.SA && <span onClick={e => { e.stopPropagation(); quitarTip(piso.id, apto.id, tipId); }} style={{ cursor: "pointer", fontWeight: 700, color: C.rd }}>×</span>}
+    {esOficina(user) && <span onClick={e => { e.stopPropagation(); quitarTip(piso.id, apto.id, tipId); }} style={{ cursor: "pointer", fontWeight: 700, color: C.rd }}>×</span>}
   </div>;
 })}
                   </div>
@@ -1479,7 +1485,7 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const esDet = act === "det";
   const asignados = esDet ? asignadosDet : asignadosInst;
   const oficio = user.oficio || "instalador";
-  const canEdit = user.rol === ROLES.SA || user.rol === ROLES.SV;
+  const canEdit = esOficina(user);
   // Un instalador solo marca su oficio; el detallado además exige que ya esté instalado.
   const canAct = canEdit || (user.rol === ROLES.IN && (
     esDet ? ["detallador", "ambos"].includes(oficio) : ["instalador", "ambos"].includes(oficio)
@@ -1695,7 +1701,7 @@ const totLiq = totNorm + totAd + totExtra;
           <p style={{ margin: "4px 0 0", fontSize: 13, color: C.g5 }}>{obra.nombre} · Piso {piso.numero}</p>
         </div>
         {/* ARREGLO 3: botón precios individuales para SA */}
-        {user.rol === ROLES.SA && tip && (
+        {esOficina(user) && tip && (
           <Btn onClick={() => { setPrecIndTmp({}); setPrecIndM(true); }}>💰 Precios apto</Btn>
         )}
       </div>
@@ -2268,7 +2274,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
   async function guardarAjuste(iid, patch) {
     const u = users.find(x => x.id === iid); if (!u) return;
     const prev = u.ajustes?.[corte.label] || {};
-    const nuevo = { pasajes: 0, bonificacion: 0, ...prev, ...patch, aprobado: user.rol === ROLES.SA, editadoPor: user.id };
+    const nuevo = { pasajes: 0, bonificacion: 0, ...prev, ...patch, aprobado: esOficina(user), editadoPor: user.id };
     const merged = { ...u, ajustes: { ...(u.ajustes || {}), [corte.label]: nuevo } };
     if (await upsertUsuario(merged)) setUsers(xs => xs.map(x => x.id === iid ? merged : x));
   }
@@ -2454,7 +2460,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
               </div>}
               {(() => {
                 const aj = users.find(u => u.id === inst.id)?.ajustes?.[corte.label] || {};
-                const edita = (user.rol === ROLES.SA || user.rol === ROLES.IN) && !cerr;   // SA edita; IN propone
+                const edita = (esOficina(user) || user.rol === ROLES.IN) && !cerr;   // SA edita; IN propone
                 const tmp = ajTmp[inst.id] || {};
                 const diasAj = Array.isArray(aj.dias) ? aj.dias : [];
                 if (!edita && !(aj.pasajes || aj.bonificacion || diasAj.length)) return null;
@@ -2507,7 +2513,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
                       style={{ ...bdg("amber"), cursor: "pointer", fontSize: 12 }}>+ Agregar días</button>}
                   </div>
 
-                  {user.rol === ROLES.SA && !cerr && (aj.pasajes || aj.bonificacion || diasAj.length) ? <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end" }}>
+                  {esOficina(user) && !cerr && (aj.pasajes || aj.bonificacion || diasAj.length) ? <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end" }}>
                     {!aj.aprobado && <Btn variant="success" onClick={() => aprobarAjuste(inst.id)}>Aprobar</Btn>}
                     <Btn variant="danger" onClick={() => eliminarAjuste(inst.id)}>Eliminar</Btn>
                   </div> : null}
@@ -2517,7 +2523,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
               {canExp && rows.length > 0 && <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
                 <Btn variant="success" onClick={() => setExpM({ tipo: "excel", inst, rows, res, txt: excelTxt(inst, rows, res) })}>Excel</Btn>
                 <Btn variant="primary" onClick={() => setExpM({ tipo: "pdf", inst, rows, res })}>PDF</Btn>
-                {!cerr && user.rol === ROLES.SA && <Btn variant="amber" onClick={() => cerrar(inst)}>✓ Cerrar y aprobar</Btn>}
+                {!cerr && esOficina(user) && <Btn variant="amber" onClick={() => cerrar(inst)}>✓ Cerrar y aprobar</Btn>}
               </div>}
             </div>;
           })}
@@ -2534,7 +2540,7 @@ function Historial({ liqs, setLiqs, user, users, toast }) {
   const [editRows, setEditRows] = useState([]);
   const [newRow, setNewRow] = useState({ el: "", cant: 1, precio: 0 });
   const INs = users.filter(u => u.rol === ROLES.IN);
-  const canEdit = [ROLES.SA, ROLES.SV].includes(user.rol);
+  const canEdit = esOficina(user);
   const items = liqs.filter(l => user.rol === ROLES.IN ? l.inst_id === user.id : (!fi || l.inst_id === fi)).sort((a, b) => b.id.localeCompare(a.id));
   const totalPagado = items.reduce((s, l) => s + (l.total || 0), 0);
   const totalBruto = items.reduce((s, l) => s + (l.bruto || 0), 0);
@@ -2700,6 +2706,41 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
       }
     }
     return filas.sort((a, b) => String(b.corte).localeCompare(String(a.corte)) || String(a.obra).localeCompare(String(b.obra)));
+  }
+
+  // ── Exportables ───────────────────────────────────────────
+  const hoyStr = () => new Date().toLocaleDateString("es-CO");
+
+  function excel(nombreHoja, aoa, anchos, colsMoneda, archivo) {
+    const hoja = XLSX.utils.aoa_to_sheet(aoa);
+    hoja["!cols"] = anchos.map(w => ({ wch: w }));
+    const r = XLSX.utils.decode_range(hoja["!ref"]);
+    for (let i = 0; i <= r.e.r; i++) for (const c of colsMoneda) {
+      const cel = hoja[XLSX.utils.encode_cell({ r: i, c })];
+      if (cel && typeof cel.v === "number") cel.z = '"$"#,##0';
+    }
+    const libro = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(libro, hoja, nombreHoja);
+    XLSX.writeFile(libro, archivo.replace(/[\\/:*?"<>|]/g, ""));
+  }
+
+  function pdfTabla(titulo, sub, head, body, archivo, alineacion = {}) {
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const m = 40;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(15);
+    doc.text(titulo, m, 50);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(90);
+    doc.text(sub, m, 66);
+    doc.text(`Generado el ${hoyStr()} · Santa Lucía Muebles y Pisos`, m, 79);
+    doc.setTextColor(0);
+    autoTable(doc, {
+      startY: 94, head: [head], body,
+      margin: { left: m, right: m },
+      styles: { fontSize: 8.5, cellPadding: 4, overflow: "linebreak" },
+      headStyles: { fillColor: [234, 88, 12], textColor: 255, fontStyle: "bold" },
+      columnStyles: alineacion,
+    });
+    doc.save(archivo.replace(/[\\/:*?"<>|]/g, ""));
   }
 
   // Pagos de un corte, agrupados por obra
@@ -3036,21 +3077,50 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
       )}
       {/* ── Retenidos por instalador (todas las obras) ── */}
       {tipo === "retenidos" && (() => {
-        const filas = retenidosDe(instId);
+        const obraNom = obras.find(o => o.id === obraId)?.nombre;
+        const filas = retenidosDe(instId).filter(f => !obraNom || f.obra === obraNom);
         const totC = filas.reduce((s, f) => s + f.causado, 0);
         const totR = filas.reduce((s, f) => s + f.ret, 0);
         return (
           <div>
             <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 14 }}>
-              <div style={{ minWidth: 240 }}>
+              <div style={{ minWidth: 220 }}>
                 <Sel label="Instalador" value={instId} onChange={e => setInstId(e.target.value)}>
                   <option value="">Todos</option>
                   {INs.map(i => <option key={i.id} value={i.id}>{i.nombre}</option>)}
                 </Sel>
               </div>
-              <div style={{ marginBottom: 14, display: "flex", gap: 10 }}>
+              <div style={{ minWidth: 220 }}>
+                <Sel label="Obra" value={obraId} onChange={e => setObraId(e.target.value)}>
+                  <option value="">Todas</option>
+                  {[...obras].sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "")).map(o => (
+                    <option key={o.id} value={o.id}>{o.nombre}</option>
+                  ))}
+                </Sel>
+              </div>
+              <div style={{ marginBottom: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                 <span style={{ ...bdg("gray") }}>Causado {fmt(totC)}</span>
                 <span style={{ ...bdg("red") }}>Retenido {fmt(totR)}</span>
+                {filas.length > 0 && <>
+                  <Btn onClick={() => {
+                    const quien = instId ? (INs.find(i => i.id === instId)?.nombre || "") : "todos los instaladores";
+                    pdfTabla("Retenidos por instalador", `${quien}${obraNom ? " · " + obraNom : ""}`,
+                      ["Corte", "Cerrado", ...(instId ? [] : ["Instalador"]), "Obra", "Causado", "Retenido 10%"],
+                      [...filas.map(f => [f.corte, f.fecha, ...(instId ? [] : [f.inst]), f.obra, fmt(f.causado), fmt(f.ret)]),
+                       ["TOTALES", "", ...(instId ? [] : [""]), "", fmt(totC), fmt(totR)]],
+                      `Retenidos ${quien}${obraNom ? " - " + obraNom : ""}.pdf`,
+                      { [instId ? 4 : 5]: { halign: "right", fontStyle: "bold" }, [instId ? 3 : 4]: { halign: "right" } });
+                  }}>📄 PDF</Btn>
+                  <Btn variant="success" onClick={() => {
+                    const quien = instId ? (INs.find(i => i.id === instId)?.nombre || "") : "Todos";
+                    excel("Retenidos", [
+                      [`Retenidos por instalador — ${quien}`], [`Generado el ${hoyStr()}`], [],
+                      ["Corte", "Cerrado", "Instalador", "Obra", "Causado", "Retenido 10%"],
+                      ...filas.map(f => [f.corte, f.fecha, f.inst, f.obra, f.causado, f.ret]),
+                      [], ["TOTALES", "", "", "", totC, totR],
+                    ], [26, 12, 26, 26, 16, 16], [4, 5], `Retenidos ${quien}${obraNom ? " - " + obraNom : ""} ${new Date().toISOString().slice(0, 10)}.xlsx`);
+                  }}>📊 Excel</Btn>
+                </>}
               </div>
             </div>
             {filas.length === 0 ? <p style={{ fontSize: 13, color: C.g4 }}>No hay cortes cerrados todavía.</p> : (
@@ -3096,11 +3166,33 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
         const totR = obrasCorte.reduce((s, o) => s + o.ret, 0);
         return (
           <div>
-            <div style={{ maxWidth: 320, marginBottom: 14 }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 14 }}>
+            <div style={{ maxWidth: 320, flex: 1, minWidth: 220 }}>
               <Sel label="Corte (quincena)" value={label} onChange={e => setCorteSel(e.target.value)}>
                 {cortes.length === 0 && <option value="">Sin cortes cerrados</option>}
                 {cortes.map(c => <option key={c} value={c}>{c}</option>)}
               </Sel>
+            </div>
+            {label && obrasCorte.length > 0 && (
+              <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                <Btn onClick={() => pdfTabla("Pagos del corte por obra", label,
+                  ["Obra", "Personas", "Causado", "Adicionales", "Retenido 10%", "Neto obra"],
+                  [...obrasCorte.map(o => [o.obra, String(o.personas), fmt(o.causado), o.adic ? fmt(o.adic) : "—", fmt(o.ret), fmt(o.neto)]),
+                   ["TOTALES", "", fmt(totC), "", fmt(totR), fmt(totC - totR)],
+                   [], ["Pasajes + bonificaciones + días laborados del corte", "", "", "", "", fmt(pas + bon + dias)],
+                   ["Pagado en el corte", "", "", "", "", fmt(totalPagado)]],
+                  `Pagos corte ${label}.pdf`,
+                  { 1: { halign: "center" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right", fontStyle: "bold" } })}>📄 PDF</Btn>
+                <Btn variant="success" onClick={() => excel("Pagos corte", [
+                  [`Pagos del corte por obra — ${label}`], [`Generado el ${hoyStr()}`], [],
+                  ["Obra", "Personas", "Causado", "Adicionales", "Retenido 10%", "Neto obra"],
+                  ...obrasCorte.map(o => [o.obra, o.personas, o.causado, o.adic, o.ret, o.neto]),
+                  [], ["TOTALES", "", totC, "", totR, totC - totR],
+                  [], ["Pasajes", "", "", "", "", pas], ["Bonificaciones", "", "", "", "", bon],
+                  ["Días laborados", "", "", "", "", dias], ["Pagado en el corte", "", "", "", "", totalPagado],
+                ], [30, 10, 16, 16, 16, 16], [2, 3, 4, 5], `Pagos corte ${label}.xlsx`)}>📊 Excel</Btn>
+              </div>
+            )}
             </div>
             {!label ? <p style={{ fontSize: 13, color: C.g4 }}>No hay cortes cerrados todavía.</p> : (<>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 14 }}>
