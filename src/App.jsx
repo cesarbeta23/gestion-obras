@@ -315,7 +315,7 @@ export default function App() {
       {view === "apto" && selApto && selObra && <Apto {...sh} apto={selApto} piso={selPiso} obra={obras.find(o => o.id === selObra.id)} />}
       {view === "elems" && user.rol === ROLES.SA && <Elementos {...sh} />}
       {view === "liqs" && <Liquidacion {...sh} avanceObra={avanceObra} />}
-      {view === "reportes" && [ROLES.SA, ROLES.SV].includes(user.rol) && <Reportes obras={obras} elems={elems} users={users} user={user} getPrecio={getPrecio} avanceObra={avanceObra} />}
+      {view === "reportes" && [ROLES.SA, ROLES.SV].includes(user.rol) && <Reportes obras={obras} elems={elems} users={users} user={user} getPrecio={getPrecio} avanceObra={avanceObra} liqs={liqs} />}
       {view === "users" && user.rol === ROLES.SA && <Usuarios {...sh} />}
     </div>
   );
@@ -2659,17 +2659,71 @@ function Historial({ liqs, setLiqs, user, users, toast }) {
 }
 
 // ── REPORTES ──────────────────────────────────────────────
-function Reportes({ obras, elems, users, user, getPrecio, avanceObra }) {
+function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] }) {
   const [tipo, setTipo] = useState("resumen");
   const [obraId, setObraId] = useState("");
   const [instId, setInstId] = useState("");
   const [expM, setExpM] = useState(null);
   const INs = users.filter(u => u.rol === ROLES.IN);
+  const [corteSel, setCorteSel] = useState("");
   const tabs = [
     { k: "resumen", l: "Resumen por obra" },
     { k: "detalle", l: "Detalle por obra" },
     { k: "instalador", l: "Por instalador" },
+    { k: "retenidos", l: "Retenidos" },
+    { k: "cortes", l: "Pagos por corte" },
   ];
+
+  // ── Informes sobre los cortes ya cerrados (tabla liquidaciones) ──
+  // Cada liquidación guarda sus filas con la obra, así que se puede repartir
+  // lo causado y el retenido (10%) obra por obra.
+  const esAdjRow = r => !!r.adj || r.el === "Día laborado";
+  const cortes = [...new Set(liqs.map(l => l.corte))].sort().reverse();
+
+  function porObraDeLiq(l) {
+    const m = {};
+    for (const r of l.rows || []) {
+      if (esAdjRow(r)) continue;
+      const k = r.obra || "—";
+      m[k] = (m[k] || 0) + Number(r.precio || 0) * Number(r.cant || 1);
+    }
+    return Object.entries(m).map(([obra, causado]) => ({ obra, causado, ret: Math.round(causado * 0.1) }));
+  }
+
+  // Retenidos de un instalador, corte por corte y obra por obra
+  function retenidosDe(iId) {
+    const filas = [];
+    for (const l of liqs.filter(x => !iId || x.inst_id === iId)) {
+      for (const o of porObraDeLiq(l)) {
+        filas.push({ corte: l.corte, fecha: l.fecha_cierre || l.created_at?.slice(0, 10) || "",
+          inst: l.inst_nombre, obra: o.obra, causado: o.causado, ret: o.ret });
+      }
+    }
+    return filas.sort((a, b) => String(b.corte).localeCompare(String(a.corte)) || String(a.obra).localeCompare(String(b.obra)));
+  }
+
+  // Pagos de un corte, agrupados por obra
+  function pagosDeCorte(label) {
+    const m = {};
+    let pas = 0, bon = 0, dias = 0, totalPagado = 0;
+    for (const l of liqs.filter(x => x.corte === label)) {
+      pas += Number(l.pas || 0); bon += Number(l.bon || 0); totalPagado += Number(l.total || 0);
+      dias += (l.rows || []).filter(r => r.el === "Día laborado" && r.apr !== false)
+        .reduce((s, r) => s + Number(r.precio || 0) * Number(r.cant || 1), 0);
+      for (const r of l.rows || []) {
+        if (esAdjRow(r)) continue;
+        const k = r.obra || "—";
+        const v = Number(r.precio || 0) * Number(r.cant || 1);
+        const e = m[k] || (m[k] = { obra: k, causado: 0, adic: 0, personas: new Set() });
+        e.causado += v;
+        if (String(r.el || "").startsWith("[Adicional]")) e.adic += v;
+        e.personas.add(l.inst_nombre);
+      }
+    }
+    const obrasArr = Object.values(m).map(e => ({ ...e, personas: e.personas.size, ret: Math.round(e.causado * 0.1), neto: e.causado - Math.round(e.causado * 0.1) }))
+      .sort((a, b) => b.causado - a.causado);
+    return { obras: obrasArr, pas, bon, dias, totalPagado };
+  }
 
   function resumenObras() {
     return obras.map(o => {
@@ -2973,6 +3027,121 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra }) {
                     </div>
                   </>)}
                 </div>
+
+      {/* ── Retenidos por instalador (todas las obras) ── */}
+      {tipo === "retenidos" && (() => {
+        const filas = retenidosDe(instId);
+        const totC = filas.reduce((s, f) => s + f.causado, 0);
+        const totR = filas.reduce((s, f) => s + f.ret, 0);
+        return (
+          <div>
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 14 }}>
+              <div style={{ minWidth: 240 }}>
+                <Sel label="Instalador" value={instId} onChange={e => setInstId(e.target.value)}>
+                  <option value="">Todos</option>
+                  {INs.map(i => <option key={i.id} value={i.id}>{i.nombre}</option>)}
+                </Sel>
+              </div>
+              <div style={{ marginBottom: 14, display: "flex", gap: 10 }}>
+                <span style={{ ...bdg("gray") }}>Causado {fmt(totC)}</span>
+                <span style={{ ...bdg("red") }}>Retenido {fmt(totR)}</span>
+              </div>
+            </div>
+            {filas.length === 0 ? <p style={{ fontSize: 13, color: C.g4 }}>No hay cortes cerrados todavía.</p> : (
+              <div style={{ ...card, padding: 0, overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: C.orL }}>
+                    {["Corte", "Cerrado", ...(instId ? [] : ["Instalador"]), "Obra", "Causado", "Retenido 10%"].map(h => (
+                      <th key={h} style={{ padding: "7px 10px", textAlign: ["Causado", "Retenido 10%"].includes(h) ? "right" : "left", fontSize: 10, fontWeight: 700, color: C.orD, textTransform: "uppercase" }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {filas.map((f, i) => (
+                      <tr key={i} style={{ borderTop: `1px solid ${C.g1}` }}>
+                        <td style={{ padding: "6px 10px" }}>{f.corte}</td>
+                        <td style={{ padding: "6px 10px", color: C.g5 }}>{f.fecha}</td>
+                        {!instId && <td style={{ padding: "6px 10px" }}>{f.inst}</td>}
+                        <td style={{ padding: "6px 10px" }}>{f.obra}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmt(f.causado)}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", color: C.rd, fontWeight: 700 }}>{fmt(f.ret)}</td>
+                      </tr>
+                    ))}
+                    <tr style={{ background: C.g1, fontWeight: 700 }}>
+                      <td colSpan={instId ? 3 : 4} style={{ padding: "8px 10px", textAlign: "right" }}>TOTALES</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right" }}>{fmt(totC)}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right", color: C.rd }}>{fmt(totR)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p style={{ fontSize: 11, color: C.g5, marginTop: 8 }}>
+              El retenido es el 10% de lo causado en cada obra dentro de cada corte cerrado.
+            </p>
+          </div>
+        );
+      })()}
+
+      {/* ── Pago total del corte, por obra ── */}
+      {tipo === "cortes" && (() => {
+        const label = corteSel || cortes[0] || "";
+        const { obras: obrasCorte, pas, bon, dias, totalPagado } = pagosDeCorte(label);
+        const totC = obrasCorte.reduce((s, o) => s + o.causado, 0);
+        const totR = obrasCorte.reduce((s, o) => s + o.ret, 0);
+        return (
+          <div>
+            <div style={{ maxWidth: 320, marginBottom: 14 }}>
+              <Sel label="Corte (quincena)" value={label} onChange={e => setCorteSel(e.target.value)}>
+                {cortes.length === 0 && <option value="">Sin cortes cerrados</option>}
+                {cortes.map(c => <option key={c} value={c}>{c}</option>)}
+              </Sel>
+            </div>
+            {!label ? <p style={{ fontSize: 13, color: C.g4 }}>No hay cortes cerrados todavía.</p> : (<>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 14 }}>
+                {[["Causado", totC, C.bk], ["Retenido 10%", totR, C.rd], ["Pasajes + bonif. + días", pas + bon + dias, C.or], ["Pagado en el corte", totalPagado, C.gnD]].map(([l, v, col]) => (
+                  <div key={l} style={{ ...card, padding: "10px 12px" }}>
+                    <div style={{ fontSize: 11, color: C.g5 }}>{l}</div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: col }}>{fmt(v)}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ ...card, padding: 0, overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: C.orL }}>
+                    {["Obra", "Personas", "Causado", "Adicionales", "Retenido 10%", "Neto obra"].map(h => (
+                      <th key={h} style={{ padding: "7px 10px", textAlign: h === "Obra" ? "left" : "right", fontSize: 10, fontWeight: 700, color: C.orD, textTransform: "uppercase" }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {obrasCorte.map(o => (
+                      <tr key={o.obra} style={{ borderTop: `1px solid ${C.g1}` }}>
+                        <td style={{ padding: "6px 10px", fontWeight: 600 }}>{o.obra}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right" }}>{o.personas}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmt(o.causado)}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", color: C.g5 }}>{o.adic ? fmt(o.adic) : "—"}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", color: C.rd }}>{fmt(o.ret)}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700 }}>{fmt(o.neto)}</td>
+                      </tr>
+                    ))}
+                    <tr style={{ background: C.g1, fontWeight: 700 }}>
+                      <td colSpan={2} style={{ padding: "8px 10px", textAlign: "right" }}>TOTALES</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right" }}>{fmt(totC)}</td>
+                      <td />
+                      <td style={{ padding: "8px 10px", textAlign: "right", color: C.rd }}>{fmt(totR)}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right" }}>{fmt(totC - totR)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p style={{ fontSize: 11, color: C.g5, marginTop: 8 }}>
+                Lo causado y el retenido se reparten por obra. Pasajes, bonificaciones y días laborados son del corte
+                completo de cada persona, por eso van aparte y no se reparten.
+              </p>
+            </>)}
+          </div>
+        );
+      })()}
+
               </div>
             );
           })()}
