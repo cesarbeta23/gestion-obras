@@ -1841,7 +1841,13 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const faltantes = (curA.elementos || []).filter((el, i) => canToggle(i)).length
     + (curA.elementosExtra || []).filter(el => puedeExtra(el)).length;
 
+  // "Ya pagado": para cargar avance viejo que se pagó en otra obra (duplicados de la
+  // integración con el ERP). La marca alimenta el ERP igual, pero la liquidación la
+  // salta y nunca la vuelve a cobrar. Solo oficina puede activarlo.
+  const [yaPag, setYaPag] = useState(false);
+
   async function guardar() {
+    const yaPagOn = canEdit && yaPag;   // el instalador nunca puede marcar algo como ya pagado
     updateObra(obra.id, o => ({
       ...o, pisos: o.pisos.map(p => {
         if (p.id !== piso.id) return p;
@@ -1883,6 +1889,7 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
                 const total = Number(u.cantidad || 1);
                 const n = porUnidad ? Math.min(total, Number(parcial[i] || total)) : total;
                 out[0] = { ...u, cantidad: n, completado: true, fecha: hoy,
+                  ...(yaPagOn ? { yaPagado: true } : {}),
                   // Un adicional ya trae instalador atribuido desde su creación (ver guardarAd): respetarlo.
                   instaladorId: (el.esAdicional && el.instaladorId) ? el.instaladorId : instaladorPara(i) };
                 if (n < total) out.push({ ...u, cantidad: total - n, completado: false, instaladorId: null, fecha: null,
@@ -1894,7 +1901,8 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
                 const base = out[0];
                 const total = Number(base.cantidad || 1);
                 const n = porUnidad ? Math.min(total, Number(parcial[`d${i}`] || total)) : total;
-                out[0] = { ...base, cantidad: n, detCompletado: true, detId: detalladorPara(`d${i}`), detFecha: hoy };
+                out[0] = { ...base, cantidad: n, detCompletado: true, detId: detalladorPara(`d${i}`), detFecha: hoy,
+                  ...(yaPagOn ? { detYaPagado: true } : {}) };
                 if (n < total) out.splice(1, 0, { ...base, cantidad: total - n, detCompletado: false, detId: null, detFecha: null });
               }
               return out;
@@ -1908,8 +1916,8 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
 const newElsExtra = (a.elementosExtra || []).map((el, i) => {
   let u = { ...el };
   if (cnts[`x${i}`] !== undefined) u.cantidad = cnts[`x${i}`];
-  if (pend[`x${i}`]) { u.completado = true; u.instaladorId = instaladorPara(`x${i}`); u.fecha = new Date().toLocaleDateString("es-CO"); }
-  if (pend[`dx${i}`] && u.completado) { u.detCompletado = true; u.detId = detalladorPara(`dx${i}`); u.detFecha = new Date().toLocaleDateString("es-CO"); }
+  if (pend[`x${i}`]) { u.completado = true; u.instaladorId = instaladorPara(`x${i}`); u.fecha = new Date().toLocaleDateString("es-CO"); if (yaPagOn) u.yaPagado = true; }
+  if (pend[`dx${i}`] && u.completado) { u.detCompletado = true; u.detId = detalladorPara(`dx${i}`); u.detFecha = new Date().toLocaleDateString("es-CO"); if (yaPagOn) u.detYaPagado = true; }
   return u;
 });
 return { ...a, elementos: final, elementosExtra: newElsExtra };
@@ -2219,7 +2227,10 @@ const totLiq = totNorm + totAd + totExtra;
                   </select>
                 )}
               </div>
-              {el.completado && <div style={{ fontSize: 12, color: C.gnD, fontWeight: 500 }}>{users.find(u => u.id === el.instaladorId)?.nombre} · {el.fecha}</div>}
+              {el.completado && <div style={{ fontSize: 12, color: C.gnD, fontWeight: 500 }}>
+                {users.find(u => u.id === el.instaladorId)?.nombre} · {el.fecha}
+                {el.yaPagado && <span style={{ ...bdg("amber"), marginLeft: 6, fontSize: 10 }}>Ya pagado</span>}
+              </div>}
               {sinMemo(el) && (
                 <div onClick={e => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 12, color: C.rd, fontWeight: 700 }}>⛔ Sin memorando, no se paga</span>
@@ -2308,9 +2319,21 @@ const totLiq = totNorm + totAd + totExtra;
         {curA.observaciones && <div style={{ fontSize: 12, color: C.g4, marginTop: 4 }}>Visible para todos los roles.</div>}
       </div>
 
-      {canAct && <div style={{ position: "sticky", bottom: 0, background: C.wh, borderTop: `2px solid ${C.g1}`, padding: "14px 0 4px", display: "flex", justifyContent: "flex-end", gap: 10 }}>
+      {canAct && <div style={{ position: "sticky", bottom: 0, background: C.wh, borderTop: `2px solid ${C.g1}`, padding: "14px 0 4px", display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        {canEdit && (
+          <label title="Para cargar avance viejo que ya se le pagó al instalador en otra obra. Alimenta el ERP, pero no entra en la liquidación."
+            style={{ display: "flex", alignItems: "center", gap: 8, marginRight: "auto", cursor: "pointer", fontSize: 13,
+              color: yaPag ? C.wh : C.g5, background: yaPag ? C.am : C.g0, border: `1px solid ${yaPag ? C.am : C.g2}`,
+              borderRadius: 999, padding: "6px 12px", fontWeight: yaPag ? 700 : 500 }}>
+            <input type="checkbox" checked={yaPag} onChange={e => setYaPag(e.target.checked)} style={{ margin: 0 }} />
+            Ya pagado (no liquidar)
+          </label>
+        )}
         {hayPend && <span style={{ fontSize: 14, color: C.g5, alignSelf: "center" }}>Listo para guardar</span>}
         <Btn variant="primary" disabled={!hayPend} onClick={guardar} style={{ padding: "10px 28px", fontSize: 15, fontWeight: 700 }}>Guardar</Btn>
+      </div>}
+      {canEdit && yaPag && <div style={{ fontSize: 12, color: C.am, textAlign: "right", marginTop: 6, fontWeight: 600 }}>
+        Lo que marques queda como ya pagado: se ve en el ERP pero no se liquida.
       </div>}
 
       {/* ARREGLO 3: Modal precios individuales por apto */}
@@ -2500,14 +2523,15 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
     const rows = [];
     const proc = (o, a, el, esExtra) => {
       // Detallado: segunda marca del mismo elemento, con su propio precio y corte.
-      if (el.detCompletado && el.detId === iid && enCorte(el.detFecha, d, h) && !el.esAdicional
+      if (el.detCompletado && !el.detYaPagado && el.detId === iid && enCorte(el.detFecha, d, h) && !el.esAdicional
           && el.elementoId !== "__pasajes__" && el.elementoId !== "__bonificacion__") {
         const elemD = elems.find(e => e.id === el.elementoId);
         const tipD = esExtra ? el.tipologiaId : (el.tipologiaId || a.tipologia);
         rows.push({ obra: o.nombre, apto: a.nombre, el: `[Detallado] ${elemD?.nombre || el.elementoId}`, actividad: "Detallado",
           cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label, a.id, tipD, "det"), fecha: el.detFecha, adj: false, apr: true });
       }
-      if (el.completado && el.instaladorId === iid && enCorte(el.fecha, d, h)) {
+      // yaPagado: avance cargado de una obra anterior, ya pagado. Alimenta el ERP, no se liquida.
+      if (el.completado && !el.yaPagado && el.instaladorId === iid && enCorte(el.fecha, d, h)) {
         if (el.elementoId === "__pasajes__" || el.elementoId === "__bonificacion__") return; // migrados a user.ajustes
         if (el.esAdicional) {
           if (el.responsable === "obra" && !String(el.memorando || "").trim()) return;   // sin memorando no se paga
@@ -3113,7 +3137,8 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
       const tot = o.pisos?.reduce((s, p) => s + (p.aptos?.length || 0), 0) || 0;
       const allEls = o.pisos?.flatMap(p => p.aptos?.flatMap(a => (a.elementos || []).map(el => ({ ...el, aptoId: a.id, tipId: el.tipologiaId || a.tipologia }))) || []) || [];
       const completados = allEls.filter(e => e.completado && !e.esAdicional && !e.elementoId?.startsWith("__")).length;
-      const totalPago = allEls.filter(e => e.completado).reduce((s, el) => {
+      // Lo marcado como ya pagado no suma al costo: se pagó en la obra anterior.
+      const totalPago = allEls.filter(e => e.completado && !e.yaPagado).reduce((s, el) => {
         if (el.elementoId?.startsWith("__")) return el.aprobado ? s + (el.valorManual || 0) : s;
         if (el.esAdicional) return s + (el.valorUnitario || 0) * (el.cantidad || 1);
         return s + getPrecio(el.elementoId, o.id, "", el.aptoId, el.tipId) * (el.cantidad || 1);
@@ -3136,7 +3161,8 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
         else if (el.elementoId === "__bonificacion__") { nombre = "Bonificación"; precio = el.valorManual || 0; }
         else if (el.esAdicional) { nombre = `[Ad] ${el.descripcion}`; precio = el.valorUnitario || 0; }
         else { nombre = elem?.nombre || el.elementoId; precio = getPrecio(el.elementoId, oId, "", a.id, el.tipologiaId || a.tipologia); }
-        rows.push({ piso: p.numero, apto: a.nombre, el: nombre, cant: el.cantidad || 1, precio, total: precio * (el.cantidad || 1), inst: inst?.nombre || "—", fecha: el.fecha || "" });
+        if (el.yaPagado) nombre = `[Ya pagado] ${nombre}`;   // instalado, pero pagado en la obra anterior
+        rows.push({ piso: p.numero, apto: a.nombre, el: nombre, cant: el.cantidad || 1, precio: el.yaPagado ? 0 : precio, total: el.yaPagado ? 0 : precio * (el.cantidad || 1), inst: inst?.nombre || "—", fecha: el.fecha || "" });
       });
     }));
     return rows;
@@ -3148,7 +3174,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
     const rows = [];
     obras.forEach(o => o.pisos?.forEach(p => p.aptos?.forEach(a => {
       (a.elementos || []).forEach(el => {
-        if (!el.completado || el.instaladorId !== iId) return;
+        if (!el.completado || el.yaPagado || el.instaladorId !== iId) return;   // yaPagado: se pagó en la obra anterior
         if (el.elementoId === "__pasajes__" || el.elementoId === "__bonificacion__") return; // migrados a user.ajustes
         const elem = elems.find(e => e.id === el.elementoId);
         let nombre, precio, adj = false, apr = true;
@@ -3157,7 +3183,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
         rows.push({ obra: o.nombre, apto: a.nombre, el: nombre, cant: el.cantidad || 1, precio, total: precio * (el.cantidad || 1), fecha: el.fecha || "", adj, apr });
       });
       (a.elementosExtra || []).forEach(el => {
-        if (!el.completado || el.instaladorId !== iId) return;
+        if (!el.completado || el.yaPagado || el.instaladorId !== iId) return;
         const elem = elems.find(e => e.id === el.elementoId);
         const precio = getPrecio(el.elementoId, o.id, "", a.id, el.tipologiaId);
         rows.push({ obra: o.nombre, apto: a.nombre, el: elem?.nombre || el.elementoId, cant: el.cantidad || 1, precio, total: precio * (el.cantidad || 1), fecha: el.fecha || "", adj: false, apr: true });
