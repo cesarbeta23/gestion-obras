@@ -27,7 +27,11 @@ async function irAlERP(toast) {
 }
 const dbGet = async (t, sel = "*") => (await fetch(`${SUPA_URL}/rest/v1/${t}?select=${sel}`, { headers: H() })).json();
 const dbUpsert = async (t, d) => fetch(`${SUPA_URL}/rest/v1/${t}`, { method: "POST", headers: { ...H(), "Prefer": "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(d) });
-const dbDel = async (t, id) => fetch(`${SUPA_URL}/rest/v1/${t}?id=eq.${id}`, { method: "DELETE", headers: H() });
+// return=minimal: el borrado no devuelve la fila. Si la devolviera, en "usuarios" vendría el PIN.
+const dbDel = async (t, id) => fetch(`${SUPA_URL}/rest/v1/${t}?id=eq.${id}`, { method: "DELETE", headers: { ...H(), "Prefer": "return=minimal" } });
+// Funciones de la base (security definer). Se usan para tocar solo la columna "ajustes"
+// de usuarios, sin mandar la fila entera desde el navegador.
+const dbRpc = async (fn, args) => fetch(`${SUPA_URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: { ...H(), "Prefer": "return=minimal" }, body: JSON.stringify(args) });
 
 // ── Frontera DB↔app para "liquidaciones" ──────────────────
 // La tabla usa nombres largos (retencion/subtotal/pasajes/bonificacion); la UI usa los cortos
@@ -2587,30 +2591,45 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
 
   // ── Pasajes/Bonificación por instalador+corte (viven en user.ajustes) ──
   const [ajTmp, setAjTmp] = useState({});  // buffer local; se confirma onBlur
-  async function upsertUsuario(u) {
-    const res = await dbUpsert("usuarios", u);
-    if (!res.ok) { const det = await res.text().catch(() => ""); console.error("dbUpsert usuarios falló:", res.status, det); toast("Error al guardar ajuste — ¿existe la columna 'ajustes' en Supabase?", "err"); return false; }
+  // Los ajustes se guardan con funciones de la base, no mandando la fila de usuarios.
+  // La base revisa quién pide: el instalador solo puede tocar su propio ajuste; aprobar
+  // y eliminar quedan para oficina (superadmin, supervisor, auxiliar).
+  async function rpcAjuste(fn, args, msgError) {
+    const res = await dbRpc(fn, args);
+    if (!res.ok) { const det = await res.text().catch(() => ""); console.error(`${fn} falló:`, res.status, det); toast(msgError, "err"); return false; }
     return true;
   }
-  // IN propone (aprobado:false); SA edita (aprobado:true automático).
+  // IN propone (aprobado:false); oficina edita (aprobado:true automático, lo decide la base).
   async function guardarAjuste(iid, patch) {
     const u = users.find(x => x.id === iid); if (!u) return;
     const prev = u.ajustes?.[corte.label] || {};
-    const nuevo = { pasajes: 0, bonificacion: 0, ...prev, ...patch, aprobado: esOficina(user), editadoPor: user.id };
+    const { aprobado: _a, editadoPor: _e, ...limpio } = { pasajes: 0, bonificacion: 0, ...prev, ...patch };
+    const ok = await rpcAjuste("guardar_ajuste",
+      { p_usuario: iid, p_corte: corte.label, p_ajuste: limpio },
+      "No se pudo guardar el ajuste");
+    if (!ok) return;
+    const nuevo = { ...limpio, aprobado: esOficina(user), editadoPor: user.id };
     const merged = { ...u, ajustes: { ...(u.ajustes || {}), [corte.label]: nuevo } };
-    if (await upsertUsuario(merged)) setUsers(xs => xs.map(x => x.id === iid ? merged : x));
+    setUsers(xs => xs.map(x => x.id === iid ? merged : x));
   }
   async function aprobarAjuste(iid) {
     const u = users.find(x => x.id === iid); if (!u) return;
+    const ok = await rpcAjuste("aprobar_ajuste",
+      { p_usuario: iid, p_corte: corte.label },
+      "No se pudo aprobar el ajuste");
+    if (!ok) return;
     const prev = u.ajustes?.[corte.label] || {};
-    const merged = { ...u, ajustes: { ...(u.ajustes || {}), [corte.label]: { ...prev, aprobado: true, editadoPor: user.id } } };
-    if (await upsertUsuario(merged)) { setUsers(xs => xs.map(x => x.id === iid ? merged : x)); toast("Ajuste aprobado", "ok"); }
+    const merged = { ...u, ajustes: { ...(u.ajustes || {}), [corte.label]: { ...prev, aprobado: true, aprobadoPor: user.id } } };
+    setUsers(xs => xs.map(x => x.id === iid ? merged : x)); toast("Ajuste aprobado", "ok");
   }
   async function eliminarAjuste(iid) {
     const u = users.find(x => x.id === iid); if (!u) return;
+    const ok = await rpcAjuste("eliminar_ajuste",
+      { p_usuario: iid, p_corte: corte.label },
+      "No se pudo eliminar el ajuste");
+    if (!ok) return;
     const aj = { ...(u.ajustes || {}) }; delete aj[corte.label];
-    const merged = { ...u, ajustes: aj };
-    if (await upsertUsuario(merged)) { setUsers(xs => xs.map(x => x.id === iid ? merged : x)); toast("Ajuste eliminado", "ok"); }
+    setUsers(xs => xs.map(x => x.id === iid ? { ...u, ajustes: aj } : x)); toast("Ajuste eliminado", "ok");
   }
 
   function excelTxt(inst, rows, res) {
@@ -3566,7 +3585,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
 }
 
 // ── USUARIOS ──────────────────────────────────────────────
-function Usuarios({ users, setUsers, openM, closeM, modals }) {
+function Usuarios({ users, setUsers, openM, closeM, modals, toast }) {
   const emp = { nombre: "", email: "", rol: ROLES.IN, oficio: "instalador", pin: "", cedula: "", telefono: "", banco: "", cuenta: "" };
   const [form, setForm] = useState(emp);
   const [editId, setEditId] = useState(null);
@@ -3576,12 +3595,17 @@ function Usuarios({ users, setUsers, openM, closeM, modals }) {
   const oL = { instalador: "Instalador", detallador: "Detallador", ambos: "Instalador y detallador" };
   const oC = { instalador: "green", detallador: "amber", ambos: "orange" };
 
-  async function eliminar(id) { await dbDel("usuarios", id); setUsers(x => x.filter(u => u.id !== id)); setDelId(null); }
+  async function eliminar(id) {
+    const res = await dbDel("usuarios", id);
+    if (!res.ok) { console.error("borrar usuario falló:", res.status, await res.text().catch(() => "")); toast("No tienes permiso para eliminar usuarios", "err"); setDelId(null); return; }
+    setUsers(x => x.filter(u => u.id !== id)); setDelId(null);
+  }
   async function guardar() {
     if (!form.nombre || !form.email || (!editId && !form.pin)) return;
     const u = editId ? { ...users.find(x => x.id === editId), ...form } : { id: `u${Date.now()}`, ...form };
     if (!form.pin) delete u.pin;   // PIN vacío = se deja el que ya tenía
-    await dbUpsert("usuarios", u);
+    const res = await dbUpsert("usuarios", u);
+    if (!res.ok) { console.error("guardar usuario falló:", res.status, await res.text().catch(() => "")); toast("No tienes permiso para crear o editar usuarios", "err"); return; }
     if (editId) setUsers(x => x.map(y => y.id === editId ? u : y)); else setUsers(x => [...x, u]);
     setForm(emp); setEditId(null); closeM("usr");
   }
