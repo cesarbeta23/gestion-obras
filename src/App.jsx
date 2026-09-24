@@ -812,7 +812,17 @@ const [nuevoPisoF, setNuevoPisoF] = useState({ numero: "", aptos: 1 });
   }
 
   const tips = cur.tipologias || [];
-  const nums = [...new Set(cur.pisos?.flatMap(p => p.aptos?.map(a => String(a.numero))) || [])].sort((a, b) => Number(a) - Number(b));
+  // Se agrupa por el número real del apartamento: lo que queda al quitarle el
+  // número del piso al nombre (601, 615… → 01, 15). Así, si la obra va del 15 al 21,
+  // eso es lo que se ve, y no "Apto x1, x2, x3".
+  const sufijoApto = (a, p) => {
+    const nom = String(a?.nombre || "");
+    const pref = String(p?.numero ?? "");
+    return pref && nom.startsWith(pref) && nom.length > pref.length ? nom.slice(pref.length) : String(a?.numero ?? "");
+  };
+  const aptosPorSufijo = (suf) => (cur.pisos || []).flatMap(p => (p.aptos || []).filter(a => sufijoApto(a, p) === suf).map(a => a.nombre || a.numero));
+  const nums = [...new Set((cur.pisos || []).flatMap(p => (p.aptos || []).map(a => sufijoApto(a, p))))]
+    .sort((a, b) => (Number(a) - Number(b)) || String(a).localeCompare(String(b)));
   const cortes = getCorteFechas();
   const instsActivos = (cur.instaladoresAutorizados || []).map(id => users.find(u => u.id === id)).filter(Boolean);
 
@@ -952,7 +962,7 @@ const [dupPrecios, setDupPrecios] = useState({});
     updateObra(obra.id, o => ({
       ...o, pisos: o.pisos.map(p => ({
         ...p, aptos: p.aptos.map(a => {
-          const reg = repSel.reglas.find(r => r.sufijo === String(a.numero) && r.tipId);
+          const reg = repSel.reglas.find(r => r.sufijo === sufijoApto(a, p) && r.tipId);
           if (!reg) return a;
           const tip = tips.find(t => t.id === reg.tipId);
           if (!tip) return a;
@@ -1440,9 +1450,10 @@ const disponibles = misHabilitados.filter(a => {
         <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
           {nums.map(suf => {
             const reg = repSel.reglas.find(r => r.sufijo === suf); const tid = reg?.tipId || "";
-            const cnt = cur.pisos?.reduce((n, p) => n + (p.aptos?.filter(a => String(a.numero) === suf).length || 0), 0);
+            const ejemplos = aptosPorSufijo(suf);
+            const cnt = ejemplos.length;
             return <div key={suf} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: tid ? C.orL : C.g0, border: `1px solid ${tid ? C.orM : C.g2}`, borderRadius: 10 }}>
-              <div style={{ minWidth: 80 }}><div style={{ fontWeight: 700, fontSize: 14, color: tid ? C.orD : C.bk }}>Apto ×{suf}</div><div style={{ fontSize: 12, color: C.g4 }}>{cnt} apto(s)</div></div>
+              <div style={{ minWidth: 80 }}><div style={{ fontWeight: 700, fontSize: 14, color: tid ? C.orD : C.bk }}>Apto {suf}</div><div style={{ fontSize: 11, color: C.g5 }}>{cnt} apto(s){ejemplos.length ? ` · ${ejemplos.slice(0, 3).join(", ")}${ejemplos.length > 3 ? "…" : ""}` : ""}</div></div>
               <select style={{ flex: 1, padding: "7px 10px", border: `1px solid ${C.g2}`, borderRadius: 8, fontSize: 14 }} value={tid} onChange={e => { const v = e.target.value; setRepSel(r => { const n = r.reglas.filter(x => x.sufijo !== suf); if (v) n.push({ sufijo: suf, tipId: v }); return { reglas: n }; }); }}>
                 <option value="">— Sin asignar —</option>{tips.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
               </select>
