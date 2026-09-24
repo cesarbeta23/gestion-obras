@@ -49,6 +49,16 @@ const esOficina = u => OFICINA.includes(u?.rol);
 
 const ROLES = { SA: "superadmin", SV: "supervisor", AX: "auxiliar", IN: "instalador" };
 
+// Las cantidades no siempre llegan como número: los <input type="number"> devuelven
+// texto y en importaciones aparecen con coma decimal ("1,5"). Normaliza a número;
+// si no hay nada usable devuelve `fallback`.
+const numCant = (v, fallback = 1) => {
+  if (v === null || v === undefined || v === "") return fallback;
+  const n = Number(String(v).trim().replace(",", "."));
+  return Number.isFinite(n) ? n : fallback;
+};
+const red4 = n => Math.round(n * 10000) / 10000;   // evita 2.9999999996 en el reporte
+
 const C = {
   or: "#F97316", orD: "#EA6A0A", orL: "#FFF7ED", orM: "#FED7AA",
   bk: "#111", g9: "#1C1C1E", g8: "#2C2C2E", g5: "#636366", g4: "#8E8E93",
@@ -176,6 +186,149 @@ const ELEMENTOS_DEF = [
 
 // La lista de usuarios vive solo en Supabase (antes estaba escrita aquí con cédulas y PIN).
 
+// ── Diagnóstico de cantidades vs. tipología (SOLO LECTURA) ───────────────────
+// Recorre TODAS las obras y compara la cantidad de cada elemento con la que dicta
+// su tipología. No escribe nada: ni estado de React, ni Supabase. Devuelve datos.
+function diagnosticarCantidades(obras, elems, liqs) {
+  // Las filas de una liquidación guardan NOMBRES (obra/apto/elemento), no ids
+  // —ver detalle() en Liquidacion—, así que el cruce solo puede ser por nombre.
+  // Un homónimo daría falso positivo, y aquí un falso positivo solo marca el
+  // elemento como intocable: es el lado seguro del error.
+  const kLiq = (o, ap, el) => `${o}|||${ap}|||${el}`;
+  const liqKeys = new Set();
+  (liqs || []).forEach(l => (l.rows || []).forEach(r => liqKeys.add(kLiq(r.obra, r.apto, r.el))));
+
+  const nombreEl = eid => (elems || []).find(e => e.id === eid)?.nombre || eid;
+  const rows = [];
+
+  (obras || []).forEach(o => (o.pisos || []).forEach(p => (p.aptos || []).forEach(a => {
+    const aptoNom = a.nombre || `${p.numero}${String(a.numero ?? "").padStart(2, "0")}`;
+
+    // Se agrupa por elemento porque un completado parcial parte la fila en dos
+    // (ver marcar() en Apto): la cantidad real del apto es la SUMA de las partes.
+    const revisar = (lista, ambito) => {
+      const grupos = new Map();
+      (lista || []).forEach(el => {
+        if (el.esAdicional) return;                                 // no lo dicta ninguna tipología
+        if (String(el.elementoId || "").startsWith("__")) return;   // __pasajes__ / __bonificacion__ viejos
+        const tipId = ambito === "extra" ? el.tipologiaId : (el.tipologiaId || a.tipologia);
+        if (!tipId) return;                                         // sin tipología no hay referencia
+        const k = `${tipId}|${el.elementoId}`;
+        if (!grupos.has(k)) grupos.set(k, { tipId, elementoId: el.elementoId, partes: [] });
+        grupos.get(k).partes.push(el);
+      });
+
+      grupos.forEach(g => {
+        const tip = (o.tipologias || []).find(t => t.id === g.tipId);
+        if (!tip) return;
+        if (!(tip.elementoIds || []).includes(g.elementoId)) return;  // huérfano: la tipología no lo dicta
+
+        // fallback 0 = "la tipología no define una cantidad usable" (vacío, texto basura o 0).
+        const crudaN = numCant(tip.cantidades?.[g.elementoId], 0);
+        const porDefecto = !(crudaN > 0);
+        const correcta = porDefecto ? 1 : crudaN;
+        const actual = g.partes.reduce((s, e) => s + numCant(e.cantidad, 1), 0);
+        if (Math.abs(actual - correcta) <= 0.01) return;   // tolerancia: decimales, no diferencias reales
+
+        const instalado = g.partes.some(e => e.completado);
+        const detallado = g.partes.some(e => e.detCompletado);
+        const elNom = nombreEl(g.elementoId);
+        const liquidado = liqKeys.has(kLiq(o.nombre, aptoNom, elNom));
+
+        rows.push({
+          obraId: o.id, obra: o.nombre, piso: p.numero, aptoId: a.id, apto: aptoNom,
+          ambito, tipId: tip.id, tipologia: tip.nombre,
+          elementoId: g.elementoId, elemento: elNom,
+          actual: red4(actual), correcta: red4(correcta), partes: g.partes.length,
+          // La tipología no define cantidad para este elemento: "correcta" es el
+          // fallback 1, no un dato guardado. Revisar a mano antes de confiar.
+          porDefecto,
+          instalado, detallado, liquidado,
+          bloqueado: instalado || detallado || liquidado,
+        });
+      });
+    };
+
+    revisar(a.elementos, "principal");
+    revisar(a.elementosExtra, "extra");
+  })));
+
+  rows.sort((x, y) => String(x.obra).localeCompare(String(y.obra))
+    || (Number(x.piso) - Number(y.piso))
+    || String(x.apto).localeCompare(String(y.apto))
+    || String(x.elemento).localeCompare(String(y.elemento)));
+
+  const porObra = [];
+  rows.forEach(r => {
+    let g = porObra.find(x => x.obraId === r.obraId);
+    if (!g) { g = { obraId: r.obraId, obra: r.obra, _aptos: new Set(), elementos: 0, instalados: 0, detallados: 0, liquidados: 0, bloqueados: 0, porDefecto: 0 }; porObra.push(g); }
+    g._aptos.add(r.aptoId); g.elementos++;
+    if (r.instalado) g.instalados++;
+    if (r.detallado) g.detallados++;
+    if (r.liquidado) g.liquidados++;
+    if (r.bloqueado) g.bloqueados++;
+    if (r.porDefecto) g.porDefecto++;
+  });
+  porObra.forEach(g => { g.aptos = g._aptos.size; delete g._aptos; g.corregibles = g.elementos - g.bloqueados; });
+  porObra.sort((x, y) => y.elementos - x.elementos);
+
+  const tot = porObra.reduce((s, g) => ({
+    aptos: s.aptos + g.aptos, elementos: s.elementos + g.elementos,
+    instalados: s.instalados + g.instalados, detallados: s.detallados + g.detallados,
+    liquidados: s.liquidados + g.liquidados, bloqueados: s.bloqueados + g.bloqueados,
+    porDefecto: s.porDefecto + g.porDefecto, corregibles: s.corregibles + g.corregibles,
+  }), { aptos: 0, elementos: 0, instalados: 0, detallados: 0, liquidados: 0, bloqueados: 0, porDefecto: 0, corregibles: 0 });
+
+  // Lo que la app tiene en memoria tras loadAll(). Sirve para contrastarlo contra el
+  // total real de la tabla (ver verifCarga): si no cuadra, el reporte está incompleto.
+  const cargado = { obras: (obras || []).length, elems: (elems || []).length, liqs: (liqs || []).length };
+
+  return { rows, porObra, tot, cargado };
+}
+
+// CSV con ";" y BOM: así Excel en es-CO lo abre en columnas sin pasar por el asistente.
+function csvCantidades({ rows, porObra, tot }) {
+  const esc = v => {
+    const s = v === null || v === undefined ? "" : String(v);
+    return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const linea = a => a.map(esc).join(";");
+  const si = b => b ? "SI" : "";
+  return "\uFEFF" + [
+    linea(["DETALLE"]),
+    linea(["Obra", "Piso", "Apto", "Ambito", "Tipologia", "Elemento", "Cant. actual", "Cant. correcta", "Cant. por defecto", "Partes", "Instalado", "Detallado", "Liquidado", "Accion paso 3"]),
+    ...rows.map(r => linea([r.obra, r.piso, r.apto, r.ambito, r.tipologia, r.elemento, r.actual, r.correcta,
+      si(r.porDefecto), r.partes, si(r.instalado), si(r.detallado), si(r.liquidado), r.bloqueado ? "NO TOCAR" : "corregir"])),
+    "",
+    linea(["RESUMEN POR OBRA"]),
+    linea(["Obra", "Aptos afectados", "Elementos afectados", "Instalados", "Detallados", "Liquidados", "Bloqueados", "Cant. por defecto", "Corregibles"]),
+    ...porObra.map(g => linea([g.obra, g.aptos, g.elementos, g.instalados, g.detallados, g.liquidados, g.bloqueados, g.porDefecto, g.corregibles])),
+    linea(["TOTAL", tot.aptos, tot.elementos, tot.instalados, tot.detallados, tot.liquidados, tot.bloqueados, tot.porDefecto, tot.corregibles]),
+  ].join("\r\n");
+}
+
+// Cuenta filas sin traerlas: select=id + Prefer:count=exact deja el total en el
+// header Content-Range ("0-N/TOTAL"). `filas` es lo que realmente devolvió esa
+// misma petición: si filas < total, PostgREST está truncando (max-rows).
+async function contarTabla(tabla, headers) {
+  try {
+    const r = await fetch(`${SUPA_URL}/rest/v1/${tabla}?select=id`, {
+      headers: { ...headers, Prefer: "count=exact" },   // pisa el return=representation de H()
+    });
+    const cr = r.headers.get("content-range");
+    const body = await r.json().catch(() => null);
+    const total = cr && cr.includes("/") ? Number(cr.split("/")[1]) : NaN;
+    return {
+      ok: r.ok, status: r.status, contentRange: cr,
+      total: Number.isFinite(total) ? total : null,
+      filas: Array.isArray(body) ? body.length : null,
+      error: Array.isArray(body) ? null : body,
+    };
+  } catch (e) {
+    return { ok: false, status: 0, contentRange: null, total: null, filas: null, error: String(e) };
+  }
+}
+
 export default function App() {
   const [user, setUser] = useState(() => {
     // Llegó desde el ERP con un pase: se guarda como sesión y se limpia la URL
@@ -301,6 +454,76 @@ export default function App() {
     const els = (a.elementos || []).filter(e => !e.elementoId?.startsWith("__"));
     return els.length > 0 && els.every(e => e.detCompletado);
   };
+
+  // Diagnóstico de cantidades vs. tipología — SOLO LECTURA, no escribe en Supabase.
+  // Solo se expone para superadmin. Desde la consola del navegador:
+  //   diagCantidades()        → tablas en consola + descarga del CSV
+  //   diagCantidades(false)   → solo consola, sin descargar
+  useEffect(() => {
+    if (user?.rol !== ROLES.SA) return;
+    window.diagCantidades = (descargar = true) => {
+      const res = diagnosticarCantidades(obras, elems, liqs);
+      console.log("%cSIMULACIÓN — no se escribió nada", "background:#FEF3C7;color:#B45309;font-weight:700;padding:2px 6px");
+      if (!res.rows.length) { console.log("✓ Sin diferencias: todas las cantidades coinciden con su tipología."); return res; }
+      res.porObra.forEach(g => {
+        console.group(`${g.obra} — ${g.elementos} elemento(s) en ${g.aptos} apto(s) · ${g.corregibles} corregible(s)`);
+        console.table(res.rows.filter(r => r.obraId === g.obraId).map(r => ({
+          Apto: r.apto, Ambito: r.ambito, Tipologia: r.tipologia, Elemento: r.elemento,
+          Actual: r.actual, Correcta: r.correcta, PorDefecto: r.porDefecto ? "SÍ" : "",
+          Partes: r.partes, Instalado: r.instalado ? "SÍ" : "", Detallado: r.detallado ? "SÍ" : "",
+          Liquidado: r.liquidado ? "SÍ" : "", Paso3: r.bloqueado ? "NO TOCAR" : "corregir",
+        })));
+        console.groupEnd();
+      });
+      console.group("RESUMEN POR OBRA");
+      console.table(res.porObra);
+      console.log("TOTAL", res.tot);
+      console.log("EN MEMORIA (loadAll)", res.cargado);
+      console.groupEnd();
+      if (descargar) {
+        const blob = new Blob([csvCantidades(res)], { type: "text/csv;charset=utf-8;" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `cantidades_vs_tipologia_${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click(); URL.revokeObjectURL(a.href);
+      }
+      return res;
+    };
+
+    // Verifica que loadAll() haya traído TODO. Dos preguntas distintas:
+    //   1) ¿el token de la app ve más filas de las que la app cargó?  → truncamiento
+    //   2) ¿la llave anon sola devuelve filas?                        → RLS abierta
+    window.verifCarga = async () => {
+      const { cargado } = diagnosticarCantidades(obras, elems, liqs);
+      // Mismos headers que dbGet (con el pase de sesión) vs. llave anon pelada.
+      const anon = { "Content-Type": "application/json", apikey: SUPA_KEY, Authorization: `Bearer ${SUPA_KEY}` };
+      const filasDe = { obras: cargado.obras, liquidaciones: cargado.liqs };
+      const out = [];
+      for (const tabla of ["obras", "liquidaciones"]) {
+        const tok = await contarTabla(tabla, H());
+        const an = await contarTabla(tabla, anon);
+        const enMemoria = filasDe[tabla];
+        out.push({
+          tabla, enMemoria,
+          totalToken: tok.total, filasToken: tok.filas, range: tok.contentRange, statusToken: tok.status,
+          completo: tok.total === null ? "?" : (tok.total === enMemoria ? "SÍ" : "NO"),
+          truncado: tok.total !== null && tok.filas !== null && tok.filas < tok.total ? "⚠️ SÍ" : "no",
+          statusAnon: an.status, filasAnon: an.filas,
+          rlsAbierta: an.ok && an.filas > 0 ? "⚠️ SÍ" : "no",
+        });
+      }
+      console.table(out);
+      out.forEach(r => {
+        if (r.completo === "NO") console.warn(`${r.tabla}: la app cargó ${r.enMemoria} pero el token ve ${r.totalToken}. El reporte está incompleto.`);
+        if (r.truncado === "⚠️ SÍ") console.warn(`${r.tabla}: PostgREST truncó (${r.filasToken}/${r.totalToken}). dbGet no pagina.`);
+        if (r.rlsAbierta === "⚠️ SÍ") console.warn(`${r.tabla}: la llave anon sola devolvió ${r.filasAnon} fila(s) → RLS abierta.`);
+        if (r.completo === "?") console.warn(`${r.tabla}: no llegó Content-Range (¿CORS no lo expone?). Usa filasToken=${r.filasToken} como referencia.`);
+      });
+      return out;
+    };
+
+    return () => { delete window.diagCantidades; delete window.verifCarga; };
+  }, [user, obras, elems, liqs]);
 
   if (loading) return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16, fontFamily: "system-ui", background: C.bk }}>
@@ -866,6 +1089,9 @@ const [dupPrecios, setDupPrecios] = useState({});
             if (!esPrincipal && !esExtra) return a;
             let na = a;
             // Tipología principal: sobrescribe cantidades (incluye completados), conserva completado/instaladorId/fecha.
+            // PENDIENTE: revisar si debe sobrescribir cantidades de elementos ya completados/detallados.
+            // replicar() ya NO lo hace (respeta lo instalado); aquí sigue sobrescribiendo, así que
+            // editar una tipología puede cambiar el valor de trabajo ya ejecutado. Decisión aplazada.
             if (esPrincipal) {
               na = { ...na, elementos: tipForm.eids.map(eid => {
                 const ex = na.elementos?.find(e => e.elementoId === eid);
@@ -964,10 +1190,31 @@ const [dupPrecios, setDupPrecios] = useState({});
         ...p, aptos: p.aptos.map(a => {
           const reg = repSel.reglas.find(r => r.sufijo === sufijoApto(a, p) && r.tipId);
           if (!reg) return a;
-          const tip = tips.find(t => t.id === reg.tipId);
+          // Del catálogo guardado en la obra, no de `tips` (snapshot del render) ni de
+          // tipForm (buffer del modal): tipForm traía las cantidades de la última
+          // tipología abierta, no las de reg.tipId.
+          const tip = (o.tipologias || []).find(t => t.id === reg.tipId);
           if (!tip) return a;
           cnt++;
-          return { ...a, tipologia: tip.id, elementos: tip.elementoIds.map(eid => a.elementos?.find(e => e.elementoId === eid) || { elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad: tipForm.cantidades?.[eid] || 1 }) };
+          const ids = new Set(tip.elementoIds || []);
+          const delTip = (tip.elementoIds || []).map(eid => {
+            const ex = a.elementos?.find(e => e.elementoId === eid);
+            const cantidad = tip.cantidades?.[eid] || 1;
+            if (!ex) return { elementoId: eid, completado: false, instaladorId: null, fecha: null, cantidad };
+            // Ya instalado o detallado → la cantidad es plata comprometida: no se toca.
+            // Se corrige aparte, con revisión humana (ver diagnosticarCantidades).
+            if (ex.completado || ex.detCompletado) return ex;
+            return { ...ex, cantidad };
+          });
+          // Fuera de la tipología nueva pero con trabajo hecho: se conservan al final.
+          // Borrarlos perdería instalación/detallado ya ejecutado (y posiblemente pagado).
+          // Se sella la tipología bajo la que se ejecutó: getPrecio resuelve con
+          // `el.tipologiaId || a.tipologia` (líneas 2191/2808) y, al cambiar a.tipologia,
+          // sin el sello pasarían a cotizarse con los overrides tip__<nueva>__<eid>.
+          const huerfanos = (a.elementos || [])
+            .filter(e => !ids.has(e.elementoId) && (e.completado || e.detCompletado))
+            .map(e => ({ ...e, tipologiaId: e.tipologiaId || a.tipologia }));
+          return { ...a, tipologia: tip.id, elementos: [...delTip, ...huerfanos] };
         })
       }))
     }));
