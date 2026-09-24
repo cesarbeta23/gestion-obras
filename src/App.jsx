@@ -1799,7 +1799,7 @@ const disponibles = misHabilitados.filter(a => {
               <span style={{ flex: 1, color: C.bk }}>{e.nombre}<span style={{ fontSize: 11, color: C.g4, marginLeft: 6 }}>{e.grupo || "Sin grupo"}</span></span>
               <span style={{ fontSize: 12, color: C.g4 }}>{e.unidad} · {fmt(e.precio)}{Number(e.precio_detallado) ? ` + ${fmt(e.precio_detallado)}` : ""}</span>
               {tipForm.eids.includes(e.id) && (() => {
-                const decimal = e.unidad === "ml" || e.unidad === "m2";
+                const decimal = !esPorUnidad(e.unidad);   // todo lo que no es "und" admite decimales
                 return (
                   <span onClick={x => x.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <span style={{ fontSize: 11, color: C.g4 }}>Cant.</span>
