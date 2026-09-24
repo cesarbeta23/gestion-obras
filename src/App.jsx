@@ -59,6 +59,15 @@ const numCant = (v, fallback = 1) => {
 };
 const red4 = n => Math.round(n * 10000) / 10000;   // evita 2.9999999996 en el reporte
 
+// Solo los elementos por unidad se pueden marcar parcialmente. Se compara en
+// positivo y normalizado: cualquier otra cosa (ml, m2, gl, unidad vacía, con
+// espacios o en mayúsculas, o elemento no encontrado) se marca COMPLETA.
+// La lista negra anterior (unidad !== "ml" && unidad !== "m2") dejaba pasar
+// " ML ", "m²" y null, y por ahí se colaba el selector en los zócalos.
+const esPorUnidad = u => String(u ?? "").trim().toLowerCase() === "und";
+// Además del tipo de unidad, partir exige un entero > 1: no hay "1 de 2.5 und".
+const puedePartirse = (unidad, cant) => esPorUnidad(unidad) && Number.isInteger(Number(cant)) && Number(cant) > 1;
+
 const C = {
   or: "#F97316", orD: "#EA6A0A", orL: "#FFF7ED", orM: "#FED7AA",
   bk: "#111", g9: "#1C1C1E", g8: "#2C2C2E", g5: "#636366", g4: "#8E8E93",
@@ -527,6 +536,56 @@ export default function App() {
       return out;
     };
 
+    // Barrido de SOLO LECTURA sobre los datos ya cargados (sin fetch): busca
+    // elementos que NO son "und" y quedaron partidos en varias filas por el
+    // selector parcial, más las unidades mal escritas que dejaban pasar el guard.
+    window.barridoPartidos = () => {
+      const uni = {};
+      (elems || []).forEach(e => { uni[e.id] = e.unidad; });
+
+      const raras = (elems || []).filter(e => {
+        const n = String(e.unidad ?? "").trim().toLowerCase();
+        return !["und", "ml", "m2", "gl"].includes(n) || e.unidad !== n;
+      });
+      console.group(`A) Unidades que no son exactamente und/ml/m2/gl: ${raras.length}`);
+      console.table(raras.map(e => ({ id: e.id, nombre: e.nombre, unidad: JSON.stringify(e.unidad) })));
+      console.groupEnd();
+
+      const partidos = [];
+      (obras || []).forEach(o => (o.pisos || []).forEach(p => (p.aptos || []).forEach(a => {
+        const scan = (lista, ambito) => {
+          const g = new Map();
+          (lista || []).forEach(el => {
+            if (el.esAdicional || String(el.elementoId || "").startsWith("__")) return;
+            const tipId = ambito === "extra" ? el.tipologiaId : (el.tipologiaId || a.tipologia);
+            const k = `${ambito}|${tipId}|${el.elementoId}`;
+            if (!g.has(k)) g.set(k, { eid: el.elementoId, partes: [] });
+            g.get(k).partes.push(el);
+          });
+          g.forEach(({ eid, partes }) => {
+            if (partes.length < 2) return;
+            if (esPorUnidad(uni[eid])) return;   // los "und" sí se pueden partir: no es el bug
+            partidos.push({
+              obra: o.nombre, apto: a.nombre || a.numero, ambito,
+              elemento: (elems || []).find(e => e.id === eid)?.nombre || eid,
+              unidad: uni[eid], partes: partes.length,
+              cantidades: partes.map(x => x.cantidad).join(" + "),
+              suma: red4(partes.reduce((s, x) => s + numCant(x.cantidad, 1), 0)),
+              completados: partes.filter(x => x.completado).length,
+              detallados: partes.filter(x => x.detCompletado).length,
+            });
+          });
+        };
+        scan(a.elementos, "principal");
+        scan(a.elementosExtra, "extra");
+      })));
+      console.group(`B) Elementos NO-und partidos en varias filas: ${partidos.length}`);
+      console.table(partidos);
+      console.groupEnd();
+      console.log("EN MEMORIA (loadAll)", { obras: (obras || []).length, elems: (elems || []).length });
+      return { raras, partidos };
+    };
+
     // Corrección selectiva. Por defecto SIMULA: no escribe nada hasta que se
     // pase { escribir: true }, y aun así solo si pasan todos los candados.
     window.repararCantidades = async ({ escribir = false, esperado = ESPERADO_REPARAR, nombres = OBRAS_REPARAR } = {}) => {
@@ -618,7 +677,7 @@ export default function App() {
       return { objetivo, porObra, plan: nuevas, escrito: !fallos.length, fallos };
     };
 
-    return () => { delete window.diagCantidades; delete window.verifCarga; delete window.repararCantidades; };
+    return () => { delete window.diagCantidades; delete window.verifCarga; delete window.repararCantidades; delete window.barridoPartidos; };
   }, [user, obras, elems, liqs]);
 
   if (loading) return (
@@ -1902,7 +1961,9 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
               let u = { ...el };
               if (cnts[i] !== undefined) u.cantidad = cnts[i];
               const unidadEl = elems.find(e => e.id === el.elementoId)?.unidad;
-              const porUnidad = unidadEl !== "ml" && unidadEl !== "m2";   // puertas, closets: se pueden partir
+              // Si no se puede partir, `n` toma el total y el if (n < total) nunca dispara:
+              // el elemento se marca completo y no se crea una segunda fila.
+              const porUnidad = puedePartirse(unidadEl, u.cantidad);   // puertas, closets: se pueden partir
               const out = [u];
 
               // Instalación. Si trae varias y se marcaron menos, se parte: lo marcado queda
@@ -2146,7 +2207,7 @@ const totLiq = totNorm + totAd + totExtra;
                   {asignados.map(id => { const u = users.find(x => x.id === id); return <option key={id} value={id}>{u?.nombre || id}</option>; })}
                 </select>
               )}
-              {elem?.unidad !== "ml" && elem?.unidad !== "m2" && Number(ca) > 1 && cT && (
+              {cT && puedePartirse(elem?.unidad, ca) && (
                 <div onClick={e => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <span style={{ fontSize: 11, color: C.g5 }}>{esDet ? "detalló" : "instaló"}</span>
                   <select value={parcial[pk(idx)] ?? ca}
@@ -2156,8 +2217,8 @@ const totLiq = totNorm + totAd + totExtra;
                   </select>
                 </div>
               )}
-              {(elem?.unidad === "ml" || elem?.unidad === "m2") && <div onClick={e => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontSize: 12, color: C.g4 }}>{elem.unidad}</span>
+              {!esPorUnidad(elem?.unidad) && <div onClick={e => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 12, color: C.g4 }}>{elem?.unidad || "—"}</span>
                 <input type="number" min="0.1" step="0.1" value={ca} disabled={el.completado && user.rol === ROLES.IN} onChange={e => setCnts(c => ({ ...c, [idx]: Number(e.target.value) }))} style={{ width: 64, textAlign: "center", fontSize: 13, padding: "4px", border: `1px solid ${C.g2}`, borderRadius: 6 }} />
               </div>}
               <div style={{ textAlign: "right", minWidth: 90 }} onClick={e => e.stopPropagation()}>
@@ -2174,7 +2235,7 @@ const totLiq = totNorm + totAd + totExtra;
                   </div>
                 )}
                 {Number(ca) > 1 && precEdit !== el.elementoId && <div style={{ fontSize: 10, color: C.g4 }}>{fmt(precio)} c/u</div>}
-                <div style={{ fontSize: 11, color: C.g4 }}>{Number(ca) > 1 && elem?.unidad !== "ml" && elem?.unidad !== "m2" ? `${ca} ${elem?.unidad || "und"}` : elem?.unidad}</div>
+                <div style={{ fontSize: 11, color: C.g4 }}>{esPorUnidad(elem?.unidad) && Number(ca) > 1 ? `${ca} ${elem.unidad}` : elem?.unidad}</div>
               </div>
               {canEdit && !esDet && !el.completado && <button onClick={e => { e.stopPropagation(); updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.filter((_, i) => i !== idx) }) }) })); toast("Elemento eliminado", "ok"); }} style={{ marginLeft: 4, width: 28, height: 28, borderRadius: 6, ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14, fontWeight: 700 }}>🗑</button>}
 {canEdit && hecho && <button onClick={e => { e.stopPropagation(); esDet ? desmarcarDet(idx) : desmarcar(idx); }} style={{ marginLeft: 4, width: 28, height: 28, borderRadius: 6, ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14, fontWeight: 700 }}>✕</button>}
