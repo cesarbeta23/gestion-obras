@@ -59,12 +59,15 @@ const numCant = (v, fallback = 1) => {
 };
 const red4 = n => Math.round(n * 10000) / 10000;   // evita 2.9999999996 en el reporte
 
+// Alias de "unidad" que conviven en la base: el ERP escribe "un" y esta app "und".
+// No se normalizan los datos porque son del ERP; se acepta el alias y punto.
+const ALIAS_UND = ["und", "un", "u", "unidad"];
 // Solo los elementos por unidad se pueden marcar parcialmente. Se compara en
 // positivo y normalizado: cualquier otra cosa (ml, m2, gl, unidad vacía, con
 // espacios o en mayúsculas, o elemento no encontrado) se marca COMPLETA.
 // La lista negra anterior (unidad !== "ml" && unidad !== "m2") dejaba pasar
 // " ML ", "m²" y null, y por ahí se colaba el selector en los zócalos.
-const esPorUnidad = u => String(u ?? "").trim().toLowerCase() === "und";
+const esPorUnidad = u => ALIAS_UND.includes(String(u ?? "").trim().toLowerCase());
 // Además del tipo de unidad, partir exige un entero > 1: no hay "1 de 2.5 und".
 const puedePartirse = (unidad, cant) => esPorUnidad(unidad) && Number.isInteger(Number(cant)) && Number(cant) > 1;
 
@@ -545,7 +548,7 @@ export default function App() {
 
       const raras = (elems || []).filter(e => {
         const n = String(e.unidad ?? "").trim().toLowerCase();
-        return !["und", "ml", "m2", "gl"].includes(n) || e.unidad !== n;
+        return !(ALIAS_UND.includes(n) || ["ml", "m2", "gl"].includes(n)) || e.unidad !== n;
       });
       console.group(`A) Unidades que no son exactamente und/ml/m2/gl: ${raras.length}`);
       console.table(raras.map(e => ({ id: e.id, nombre: e.nombre, unidad: JSON.stringify(e.unidad) })));
