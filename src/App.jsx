@@ -298,11 +298,6 @@ function diagnosticarCantidades(obras, elems, liqs) {
   return { rows, porObra, tot, cargado };
 }
 
-// ── Paso 3: corrección selectiva de cantidades ───────────────────────────────
-const OBRAS_REPARAR = ["VELVET T3", "MURANO TORRE 1"];
-const ESPERADO_REPARAR = 581;                          // 396 + 185, contados sobre el CSV
-const TABLA_RESPALDO = "respaldo_obras_2026_09_24";    // debe existir antes de escribir
-
 // CSV con ";" y BOM: así Excel en es-CO lo abre en columnas sin pasar por el asistente.
 function csvCantidades({ rows, porObra, tot }) {
   const esc = v => {
@@ -589,98 +584,7 @@ export default function App() {
       return { raras, partidos };
     };
 
-    // Corrección selectiva. Por defecto SIMULA: no escribe nada hasta que se
-    // pase { escribir: true }, y aun así solo si pasan todos los candados.
-    window.repararCantidades = async ({ escribir = false, esperado = ESPERADO_REPARAR, nombres = OBRAS_REPARAR } = {}) => {
-      const { rows } = diagnosticarCantidades(obras, elems, liqs);
-
-      // Regla 1 y 2: solo esas obras, solo corregibles, solo con cantidad real en la tipología.
-      const objetivo = rows.filter(r => nombres.includes(r.obra) && !r.bloqueado && !r.porDefecto);
-
-      const faltan = nombres.filter(n => !obras.some(o => o.nombre === n));
-      if (faltan.length) console.warn("Obras no encontradas por nombre exacto:", faltan);
-
-      const porObra = nombres.map(n => {
-        const f = objetivo.filter(r => r.obra === n);
-        return { obra: n, aptos: new Set(f.map(r => r.aptoId)).size, elementos: f.length,
-                 principal: f.filter(r => r.ambito === "principal").length,
-                 extra: f.filter(r => r.ambito === "extra").length };
-      });
-      console.log("%cSIMULACIÓN" + (escribir ? " + ESCRITURA SOLICITADA" : " — no se escribe nada"),
-        "background:#FEF3C7;color:#B45309;font-weight:700;padding:2px 6px");
-      console.table(porObra);
-      console.log(`TOTAL a corregir: ${objetivo.length} · esperado: ${esperado}`);
-      console.log("Descartados de esas obras →",
-        "bloqueados:", rows.filter(r => nombres.includes(r.obra) && r.bloqueado).length,
-        "| porDefecto:", rows.filter(r => nombres.includes(r.obra) && !r.bloqueado && r.porDefecto).length);
-
-      // CANDADO 1: el conteo debe dar exacto.
-      if (objetivo.length !== esperado) {
-        console.error(`PARE: son ${objetivo.length}, no ${esperado}. No se escribe nada. Revisa el CSV.`);
-        return { objetivo, porObra, escrito: false, motivo: "conteo" };
-      }
-      // CANDADO 2: un grupo sin bloquear no debería estar partido en varias filas.
-      const multi = objetivo.filter(r => r.partes > 1);
-      if (multi.length) {
-        console.error(`PARE: ${multi.length} grupo(s) libres con varias partes. Caso no previsto.`, multi);
-        return { objetivo, porObra, escrito: false, motivo: "multiparte" };
-      }
-
-      // Plan concreto de edición, con el mismo criterio de tipología que getPrecio.
-      const claves = new Set(objetivo.map(r => `${r.aptoId}|${r.ambito}|${r.tipId}|${r.elementoId}`));
-      const nuevas = []; let tocados = 0;
-      obras.forEach(o => {
-        if (!nombres.includes(o.nombre)) return;
-        let cambio = false;
-        const pisos = (o.pisos || []).map(p => ({ ...p, aptos: (p.aptos || []).map(a => {
-          const fix = (lista, ambito) => (lista || []).map(el => {
-            if (el.completado || el.detCompletado) return el;   // cinturón: nunca trabajo hecho
-            const tipId = ambito === "extra" ? el.tipologiaId : (el.tipologiaId || a.tipologia);
-            if (!claves.has(`${a.id}|${ambito}|${tipId}|${el.elementoId}`)) return el;
-            const correcta = numCant((o.tipologias || []).find(t => t.id === tipId)?.cantidades?.[el.elementoId], 0);
-            if (!(correcta > 0)) return el;                     // porDefecto: excluido por regla
-            cambio = true; tocados++;
-            return { ...el, cantidad: correcta };
-          });
-          const na = { ...a };
-          if (a.elementos) na.elementos = fix(a.elementos, "principal");
-          if (a.elementosExtra) na.elementosExtra = fix(a.elementosExtra, "extra");
-          return na;
-        }) }));
-        if (cambio) nuevas.push({ ...o, pisos });
-      });
-
-      // CANDADO 3: lo que el plan realmente muta debe coincidir con lo contado.
-      if (tocados !== esperado) {
-        console.error(`PARE: el plan muta ${tocados} elemento(s), no ${esperado}. No se escribe nada.`);
-        return { objetivo, porObra, escrito: false, motivo: "plan" };
-      }
-      console.log(`Plan listo: ${tocados} elemento(s) en ${nuevas.length} obra(s).`);
-
-      if (!escribir) {
-        console.log("Para escribir: repararCantidades({ escribir: true })");
-        return { objetivo, porObra, plan: nuevas, escrito: false, motivo: "simulacion" };
-      }
-
-      // CANDADO 4: el respaldo tiene que existir.
-      const rb = await fetch(`${SUPA_URL}/rest/v1/${TABLA_RESPALDO}?select=id&limit=1`, { headers: H() });
-      if (!rb.ok) {
-        console.error(`PARE: no encuentro la tabla ${TABLA_RESPALDO} (HTTP ${rb.status}). Corre el respaldo primero.`);
-        return { objetivo, porObra, plan: nuevas, escrito: false, motivo: "sin-respaldo" };
-      }
-
-      const fallos = [];
-      for (const o of nuevas) {
-        const r = await saveObra(o);
-        if (r.ok) console.log("✓ guardada", o.nombre);
-        else { const t = await r.text().catch(() => ""); console.error("✗ FALLÓ", o.nombre, r.status, t.slice(0, 200)); fallos.push(o.nombre); }
-      }
-      if (fallos.length) { console.error("Obras con error:", fallos, "— revisa antes de reintentar."); }
-      else { setObras(xs => xs.map(x => nuevas.find(n => n.id === x.id) || x)); console.log("Listo. Corre diagCantidades() para confirmar."); }
-      return { objetivo, porObra, plan: nuevas, escrito: !fallos.length, fallos };
-    };
-
-    return () => { delete window.diagCantidades; delete window.verifCarga; delete window.repararCantidades; delete window.barridoPartidos; };
+    return () => { delete window.diagCantidades; delete window.verifCarga; delete window.barridoPartidos; };
   }, [user, obras, elems, liqs]);
 
   if (loading) return (
