@@ -32,6 +32,10 @@ const dbDel = async (t, id) => fetch(`${SUPA_URL}/rest/v1/${t}?id=eq.${id}`, { m
 // Funciones de la base (security definer). Se usan para tocar solo la columna "ajustes"
 // de usuarios, sin mandar la fila entera desde el navegador.
 const dbRpc = async (fn, args) => fetch(`${SUPA_URL}/rest/v1/rpc/${fn}`, { method: "POST", headers: { ...H(), "Prefer": "return=minimal" }, body: JSON.stringify(args) });
+// Insert y update sueltos. A diferencia de dbUpsert no generan ON CONFLICT, que exige
+// permiso de SELECT sobre toda la tabla y por eso choca con el blindaje del PIN.
+const dbInsert = async (t, d) => fetch(`${SUPA_URL}/rest/v1/${t}`, { method: "POST", headers: { ...H(), "Prefer": "return=minimal" }, body: JSON.stringify(d) });
+const dbPatch = async (t, id, d) => fetch(`${SUPA_URL}/rest/v1/${t}?id=eq.${id}`, { method: "PATCH", headers: { ...H(), "Prefer": "return=minimal" }, body: JSON.stringify(d) });
 
 // ── Frontera DB↔app para "liquidaciones" ──────────────────
 // La tabla usa nombres largos (retencion/subtotal/pasajes/bonificacion); la UI usa los cortos
@@ -3718,8 +3722,12 @@ function Usuarios({ users, setUsers, openM, closeM, modals, toast }) {
     if (!form.nombre || !form.email || (!editId && !form.pin)) return;
     const u = editId ? { ...users.find(x => x.id === editId), ...form } : { id: `u${Date.now()}`, ...form };
     if (!form.pin) delete u.pin;   // PIN vacío = se deja el que ya tenía
-    const res = await dbUpsert("usuarios", u);
-    if (!res.ok) { console.error("guardar usuario falló:", res.status, await res.text().catch(() => "")); toast("No tienes permiso para crear o editar usuarios", "err"); return; }
+    // Crear con INSERT y editar con PATCH, en vez de un upsert. El upsert se traduce
+    // a INSERT ... ON CONFLICT, y esa sentencia exige permiso de SELECT sobre TODA la
+    // tabla — con eso no se podría dejar el PIN fuera del alcance de las apps.
+    const { id: _idFijo, ...cambios } = u;   // el id no se manda en el PATCH
+    const res = editId ? await dbPatch("usuarios", editId, cambios) : await dbInsert("usuarios", u);
+    if (!res.ok) { console.error("guardar usuario falló:", res.status, await res.text().catch(() => "")); toast("No se pudo guardar el usuario", "err"); return; }
     if (editId) setUsers(x => x.map(y => y.id === editId ? u : y)); else setUsers(x => [...x, u]);
     setForm(emp); setEditId(null); closeM("usr");
   }
