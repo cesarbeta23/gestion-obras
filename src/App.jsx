@@ -55,6 +55,12 @@ const mapLiq = r => ({ ...r, ret: r.retencion ?? 0, sub: r.subtotal ?? 0, pas: r
 const OFICINA = ["superadmin", "supervisor", "auxiliar"];
 const esOficina = u => OFICINA.includes(u?.rol);
 
+// Para el avance cuentan los elementos de la tipología del apto Y los de las tipologías
+// extra (un apto puede llevar dos portones, por ejemplo). No cuentan los adicionales ni
+// los viejos __pasajes__/__bonificacion__: son trabajos sueltos, no parte de la instalación.
+const elsAvance = a => [...(a.elementos || []), ...(a.elementosExtra || [])]
+  .filter(e => !e.esAdicional && !e.elementoId?.startsWith("__"));
+
 const ROLES = { SA: "superadmin", SV: "supervisor", AX: "auxiliar", IN: "instalador" };
 
 // Las cantidades no siempre llegan como número: los <input type="number"> devuelven
@@ -467,11 +473,18 @@ export default function App() {
     return (act === "det" ? elem?.precio_detallado : elem?.precio) || 0;
   };
 
-  const avanceObra = o => { let t = 0, c = 0; o.pisos?.forEach(p => p.aptos?.forEach(a => a.elementos?.forEach(e => { t++; if (e.completado) c++; }))); return t === 0 ? 0 : Math.round(c / t * 100); };
-  const avanceApto = a => { const t = a.elementos?.length || 0, c = a.elementos?.filter(e => e.completado).length || 0; return t === 0 ? 0 : Math.round(c / t * 100); };
+  const avanceObra = o => {
+    let t = 0, c = 0;
+    o.pisos?.forEach(p => p.aptos?.forEach(a => elsAvance(a).forEach(e => { t++; if (e.completado) c++; })));
+    return t === 0 ? 0 : Math.round(c / t * 100);
+  };
+  const avanceApto = a => {
+    const els = elsAvance(a);
+    return els.length === 0 ? 0 : Math.round(els.filter(e => e.completado).length / els.length * 100);
+  };
   // El avance mide la instalación. El detallado solo pone su chulito cuando está todo hecho.
   const detListo = a => {
-    const els = (a.elementos || []).filter(e => !e.elementoId?.startsWith("__"));
+    const els = elsAvance(a);
     return els.length > 0 && els.every(e => e.detCompletado);
   };
 
@@ -2079,7 +2092,11 @@ const totLiq = totNorm + totAd + totExtra;
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
         {[["Avance", `${av}%`],
-          [esDet ? "Detallados" : "Instalados", `${elsNorm.filter(e => esDet ? e.detCompletado : e.completado).length}/${elsNorm.length}`],
+          // El contador incluye las tipologías extra, igual que el avance
+          [esDet ? "Detallados" : "Instalados", (() => {
+            const todos = elsAvance(curA);
+            return `${todos.filter(e => esDet ? e.detCompletado : e.completado).length}/${todos.length}`;
+          })()],
           [user.rol === ROLES.IN ? "Mi liquidación" : "Liquidación", fmt(totLiq)]].map(([l, v]) => (
           <div key={l} style={{ background: C.wh, borderRadius: 10, padding: "14px 16px", border: `1px solid ${C.g2}` }}>
             <div style={{ fontSize: 11, color: C.g4, marginBottom: 4, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".06em" }}>{l}</div>
