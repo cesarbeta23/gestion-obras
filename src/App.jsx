@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
@@ -25,6 +25,47 @@ async function irAlERP(toast) {
     if (ventana) ventana.location.href = url; else window.location.href = url;
   } catch { ventana?.close(); toast("Error de conexión", "error"); }
 }
+// ═══════════════════════════════════════════════════════════
+//  Trabajo sin señal
+//  En obra hay sótanos sin línea. La app guarda en el teléfono la última carga de
+//  datos y una cola con lo que se marcó sin red; cuando vuelve la señal, la cola se
+//  despacha sola. Se usa IndexedDB (localStorage se queda corto con obras grandes).
+// ═══════════════════════════════════════════════════════════
+const DB_NOMBRE = "obras-local", DB_ALMACEN = "kv";
+let _idb = null;
+function abrirIdb() {
+  if (_idb) return _idb;
+  _idb = new Promise((ok, mal) => {
+    const req = indexedDB.open(DB_NOMBRE, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(DB_ALMACEN);
+    req.onsuccess = () => ok(req.result);
+    req.onerror = () => mal(req.error);
+  }).catch(() => null);
+  return _idb;
+}
+async function localGet(clave) {
+  try {
+    const db = await abrirIdb(); if (!db) return null;
+    return await new Promise(ok => {
+      const r = db.transaction(DB_ALMACEN).objectStore(DB_ALMACEN).get(clave);
+      r.onsuccess = () => ok(r.result ?? null); r.onerror = () => ok(null);
+    });
+  } catch { return null; }
+}
+async function localSet(clave, valor) {
+  try {
+    const db = await abrirIdb(); if (!db) return false;
+    return await new Promise(ok => {
+      const tx = db.transaction(DB_ALMACEN, "readwrite");
+      tx.objectStore(DB_ALMACEN).put(valor, clave);
+      tx.oncomplete = () => ok(true); tx.onerror = () => ok(false); tx.onabort = () => ok(false);
+    });
+  } catch { return false; }
+}
+// Un fallo de red lanza excepción; un rechazo del servidor responde con error HTTP.
+// Solo lo primero se encola: lo segundo hay que mostrarlo, no reintentarlo para siempre.
+const sinRed = () => typeof navigator !== "undefined" && navigator.onLine === false;
+
 const dbGet = async (t, sel = "*") => (await fetch(`${SUPA_URL}/rest/v1/${t}?select=${sel}`, { headers: H() })).json();
 const dbUpsert = async (t, d) => fetch(`${SUPA_URL}/rest/v1/${t}`, { method: "POST", headers: { ...H(), "Prefer": "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(d) });
 // return=minimal: el borrado no devuelve la fila. Si la devolviera, en "usuarios" vendría el PIN.
@@ -415,10 +456,82 @@ export default function App() {
       if (!e.length) { await Promise.all(ELEMENTOS_DEF.map(x => dbUpsert("elementos", x))); setElems(ELEMENTOS_DEF); } else setElems(e);
       setObras(o.map(mapObra));
       setLiqs(l.map(mapLiq));
-    } catch (e) { toast("Error conectando", "error"); }
+      // Copia en el teléfono, para poder abrir la app en un sótano sin señal
+      localSet("datos", { u, e: e.length ? e : ELEMENTOS_DEF, o, l, fecha: Date.now() });
+      setDesdeLocal(null);
+      despacharCola();          // por si quedaron marcas de la última vez sin señal
+    } catch (err) {
+      // Sin línea: se abre con lo último que se alcanzó a guardar
+      const g = await localGet("datos");
+      if (g) {
+        setUsers(g.u); setElems(g.e); setObras((g.o || []).map(mapObra)); setLiqs((g.l || []).map(mapLiq));
+        setDesdeLocal(g.fecha || Date.now());
+        toast("Sin señal: mostrando los últimos datos guardados", "info");
+      } else {
+        toast("Error conectando", "error");
+      }
+    }
     setLoading(false);
   }
   useEffect(() => { if (user) loadAll(); else setLoading(false); }, [user]);
+
+  // ── Cola de marcas sin señal ──────────────────────────────
+  const [pendientes, setPendientes] = useState(0);
+  const [enLinea, setEnLinea] = useState(() => typeof navigator === "undefined" || navigator.onLine !== false);
+  const [desdeLocal, setDesdeLocal] = useState(null);   // fecha de los datos locales, si se abrió sin señal
+  const despachando = useRef(false);
+
+  const leerCola = async () => (await localGet("cola")) || [];
+  async function encolar(op) {
+    const cola = await leerCola();
+    // Si ya hay algo pendiente del mismo apto, se reemplaza: vale la última versión
+    const i = cola.findIndex(x => x.obra === op.obra && x.piso === op.piso && x.apto === op.apto);
+    if (i >= 0) cola[i] = op; else cola.push(op);
+    await localSet("cola", cola);
+    setPendientes(cola.length);
+  }
+  async function despacharCola() {
+    if (despachando.current) return;
+    despachando.current = true;
+    try {
+      let cola = await leerCola();
+      while (cola.length) {
+        const op = cola[0];
+        try {
+          const res = await dbRpc("guardar_apto", { p_obra: op.obra, p_piso: op.piso, p_apto: op.apto, p_datos: op.datos });
+          if (res.status === 401 || res.status === 403) {
+            // La sesión venció mientras estaba sin señal. Las marcas NO se botan:
+            // se quedan en la cola hasta que vuelva a entrar.
+            toast("Tu sesión venció. Vuelve a entrar y las marcas pendientes se suben solas.", "err");
+            break;
+          }
+          if (!res.ok) {                       // rechazo del servidor: no sirve reintentar
+            console.error("cola: guardar_apto rechazado", res.status, await res.text().catch(() => ""));
+            toast("Una marca guardada sin señal no fue aceptada. Revísala en la obra.", "err");
+          }
+        } catch { break; }                      // se cayó la red otra vez: queda para después
+        cola = cola.slice(1);
+        await localSet("cola", cola);
+        setPendientes(cola.length);
+      }
+      if (!cola.length) setPendientes(0);
+    } finally { despachando.current = false; }
+  }
+  // Al arrancar, al recuperar la señal y cada vez que la app vuelve al frente
+  useEffect(() => {
+    leerCola().then(c => setPendientes(c.length));
+    const arriba = () => { setEnLinea(true); despacharCola(); };
+    const abajo  = () => setEnLinea(false);
+    const visible = () => { if (document.visibilityState === "visible" && navigator.onLine !== false) despacharCola(); };
+    window.addEventListener("online", arriba);
+    window.addEventListener("offline", abajo);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      window.removeEventListener("online", arriba);
+      window.removeEventListener("offline", abajo);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, []);
 
   const saveObra = async o => dbUpsert("obras", {
     id: o.id, nombre: o.nombre, direccion: o.direccion, estado: o.estado,
@@ -458,15 +571,27 @@ export default function App() {
     return out;
   };
   async function guardarCambioObra(prev, next) {
-    if (!prev || !mismaEstructura(prev, next)) { await saveObra(next); return; }
+    if (!prev || !mismaEstructura(prev, next)) {
+      // Cambio de estructura (pisos, tipologías, precios): eso lo hace la oficina con
+      // señal, así que no se encola. Si falla, se avisa y ya.
+      try {
+        const res = await saveObra(next);
+        if (res && !res.ok) toast("No se pudo guardar el cambio de la obra", "err");
+      } catch { toast("Sin señal: este cambio no se guardó", "err"); }
+      return;
+    }
     const cambios = aptosCambiados(prev, next);
     if (!cambios.length) return;                       // nada que guardar
     for (const c of cambios) {
-      const res = await dbRpc("guardar_apto", { p_obra: next.id, p_piso: c.pisoId, p_apto: c.apto.id, p_datos: c.apto });
-      if (!res.ok) {                                    // si la función no está o falla, se guarda como antes
-        console.error("guardar_apto falló:", res.status, await res.text().catch(() => ""));
-        await saveObra(next);
-        return;
+      const op = { obra: next.id, piso: c.pisoId, apto: c.apto.id, datos: c.apto };
+      try {
+        const res = await dbRpc("guardar_apto", { p_obra: op.obra, p_piso: op.piso, p_apto: op.apto, p_datos: op.datos });
+        if (!res.ok) {                                  // el servidor lo rechazó: no es falta de red
+          console.error("guardar_apto falló:", res.status, await res.text().catch(() => ""));
+          toast("No se pudo guardar esa marca", "err");
+        }
+      } catch {
+        await encolar(op);                              // sin señal: queda en el teléfono
       }
     }
   }
@@ -663,6 +788,25 @@ export default function App() {
   return (
     <div style={{ fontFamily: "system-ui,sans-serif", maxWidth: 920, margin: "0 auto", padding: "1rem", background: C.g0, minHeight: "100vh" }}>
       <Toast items={toasts} setItems={setToasts} />
+      {/* Estado de la señal y de lo que falta por subir */}
+      {(!enLinea || pendientes > 0 || desdeLocal) && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+          padding: "8px 12px", borderRadius: 10, marginBottom: 10, fontSize: 13, fontWeight: 600,
+          background: !enLinea ? "#FEF3C7" : pendientes > 0 ? C.orL : C.gnL,
+          border: `1px solid ${!enLinea ? "#FDE68A" : pendientes > 0 ? C.orM : "#BBF7D0"}`,
+          color: !enLinea ? "#92400E" : pendientes > 0 ? C.orD : C.gnD,
+        }}>
+          <span>{!enLinea ? "📵 Sin señal" : pendientes > 0 ? "📡 Subiendo…" : "✓ Al día"}</span>
+          {pendientes > 0 && <span>· {pendientes} {pendientes === 1 ? "marca pendiente" : "marcas pendientes"} por subir</span>}
+          {!enLinea && pendientes === 0 && <span style={{ fontWeight: 400 }}>· lo que marques se guarda y se sube cuando vuelva la línea</span>}
+          {desdeLocal && enLinea && <span style={{ fontWeight: 400 }}>· datos del {new Date(desdeLocal).toLocaleString("es-CO")}</span>}
+          {enLinea && pendientes > 0 && <button onClick={despacharCola}
+            style={{ marginLeft: "auto", background: C.or, color: C.wh, border: "none", borderRadius: 8, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Subir ahora</button>}
+          {enLinea && desdeLocal && <button onClick={loadAll}
+            style={{ marginLeft: pendientes > 0 ? 8 : "auto", background: C.gnD, color: C.wh, border: "none", borderRadius: 8, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Actualizar datos</button>}
+        </div>
+      )}
       <Header toast={toast} user={user} doLogout={doLogout} view={view} setView={setView} selObra={selObra} setSelObra={setSelObra} setSelPiso={setSelPiso} setSelApto={setSelApto} />
       {view === "obras" && <Obras {...sh} avanceObra={avanceObra} goObra={o => { setSelObra(o); setView("obra"); }} />}
       {view === "obra" && selObra && <Obra {...sh} obra={obras.find(o => o.id === selObra.id) || selObra} goApto={(a, p) => { setSelApto(a); setSelPiso(p); setView("apto"); }} />}
