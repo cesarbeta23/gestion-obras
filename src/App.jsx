@@ -430,10 +430,52 @@ export default function App() {
     coordinador_id: o.coordinadorId || ""
   });
 
+  // ── Guardado quirúrgico ───────────────────────────────────
+  // Marcar un elemento mandaba la obra ENTERA a la base. Como cada quien carga los datos
+  // al abrir la app, el que guardaba de último devolvía su copia vieja encima y borraba
+  // lo que otros habían marcado mientras tanto. Ahora, si lo único que cambió son aptos,
+  // se manda solo ese apto con la función guardar_apto, que toca ese pedazo del JSON y
+  // deja el resto como esté en la base en ese momento. Los cambios de estructura de la
+  // obra (pisos nuevos, tipologías, precios) siguen guardando la obra completa.
+  const mismaEstructura = (a, b) => {
+    const forma = o => JSON.stringify((o.pisos || []).map(p => [p.id, (p.aptos || []).map(x => x.id)]));
+    const resto = o => JSON.stringify({
+      nombre: o.nombre, direccion: o.direccion, estado: o.estado, tipologias: o.tipologias || [],
+      ia: o.instaladoresAutorizados || [], ah: o.aptosHabilitados || {},
+      sol: o.solicitudes || [], po: o.preciosOverride || {}, co: o.coordinadorId || "",
+    });
+    return forma(a) === forma(b) && resto(a) === resto(b);
+  };
+  const aptosCambiados = (prev, next) => {
+    const out = [];
+    (next.pisos || []).forEach(p => {
+      const pv = (prev.pisos || []).find(x => x.id === p.id);
+      (p.aptos || []).forEach(a => {
+        const av = (pv?.aptos || []).find(x => x.id === a.id);
+        if (JSON.stringify(av) !== JSON.stringify(a)) out.push({ pisoId: p.id, apto: a });
+      });
+    });
+    return out;
+  };
+  async function guardarCambioObra(prev, next) {
+    if (!prev || !mismaEstructura(prev, next)) { await saveObra(next); return; }
+    const cambios = aptosCambiados(prev, next);
+    if (!cambios.length) return;                       // nada que guardar
+    for (const c of cambios) {
+      const res = await dbRpc("guardar_apto", { p_obra: next.id, p_piso: c.pisoId, p_apto: c.apto.id, p_datos: c.apto });
+      if (!res.ok) {                                    // si la función no está o falla, se guarda como antes
+        console.error("guardar_apto falló:", res.status, await res.text().catch(() => ""));
+        await saveObra(next);
+        return;
+      }
+    }
+  }
+
   const updateObra = (id, fn) => setObras(obs => {
+    const prev = obs.find(o => o.id === id);
     const updated = obs.map(o => o.id === id ? fn(o) : o);
     const obra = updated.find(o => o.id === id);
-    if (obra) saveObra(obra);
+    if (obra) guardarCambioObra(prev, obra);
     return updated;
   });
 
