@@ -3037,6 +3037,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
   const [expM, setExpM] = useState(null);
   const INs = users.filter(u => u.rol === ROLES.IN);
   const [corteSel, setCorteSel] = useState("");
+  const [corteVista, setCorteVista] = useState("obra");   // "obra" | "inst"
   const tabs = [
     { k: "resumen", l: "Resumen por obra" },
     { k: "detalle", l: "Detalle por obra" },
@@ -3129,6 +3130,27 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
     const obrasArr = Object.values(m).map(e => ({ ...e, personas: e.personas.size, ret: Math.round(e.causado * 0.1), neto: e.causado - Math.round(e.causado * 0.1) }))
       .sort((a, b) => b.causado - a.causado);
     return { obras: obrasArr, pas, bon, dias, totalPagado };
+  }
+
+  // Los mismos pagos del corte, pero uno por instalador. Sale de la liquidación
+  // que se le cerró a cada quien, así que cuadra con lo que se le pagó.
+  function pagosDeCorteInst(label) {
+    const filas = liqs.filter(x => x.corte === label).map(l => {
+      const dias = (l.rows || []).filter(r => r.el === "Día laborado" && r.apr !== false)
+        .reduce((s, r) => s + Number(r.precio || 0) * Number(r.cant || 1), 0);
+      const obrasDeEl = [...new Set((l.rows || []).filter(r => !esAdjRow(r)).map(r => r.obra || "—"))];
+      return {
+        id: l.id, inst: l.inst_nombre || "—", cedula: l.inst_cedula || "",
+        obras: obrasDeEl, causado: Number(l.bruto || 0), ret: Number(l.ret || 0),
+        sub: Number(l.sub || 0), pas: Number(l.pas || 0), bon: Number(l.bon || 0),
+        dias, total: Number(l.total || 0),
+      };
+    }).sort((a, b) => b.total - a.total);
+    const suma = k => filas.reduce((s, f) => s + f[k], 0);
+    return {
+      filas,
+      tot: { causado: suma("causado"), ret: suma("ret"), sub: suma("sub"), pas: suma("pas"), bon: suma("bon"), dias: suma("dias"), total: suma("total") },
+    };
   }
 
   function resumenObras() {
@@ -3531,6 +3553,8 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
         const { obras: obrasCorte, pas, bon, dias, totalPagado } = pagosDeCorte(label);
         const totC = obrasCorte.reduce((s, o) => s + o.causado, 0);
         const totR = obrasCorte.reduce((s, o) => s + o.ret, 0);
+        const porInst = corteVista === "inst";
+        const { filas: fInst, tot: tInst } = pagosDeCorteInst(label);
         return (
           <div>
             <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 14 }}>
@@ -3540,7 +3564,29 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
                 {cortes.map(c => <option key={c} value={c}>{c}</option>)}
               </Sel>
             </div>
-            {label && obrasCorte.length > 0 && (
+            <div style={{ maxWidth: 220, flex: 1, minWidth: 180 }}>
+              <Sel label="Ver el corte" value={corteVista} onChange={e => setCorteVista(e.target.value)}>
+                <option value="obra">Por obra</option>
+                <option value="inst">Por instalador</option>
+              </Sel>
+            </div>
+            {label && porInst && (
+              <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                <Btn onClick={() => pdfTabla("Pagos del corte por instalador", label,
+                  ["Instalador", "Obras", "Causado", "Subtotal", "Pasajes", "Bonif.", "Días", "Retenido", "Total"],
+                  [...fInst.map(f => [f.inst, f.obras.join(", ") || "—", fmt(f.causado), fmt(f.sub), f.pas ? fmt(f.pas) : "—", f.bon ? fmt(f.bon) : "—", f.dias ? fmt(f.dias) : "—", fmt(f.ret), fmt(f.total)]),
+                   ["TOTALES", "", fmt(tInst.causado), fmt(tInst.sub), fmt(tInst.pas), fmt(tInst.bon), fmt(tInst.dias), fmt(tInst.ret), fmt(tInst.total)]],
+                  `Pagos corte por instalador ${label}.pdf`,
+                  { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right" }, 8: { halign: "right", fontStyle: "bold" } })}>📄 PDF</Btn>
+                <Btn variant="success" onClick={() => excel("Pagos corte instalador", [
+                  [`Pagos del corte por instalador — ${label}`], [`Generado el ${hoyStr()}`], [],
+                  ["Instalador", "Cédula", "Obras", "Causado", "Subtotal", "Pasajes", "Bonificación", "Días", "Retenido 10%", "Total"],
+                  ...fInst.map(f => [f.inst, f.cedula, f.obras.join(", "), f.causado, f.sub, f.pas, f.bon, f.dias, f.ret, f.total]),
+                  [], ["TOTALES", "", "", tInst.causado, tInst.sub, tInst.pas, tInst.bon, tInst.dias, tInst.ret, tInst.total],
+                ], [26, 14, 30, 16, 16, 14, 14, 12, 14, 16], [3, 4, 5, 6, 7, 8, 9], `Pagos corte por instalador ${label}.xlsx`)}>📊 Excel</Btn>
+              </div>
+            )}
+            {label && !porInst && obrasCorte.length > 0 && (
               <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
                 <Btn onClick={() => pdfTabla("Pagos del corte por obra", label,
                   ["Obra", "Personas", "Causado", "Adicionales", "Retenido 10%", "Neto obra"],
@@ -3570,6 +3616,47 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
                   </div>
                 ))}
               </div>
+              {porInst ? (<>
+              <div style={{ ...card, padding: 0, display: "block", maxWidth: "100%", minWidth: 0, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: C.orL }}>
+                    {["Instalador", "Obras", "Causado", "Subtotal", "Pasajes", "Bonif.", "Días", "Retenido 10%", "Total"].map(h => (
+                      <th key={h} style={{ padding: "7px 10px", textAlign: h === "Instalador" || h === "Obras" ? "left" : "right", fontSize: 10, fontWeight: 700, color: C.orD, textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {fInst.map(f => (
+                      <tr key={f.id} style={{ borderTop: `1px solid ${C.g1}` }}>
+                        <td style={{ padding: "6px 10px", fontWeight: 600, whiteSpace: "nowrap" }}>{f.inst}</td>
+                        <td style={{ padding: "6px 10px", fontSize: 11, color: C.g5 }}>{f.obras.join(", ") || "—"}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmt(f.causado)}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmt(f.sub)}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", color: f.pas ? C.or : C.g3 }}>{f.pas ? fmt(f.pas) : "—"}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", color: f.bon ? C.or : C.g3 }}>{f.bon ? fmt(f.bon) : "—"}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", color: f.dias ? C.or : C.g3 }}>{f.dias ? fmt(f.dias) : "—"}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", color: C.rd }}>{fmt(f.ret)}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700 }}>{fmt(f.total)}</td>
+                      </tr>
+                    ))}
+                    {fInst.length === 0 && <tr><td colSpan={9} style={{ padding: "14px 10px", color: C.g4, fontSize: 13 }}>Nadie tiene liquidación cerrada en este corte.</td></tr>}
+                    <tr style={{ background: C.g1, fontWeight: 700 }}>
+                      <td colSpan={2} style={{ padding: "8px 10px", textAlign: "right" }}>TOTALES</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right" }}>{fmt(tInst.causado)}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right" }}>{fmt(tInst.sub)}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right", color: C.or }}>{fmt(tInst.pas)}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right", color: C.or }}>{fmt(tInst.bon)}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right", color: C.or }}>{fmt(tInst.dias)}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right", color: C.rd }}>{fmt(tInst.ret)}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right" }}>{fmt(tInst.total)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p style={{ fontSize: 11, color: C.g5, marginTop: 8 }}>
+                Cada fila es la liquidación que se le cerró a esa persona en el corte.
+                Total = subtotal + pasajes + bonificación + días. El retenido ya está descontado del subtotal.
+              </p>
+              </>) : (<>
               <div style={{ ...card, padding: 0, overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead><tr style={{ background: C.orL }}>
@@ -3602,6 +3689,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
                 Lo causado y el retenido se reparten por obra. Pasajes, bonificaciones y días laborados son del corte
                 completo de cada persona, por eso van aparte y no se reparten.
               </p>
+              </>)}
             </>)}
           </div>
         );
