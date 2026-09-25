@@ -505,6 +505,7 @@ export default function App() {
             toast("Tu sesión venció. Vuelve a entrar y las marcas pendientes se suben solas.", "err");
             break;
           }
+          setEnLinea(true);                    // si respondió, hay red (aunque el celular diga que no)
           if (!res.ok) {                       // rechazo del servidor: no sirve reintentar
             console.error("cola: guardar_apto rechazado", res.status, await res.text().catch(() => ""));
             toast("Una marca guardada sin señal no fue aceptada. Revísala en la obra.", "err");
@@ -522,11 +523,21 @@ export default function App() {
     leerCola().then(c => setPendientes(c.length));
     const arriba = () => { setEnLinea(true); despacharCola(); };
     const abajo  = () => setEnLinea(false);
-    const visible = () => { if (document.visibilityState === "visible" && navigator.onLine !== false) despacharCola(); };
+    const visible = () => { if (document.visibilityState === "visible") despacharCola(); };
     window.addEventListener("online", arriba);
     window.addEventListener("offline", abajo);
     document.addEventListener("visibilitychange", visible);
+    // El aviso de "volvió la red" del celular no es de fiar: a veces dice que hay
+    // internet cuando todavía no, y a veces no avisa. Por eso se reintenta solo,
+    // cada 15 segundos, mientras haya algo pendiente. Si no hay red, el intento
+    // falla callado y la cola se queda igual.
+    const reintento = setInterval(async () => {
+      const c = await leerCola();
+      setPendientes(c.length);
+      if (c.length) despacharCola();
+    }, 15000);
     return () => {
+      clearInterval(reintento);
       window.removeEventListener("online", arriba);
       window.removeEventListener("offline", abajo);
       document.removeEventListener("visibilitychange", visible);
@@ -801,7 +812,7 @@ export default function App() {
           {pendientes > 0 && <span>· {pendientes} {pendientes === 1 ? "marca pendiente" : "marcas pendientes"} por subir</span>}
           {!enLinea && pendientes === 0 && <span style={{ fontWeight: 400 }}>· lo que marques se guarda y se sube cuando vuelva la línea</span>}
           {desdeLocal && enLinea && <span style={{ fontWeight: 400 }}>· datos del {new Date(desdeLocal).toLocaleString("es-CO")}</span>}
-          {enLinea && pendientes > 0 && <button onClick={despacharCola}
+          {pendientes > 0 && <button onClick={despacharCola}
             style={{ marginLeft: "auto", background: C.or, color: C.wh, border: "none", borderRadius: 8, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Subir ahora</button>}
           {enLinea && desdeLocal && <button onClick={loadAll}
             style={{ marginLeft: pendientes > 0 ? 8 : "auto", background: C.gnD, color: C.wh, border: "none", borderRadius: 8, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Actualizar datos</button>}
