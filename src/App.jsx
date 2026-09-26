@@ -1245,7 +1245,7 @@ function ModalAccesos({ obraId, obras, users, updateObra, toast, onClose }) {
 
 // ── OBRA DETALLE ──────────────────────────────────────────
 function Obra({ obra, obras, updateObra, user, avanceApto, detListo, elems, users, goApto, openM, closeM, modals, toast, getPrecio }) {
-  const [tipForm, setTipForm] = useState({ nombre: "", eids: [], cantidades: {}, precios: {} });
+  const [tipForm, setTipForm] = useState({ nombre: "", eids: [], cantidades: {}, precios: {}, preciosDet: {} });
   const [editTip, setEditTip] = useState(null);
   const [delTipId, setDelTipId] = useState(null);
   const [cambioMasivo, setCambioMasivo] = useState(null);   // { desde, hacia }
@@ -1329,15 +1329,17 @@ const [nuevoPisoF, setNuevoPisoF] = useState({ numero: "", aptos: 1 });
   const cortes = getCorteFechas();
   const instsActivos = (cur.instaladoresAutorizados || []).map(id => users.find(u => u.id === id)).filter(Boolean);
 
-  const abrirNueva = () => { setEditTip(null); setTipForm({ nombre: "", eids: [], cantidades: {}, precios: {} }); openM("tip"); };
+  const abrirNueva = () => { setEditTip(null); setTipForm({ nombre: "", eids: [], cantidades: {}, precios: {}, preciosDet: {} }); openM("tip"); };
   const abrirEditar = t => {
     const prefijo = `tip__${t.id}__`;
-    const precios = {};
+    const prefijoDet = `det__tip__${t.id}__`;      // el detallado usa las mismas llaves con det__
+    const precios = {}, preciosDet = {};
     Object.entries(cur.preciosOverride || {}).forEach(([k, v]) => {
-      if (k.startsWith(prefijo)) precios[k.slice(prefijo.length)] = v;
+      if (k.startsWith(prefijoDet)) preciosDet[k.slice(prefijoDet.length)] = v;
+      else if (k.startsWith(prefijo)) precios[k.slice(prefijo.length)] = v;
     });
     setEditTip(t.id);
-    setTipForm({ nombre: t.nombre, eids: [...t.elementoIds], cantidades: { ...(t.cantidades || {}) }, precios });
+    setTipForm({ nombre: t.nombre, eids: [...t.elementoIds], cantidades: { ...(t.cantidades || {}) }, precios, preciosDet });
     openM("tip");
   };
 const [dupTip, setDupTip] = useState(null);
@@ -1348,12 +1350,14 @@ const [dupPrecios, setDupPrecios] = useState({});
     // si hay un valor numérico válido; la elimina si el campo quedó vacío (vuelve al precio base/corte).
     const aplicarPrecios = (prev, tipId) => {
       const po = { ...(prev || {}) };
-      tipForm.eids.forEach(eid => {
-        const key = `tip__${tipId}__${eid}`;
-        const raw = tipForm.precios?.[eid];
+      const poner = (key, raw) => {
         const num = (raw === "" || raw === null || raw === undefined) ? NaN : Number(raw);
         if (Number.isFinite(num)) po[key] = num;
         else delete po[key];
+      };
+      tipForm.eids.forEach(eid => {
+        poner(`tip__${tipId}__${eid}`, tipForm.precios?.[eid]);
+        poner(`det__tip__${tipId}__${eid}`, tipForm.preciosDet?.[eid]);   // precio de detallado
       });
       return po;
     };
@@ -1938,17 +1942,31 @@ const disponibles = misHabilitados.filter(a => {
                 );
               })()}
               {tipForm.eids.includes(e.id) && (
-                <input type="number" min="0" step="1" placeholder={e.precio != null ? String(e.precio) : "Precio"}
-                  value={tipForm.precios?.[e.id] ?? ""}
-                  onClick={x => x.stopPropagation()}
-                  onChange={x => { x.stopPropagation(); setTipForm(f => ({ ...f, precios: { ...f.precios, [e.id]: x.target.value } })); }}
-                  style={{ width: 80, padding: "2px 6px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 12, textAlign: "right" }}
-                />
+                <span onClick={x => x.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <input type="number" min="0" step="1" title="Precio de instalación para esta tipología"
+                    placeholder={e.precio != null ? String(e.precio) : "Instalación"}
+                    value={tipForm.precios?.[e.id] ?? ""}
+                    onClick={x => x.stopPropagation()}
+                    onChange={x => { x.stopPropagation(); setTipForm(f => ({ ...f, precios: { ...f.precios, [e.id]: x.target.value } })); }}
+                    style={{ width: 78, padding: "2px 6px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 12, textAlign: "right" }}
+                  />
+                  {/* Precio de detallado de esta tipología, aparte del de instalación */}
+                  <input type="number" min="0" step="1" title="Precio de detallado para esta tipología"
+                    placeholder={Number(e.precio_detallado) ? String(e.precio_detallado) : "Detall."}
+                    value={tipForm.preciosDet?.[e.id] ?? ""}
+                    onClick={x => x.stopPropagation()}
+                    onChange={x => { x.stopPropagation(); setTipForm(f => ({ ...f, preciosDet: { ...f.preciosDet, [e.id]: x.target.value } })); }}
+                    style={{ width: 70, padding: "2px 6px", border: `1px solid ${C.am}`, borderRadius: 6, fontSize: 12, textAlign: "right", background: "#FFFBEB" }}
+                  />
+                </span>
               )}
             </label>);
             })()}
           </div>
-          <div style={{ fontSize: 12, color: C.g4, marginTop: 6 }}>{tipForm.eids.length} seleccionado(s)</div>
+          <div style={{ fontSize: 12, color: C.g4, marginTop: 6, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+            <span>{tipForm.eids.length} seleccionado(s)</span>
+            <span>Las dos casillas de la derecha son el precio de <strong>instalación</strong> y el de <strong>detallado</strong> (la amarilla). Vacías = precio base del elemento.</span>
+          </div>
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}><Btn onClick={() => closeM("tip")}>Cancelar</Btn><Btn variant="primary" onClick={guardarTip}>{editTip ? "Guardar" : "Crear"}</Btn></div>
       </Modal>}
@@ -2778,8 +2796,12 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
     const bon = aj.aprobado ? aj.bonificacion : 0;
     const dia = aj.aprobado ? aj.diasVal : 0;
     const pendAdj = (!aj.aprobado && (aj.pasajes || aj.bonificacion || aj.diasVal)) ? 1 : 0;
+    // La descripción de la actividad queda guardada en la liquidación: cuando se cierre
+    // el corte, el soporte del jornal viaja con él y no se pierde.
     const filasDias = aj.dias.map(d => ({
-      obra: obras.find(o => o.id === d.obraId)?.nombre || "—", apto: "—", el: "Día laborado", actividad: "Día laborado",
+      obra: obras.find(o => o.id === d.obraId)?.nombre || "—", apto: "—",
+      el: "Día laborado", actividad: "Día laborado",   // el nombre NO cambia: hay cálculos que lo comparan exacto
+      desc: d.desc || "",                                // la actividad va en su propio campo
       cant: Number(d.dias), precio: Number(d.valorDia || 0), fecha: "", adj: true, apr: aj.aprobado,
     }));
     return { bruto, ret, sub, pas, bon, dia, total: sub + pas + bon + dia, pendAdj, rows: [...rows, ...filasDias] };
@@ -2960,7 +2982,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
           </div>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 16 }}>
             <thead><tr style={{ background: C.orL }}>{["Obra", "Apto", "Elemento", "Cant.", "P.unit.", "Total", "Fecha"].map(h => <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700, color: C.orD, borderBottom: `2px solid ${C.orM}` }}>{h}</th>)}</tr></thead>
-            <tbody>{expM.rows.filter(r => !r.adj || r.apr).map((r, i) => <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : C.g0 }}><td style={{ padding: "5px 8px" }}>{r.obra}</td><td style={{ padding: "5px 8px" }}>{r.apto}</td><td style={{ padding: "5px 8px" }}>{r.el}</td><td style={{ padding: "5px 8px", textAlign: "center" }}>{r.cant}</td><td style={{ padding: "5px 8px", textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700 }}>{fmt(r.precio * r.cant)}</td><td style={{ padding: "5px 8px" }}>{r.fecha}</td></tr>)}</tbody>
+            <tbody>{expM.rows.filter(r => !r.adj || r.apr).map((r, i) => <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : C.g0 }}><td style={{ padding: "5px 8px" }}>{r.obra}</td><td style={{ padding: "5px 8px" }}>{r.apto}</td><td style={{ padding: "5px 8px" }}>{r.el}{r.desc && <span style={{ color: "#8E8E93", fontStyle: "italic" }}> — {r.desc}</span>}</td><td style={{ padding: "5px 8px", textAlign: "center" }}>{r.cant}</td><td style={{ padding: "5px 8px", textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700 }}>{fmt(r.precio * r.cant)}</td><td style={{ padding: "5px 8px" }}>{r.fecha}</td></tr>)}</tbody>
           </table>
           <div style={{ background: C.g0, borderRadius: 8, padding: "12px 16px" }}>
             {[["Total bruto", expM.res.bruto], ["Retención 10%", -expM.res.ret], ["Subtotal", expM.res.sub], expM.res.pas > 0 ? ["Pasajes", expM.res.pas] : null, expM.res.bon > 0 ? ["Bonificación", expM.res.bon] : null, ["Total a pagar", expM.res.total]].filter(Boolean).map(([l, v], i, a) => (
@@ -3031,7 +3053,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
                 {rows.map((r, i) => <div key={i} style={{ display: "flex", gap: 10, fontSize: 13, padding: "5px 0", borderBottom: `1px solid ${C.g1}`, flexWrap: "wrap", opacity: r.adj && !r.apr ? 0.55 : 1 }}>
                   <span style={{ color: C.g4, minWidth: 80 }}>{r.obra?.substring(0, 14)}</span>
                   <span style={{ fontWeight: 500 }}>Apto {r.apto}</span>
-                  <span style={{ flex: 1 }}>{r.el}{r.adj && !r.apr && <span style={{ marginLeft: 6, ...bdg("amber"), fontSize: 10 }}>pendiente</span>}</span>
+                  <span style={{ flex: 1 }}>{r.el}{r.desc && <span style={{ color: C.g5, fontStyle: "italic" }}> — {r.desc}</span>}{r.adj && !r.apr && <span style={{ marginLeft: 6, ...bdg("amber"), fontSize: 10 }}>pendiente</span>}</span>
                   <span style={{ fontWeight: 700, minWidth: 90, textAlign: "right" }}>{fmt(r.precio * r.cant)}</span>
                 </div>)}
               </div>}
@@ -3069,7 +3091,8 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
                     <div style={{ fontSize: 12, fontWeight: 700, color: "#B45309", marginBottom: 6 }}>Días laborados</div>
                     {diasAj.length === 0 && !edita && <div style={{ fontSize: 13, color: C.g5 }}>Sin días laborados.</div>}
                     {diasAj.map((d, k) => (
-                      <div key={k} style={{ display: "grid", gridTemplateColumns: edita ? "1.6fr 70px 110px 90px 28px" : "1.6fr 70px 110px 90px", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                      <div key={k} style={{ marginBottom: 10 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: edita ? "1.6fr 70px 110px 90px 28px" : "1.6fr 70px 110px 90px", gap: 6, alignItems: "center" }}>
                         {edita ? <>
                           <select value={d.obraId || ""} onChange={e => guardarDias(diasAj.map((x, j) => j === k ? { ...x, obraId: e.target.value } : x))}
                             style={{ padding: "6px 8px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 13 }}>
@@ -3091,8 +3114,17 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
                         {edita && <span onClick={() => guardarDias(diasAj.filter((_, j) => j !== k))} title="Quitar"
                           style={{ cursor: "pointer", color: C.rd, fontWeight: 700, textAlign: "center" }}>✕</span>}
                       </div>
+                      {/* En qué se invirtieron esos días: sin esto, un jornal queda sin sustento */}
+                      {edita
+                        ? <input defaultValue={d.desc || ""} placeholder="¿En qué se invirtió el tiempo? Ej: retiro de material, apoyo en montaje…"
+                            onBlur={e => guardarDias(diasAj.map((x, j) => j === k ? { ...x, desc: e.target.value.trim() } : x))}
+                            style={{ width: "100%", boxSizing: "border-box", marginTop: 4, padding: "6px 8px", border: `1px solid ${d.desc ? C.g2 : "#FDBA74"}`, borderRadius: 6, fontSize: 12.5, background: d.desc ? C.wh : "#FFFBEB" }} />
+                        : d.desc
+                          ? <div style={{ fontSize: 12, color: C.g5, marginTop: 2, fontStyle: "italic" }}>{d.desc}</div>
+                          : <div style={{ fontSize: 12, color: C.or, marginTop: 2 }}>Sin descripción de la actividad</div>}
+                      </div>
                     ))}
-                    {edita && <button onClick={() => guardarDias([...diasAj, { obraId: "", dias: 1, valorDia: 0 }])}
+                    {edita && <button onClick={() => guardarDias([...diasAj, { obraId: "", dias: 1, valorDia: 0, desc: "" }])}
                       style={{ ...bdg("amber"), cursor: "pointer", fontSize: 12 }}>+ Agregar días</button>}
                   </div>
 
@@ -3606,7 +3638,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
             const pdfTabla = (
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead><tr style={{ background: C.orL }}>{cols.map(h => <th key={h} style={{ padding: "5px 8px", textAlign: "left", fontWeight: 700, color: C.orD, borderBottom: `2px solid ${C.orM}` }}>{h}</th>)}</tr></thead>
-                <tbody>{rows.map((r, i) => <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : C.g0 }}><td style={{ padding: "5px 8px" }}>{r.piso}</td><td style={{ padding: "5px 8px" }}>{r.apto}</td><td style={{ padding: "5px 8px" }}>{r.el}</td><td style={{ padding: "5px 8px", textAlign: "center" }}>{r.cant}</td><td style={{ padding: "5px 8px", textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700 }}>{fmt(r.total)}</td><td style={{ padding: "5px 8px" }}>{r.inst}</td><td style={{ padding: "5px 8px" }}>{r.fecha}</td></tr>)}</tbody>
+                <tbody>{rows.map((r, i) => <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : C.g0 }}><td style={{ padding: "5px 8px" }}>{r.piso}</td><td style={{ padding: "5px 8px" }}>{r.apto}</td><td style={{ padding: "5px 8px" }}>{r.el}{r.desc && <span style={{ color: "#8E8E93", fontStyle: "italic" }}> — {r.desc}</span>}</td><td style={{ padding: "5px 8px", textAlign: "center" }}>{r.cant}</td><td style={{ padding: "5px 8px", textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700 }}>{fmt(r.total)}</td><td style={{ padding: "5px 8px" }}>{r.inst}</td><td style={{ padding: "5px 8px" }}>{r.fecha}</td></tr>)}</tbody>
               </table>
             );
             const excelTxt = [`Detalle — ${o?.nombre}`, "", cols.join("\t"), ...rows.map(r => [r.piso, r.apto, r.el, r.cant, r.precio, r.total, r.inst, r.fecha].join("\t"))].join("\n");
@@ -3620,7 +3652,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
                   {rows.length === 0 ? <p style={{ color: C.g4, fontSize: 14 }}>Sin instalaciones registradas.</p> : (
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                       <thead><tr style={{ background: C.g0 }}>{cols.map(h => <th key={h} style={thSt}>{h}</th>)}</tr></thead>
-                      <tbody>{rows.map((r, i) => <tr key={i}><td style={tdSt}>{r.piso}</td><td style={tdSt}>{r.apto}</td><td style={tdSt}>{r.el}</td><td style={{ ...tdSt, textAlign: "center" }}>{r.cant}</td><td style={{ ...tdSt, textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ ...tdSt, textAlign: "right", fontWeight: 700, color: C.gnD }}>{fmt(r.total)}</td><td style={{ ...tdSt, color: C.g5 }}>{r.inst}</td><td style={{ ...tdSt, color: C.g5 }}>{r.fecha}</td></tr>)}</tbody>
+                      <tbody>{rows.map((r, i) => <tr key={i}><td style={tdSt}>{r.piso}</td><td style={tdSt}>{r.apto}</td><td style={tdSt}>{r.el}{r.desc && <span style={{ color: "#8E8E93", fontStyle: "italic" }}> — {r.desc}</span>}</td><td style={{ ...tdSt, textAlign: "center" }}>{r.cant}</td><td style={{ ...tdSt, textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ ...tdSt, textAlign: "right", fontWeight: 700, color: C.gnD }}>{fmt(r.total)}</td><td style={{ ...tdSt, color: C.g5 }}>{r.inst}</td><td style={{ ...tdSt, color: C.g5 }}>{r.fecha}</td></tr>)}</tbody>
                     </table>
                   )}
                 </div>
@@ -3645,7 +3677,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
                 <div style={{ fontSize: 13, color: C.g5, marginBottom: 12 }}>C.C. {inst?.cedula} · {inst?.banco || "—"} {inst?.cuenta || ""}</div>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 14 }}>
                   <thead><tr style={{ background: C.orL }}>{cols.map(h => <th key={h} style={{ padding: "5px 8px", textAlign: "left", fontWeight: 700, color: C.orD, borderBottom: `2px solid ${C.orM}` }}>{h}</th>)}</tr></thead>
-                  <tbody>{rows.filter(r => !r.adj || r.apr).map((r, i) => <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : C.g0 }}><td style={{ padding: "5px 8px" }}>{r.obra}</td><td style={{ padding: "5px 8px" }}>{r.apto}</td><td style={{ padding: "5px 8px" }}>{r.el}</td><td style={{ padding: "5px 8px", textAlign: "center" }}>{r.cant}</td><td style={{ padding: "5px 8px", textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700 }}>{fmt(r.total)}</td><td style={{ padding: "5px 8px" }}>{r.fecha}</td></tr>)}</tbody>
+                  <tbody>{rows.filter(r => !r.adj || r.apr).map((r, i) => <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : C.g0 }}><td style={{ padding: "5px 8px" }}>{r.obra}</td><td style={{ padding: "5px 8px" }}>{r.apto}</td><td style={{ padding: "5px 8px" }}>{r.el}{r.desc && <span style={{ color: "#8E8E93", fontStyle: "italic" }}> — {r.desc}</span>}</td><td style={{ padding: "5px 8px", textAlign: "center" }}>{r.cant}</td><td style={{ padding: "5px 8px", textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700 }}>{fmt(r.total)}</td><td style={{ padding: "5px 8px" }}>{r.fecha}</td></tr>)}</tbody>
                 </table>
                 <div style={{ background: C.g0, borderRadius: 8, padding: "10px 14px" }}>
                   {resumen.map(([lb, v], i, a) => <div key={lb} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontWeight: i === a.length - 1 ? 700 : 400, fontSize: i === a.length - 1 ? 15 : 13, color: i === a.length - 1 ? C.gnD : C.bk }}><span>{lb}</span><span>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>)}
@@ -3668,7 +3700,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
                   {rows.length === 0 ? <p style={{ color: C.g4, fontSize: 14 }}>Sin instalaciones registradas.</p> : (<>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, marginBottom: 14 }}>
                       <thead><tr style={{ background: C.g0 }}>{cols.map(h => <th key={h} style={thSt}>{h}</th>)}</tr></thead>
-                      <tbody>{rows.map((r, i) => <tr key={i} style={{ opacity: r.adj && !r.apr ? 0.5 : 1 }}><td style={{ ...tdSt, color: C.g5, fontSize: 12 }}>{r.obra?.substring(0, 16)}</td><td style={tdSt}>{r.apto}</td><td style={tdSt}>{r.el}{r.adj && !r.apr && <span style={{ marginLeft: 6, ...bdg("amber"), fontSize: 10 }}>pend.</span>}</td><td style={{ ...tdSt, textAlign: "center" }}>{r.cant}</td><td style={{ ...tdSt, textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ ...tdSt, textAlign: "right", fontWeight: 700, color: C.gnD }}>{fmt(r.total)}</td><td style={{ ...tdSt, color: C.g5 }}>{r.fecha}</td></tr>)}</tbody>
+                      <tbody>{rows.map((r, i) => <tr key={i} style={{ opacity: r.adj && !r.apr ? 0.5 : 1 }}><td style={{ ...tdSt, color: C.g5, fontSize: 12 }}>{r.obra?.substring(0, 16)}</td><td style={tdSt}>{r.apto}</td><td style={tdSt}>{r.el}{r.desc && <span style={{ color: "#8E8E93", fontStyle: "italic" }}> — {r.desc}</span>}{r.adj && !r.apr && <span style={{ marginLeft: 6, ...bdg("amber"), fontSize: 10 }}>pend.</span>}</td><td style={{ ...tdSt, textAlign: "center" }}>{r.cant}</td><td style={{ ...tdSt, textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ ...tdSt, textAlign: "right", fontWeight: 700, color: C.gnD }}>{fmt(r.total)}</td><td style={{ ...tdSt, color: C.g5 }}>{r.fecha}</td></tr>)}</tbody>
                     </table>
                     <div style={{ background: C.g0, borderRadius: 8, padding: "10px 14px", fontSize: 13 }}>
                       {resumen.map(([lb, v], i, a) => <div key={lb} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: i < a.length - 1 ? `1px solid ${C.g2}` : "none", fontWeight: i === a.length - 1 ? 700 : 400, fontSize: i === a.length - 1 ? 16 : 13, color: i === a.length - 1 ? C.gnD : C.bk, marginTop: i === a.length - 1 ? 4 : 0 }}><span>{lb}</span><span>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>)}
