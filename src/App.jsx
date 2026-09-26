@@ -869,7 +869,54 @@ function LoginScreen({ login, setLogin, doLogin, err }) {
   );
 }
 
+// ── CAMBIAR MI PIN ────────────────────────────────────────
+// Va por RPC porque el instalador no puede escribir en la tabla usuarios.
+// La función de la base saca de la sesión a quién le cambia el PIN, así que
+// nadie puede cambiárselo a otro, ni mandando un id distinto.
+function CambiarPin({ onClose, toast }) {
+  const [f, setF] = useState({ actual: "", nuevo: "", rep: "" });
+  const [yendo, setYendo] = useState(false);
+
+  async function guardar() {
+    if (f.nuevo !== f.rep) { toast("El PIN nuevo y su repetición no coinciden", "error"); return; }
+    if (!/^[0-9]{4,8}$/.test(f.nuevo.trim())) { toast("El PIN debe ser de 4 a 8 números", "error"); return; }
+    setYendo(true);
+    const r = await dbRpc("cambiar_mi_pin", { p_actual: f.actual.trim(), p_nuevo: f.nuevo.trim() });
+    setYendo(false);
+    if (!r.ok) {
+      // La base manda el motivo en 'message'; si no, algo más raro pasó.
+      const d = await r.json().catch(() => ({}));
+      toast(d.message || "No se pudo cambiar el PIN", "error");
+      return;
+    }
+    toast("PIN cambiado. Úsalo la próxima vez que entres.", "ok");
+    onClose();
+  }
+
+  return (
+    <Modal title="Cambiar mi PIN" onClose={onClose}>
+      <p style={{ fontSize: 13, color: C.g5, margin: "0 0 14px" }}>
+        Con este PIN entras a Gestión de Obras y al ERP. De 4 a 8 números.
+        Nadie más lo puede ver, ni la oficina.
+      </p>
+      <Inp label="PIN actual" type="password" inputMode="numeric" autoComplete="current-password"
+        value={f.actual} onChange={e => setF(x => ({ ...x, actual: e.target.value }))} />
+      <Inp label="PIN nuevo" type="password" inputMode="numeric" autoComplete="new-password"
+        value={f.nuevo} onChange={e => setF(x => ({ ...x, nuevo: e.target.value }))} />
+      <Inp label="Repite el PIN nuevo" type="password" inputMode="numeric" autoComplete="new-password"
+        value={f.rep} onChange={e => setF(x => ({ ...x, rep: e.target.value }))} />
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 6 }}>
+        <Btn onClick={onClose}>Cancelar</Btn>
+        <Btn variant="primary" disabled={yendo || !f.actual || !f.nuevo || !f.rep} onClick={guardar}>
+          {yendo ? "Cambiando…" : "Cambiar PIN"}
+        </Btn>
+      </div>
+    </Modal>
+  );
+}
+
 function Header({ user, doLogout, view, setView, selObra, setSelObra, setSelPiso, setSelApto, toast }) {
+  const [pinM, setPinM] = useState(false);
   const rL = { superadmin: "Gerencia", supervisor: "Coordinador", auxiliar: "Auxiliar", instalador: "Instalador" };
   const nav = [
     { k: "obras", l: "Obras", r: [ROLES.SA, ROLES.SV, ROLES.AX, ROLES.IN] },
@@ -894,6 +941,8 @@ function Header({ user, doLogout, view, setView, selObra, setSelObra, setSelPiso
             <button onClick={() => irAlERP(toast)} title="Abrir el ERP sin volver a ingresar"
               style={{ background: C.or, border: "none", color: C.wh, borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "system-ui" }}>↗ ERP</button>
           )}
+          <button onClick={() => setPinM(true)} title="Cambiar mi PIN"
+            style={{ background: "transparent", border: `1px solid ${C.g8}`, color: C.g3, borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 13, fontFamily: "system-ui" }}>🔑 PIN</button>
           <button onClick={doLogout} style={{ background: "transparent", border: `1px solid ${C.g8}`, color: C.g3, borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 13, fontFamily: "system-ui" }}>Salir</button>
         </div>
       </div>
@@ -909,6 +958,7 @@ function Header({ user, doLogout, view, setView, selObra, setSelObra, setSelPiso
           <button key={n.k} onClick={() => setView(n.k)} style={{ background: "transparent", color: view === n.k ? C.or : C.g5, border: "none", borderBottom: view === n.k ? `2.5px solid ${C.or}` : "2.5px solid transparent", borderRadius: 0, padding: "10px 16px", cursor: "pointer", fontSize: 14, fontWeight: view === n.k ? 600 : 400, marginBottom: -2, fontFamily: "system-ui" }}>{n.l}</button>
         ))}
       </div>
+      {pinM && <CambiarPin onClose={() => setPinM(false)} toast={toast} />}
     </div>
   );
 }
