@@ -178,13 +178,22 @@ function enCorte(fs, d, h) {
   return f >= d && f <= h;
 }
 
+// Saldo de préstamo de una persona: lo prestado menos lo abonado. Un solo saldo
+// consolidado, no un préstamo por separado.
+function saldoPrestamo(movs, uid) {
+  return (movs || []).filter(m => m.usuario_id === uid)
+    .reduce((s, m) => s + (m.tipo === "abono" ? -Number(m.valor || 0) : Number(m.valor || 0)), 0);
+}
+
 // Lee el ajuste (pasajes/bonificación) de un instalador para un corte. Tolera ausencia de .ajustes.
 function ajusteDe(usuarios, iid, corteLabel) {
   const a = usuarios.find(x => x.id === iid)?.ajustes?.[corteLabel] || {};
   // Días laborados: jornales pagados en el corte, por obra. No llevan retención (igual que pasajes).
   const dias = Array.isArray(a.dias) ? a.dias.filter(d => Number(d.dias) > 0) : [];
   const diasVal = dias.reduce((s, d) => s + Number(d.dias || 0) * Number(d.valorDia || 0), 0);
-  return { pasajes: Number(a.pasajes) || 0, bonificacion: Number(a.bonificacion) || 0, dias, diasVal, aprobado: !!a.aprobado, editadoPor: a.editadoPor || "" };
+  return { pasajes: Number(a.pasajes) || 0, bonificacion: Number(a.bonificacion) || 0, dias, diasVal,
+           abono: Number(a.abono) || 0,   // descuento de préstamo de este corte (lo pone la oficina)
+           aprobado: !!a.aprobado, editadoPor: a.editadoPor || "" };
 }
 
 function Modal({ title, onClose, children, wide }) {
@@ -420,6 +429,7 @@ export default function App() {
   const [elems, setElems] = useState([]);
   const [users, setUsers] = useState([]);
   const [liqs, setLiqs] = useState([]);
+  const [movPres, setMovPres] = useState([]);   // préstamos y abonos de los instaladores
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("obras");
   const [selObra, setSelObra] = useState(null);
@@ -448,23 +458,25 @@ export default function App() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [u, e, o, l] = await Promise.all([
+      const [u, e, o, l, mp] = await Promise.all([
         dbGet("usuarios", "id,nombre,email,rol,oficio,cedula,telefono,banco,cuenta,ajustes"),   // sin PIN
         dbGet("elementos"), dbGet("obras"), dbGet("liquidaciones"),
+        dbGet("movimientos_prestamo").catch(() => []),   // si la tabla aún no existe, se sigue sin ella
       ]);
       setUsers(u);
+      setMovPres(Array.isArray(mp) ? mp : []);
       if (!e.length) { await Promise.all(ELEMENTOS_DEF.map(x => dbUpsert("elementos", x))); setElems(ELEMENTOS_DEF); } else setElems(e);
       setObras(o.map(mapObra));
       setLiqs(l.map(mapLiq));
       // Copia en el teléfono, para poder abrir la app en un sótano sin señal
-      localSet("datos", { u, e: e.length ? e : ELEMENTOS_DEF, o, l, fecha: Date.now() });
+      localSet("datos", { u, e: e.length ? e : ELEMENTOS_DEF, o, l, mp: Array.isArray(mp) ? mp : [], fecha: Date.now() });
       setDesdeLocal(null);
       despacharCola();          // por si quedaron marcas de la última vez sin señal
     } catch (err) {
       // Sin línea: se abre con lo último que se alcanzó a guardar
       const g = await localGet("datos");
       if (g) {
-        setUsers(g.u); setElems(g.e); setObras((g.o || []).map(mapObra)); setLiqs((g.l || []).map(mapLiq));
+        setUsers(g.u); setElems(g.e); setObras((g.o || []).map(mapObra)); setLiqs((g.l || []).map(mapLiq)); setMovPres(g.mp || []);
         setDesdeLocal(g.fecha || Date.now());
         toast("Sin señal: mostrando los últimos datos guardados", "info");
       } else {
@@ -794,7 +806,7 @@ export default function App() {
   );
   if (!user) return <LoginScreen login={login} setLogin={setLogin} doLogin={doLogin} err={loginErr} />;
 
-  const sh = { obras, setObras, updateObra, saveObra, elems, setElems, users, setUsers, liqs, setLiqs, openM, closeM, modals, toast, user, getPrecio, avanceApto, detListo };
+  const sh = { obras, setObras, updateObra, saveObra, elems, setElems, users, setUsers, liqs, setLiqs, movPres, setMovPres, openM, closeM, modals, toast, user, getPrecio, avanceApto, detListo };
 
   return (
     <div style={{ fontFamily: "system-ui,sans-serif", maxWidth: 920, margin: "0 auto", padding: "1rem", background: C.g0, minHeight: "100vh" }}>
@@ -824,7 +836,8 @@ export default function App() {
       {view === "apto" && selApto && selObra && <Apto {...sh} apto={selApto} piso={selPiso} obra={obras.find(o => o.id === selObra.id)} />}
       {view === "elems" && esOficina(user) && <Elementos {...sh} />}
       {view === "liqs" && <Liquidacion {...sh} avanceObra={avanceObra} />}
-      {view === "reportes" && esOficina(user) && <Reportes obras={obras} elems={elems} users={users} user={user} getPrecio={getPrecio} avanceObra={avanceObra} liqs={liqs} />}
+      {view === "reportes" && esOficina(user) && <Reportes obras={obras} elems={elems} users={users} user={user} getPrecio={getPrecio} avanceObra={avanceObra} liqs={liqs} movPres={movPres} />}
+      {view === "prestamos" && user.rol === ROLES.SA && <Prestamos {...sh} />}
       {view === "users" && esOficina(user) && <Usuarios {...sh} />}
     </div>
   );
@@ -849,12 +862,13 @@ function LoginScreen({ login, setLogin, doLogin, err }) {
 }
 
 function Header({ user, doLogout, view, setView, selObra, setSelObra, setSelPiso, setSelApto, toast }) {
-  const rL = { superadmin: "Superadmin", supervisor: "Supervisor", auxiliar: "Auxiliar", instalador: "Instalador" };
+  const rL = { superadmin: "Gerencia", supervisor: "Coordinador", auxiliar: "Auxiliar", instalador: "Instalador" };
   const nav = [
     { k: "obras", l: "Obras", r: [ROLES.SA, ROLES.SV, ROLES.AX, ROLES.IN] },
     { k: "elems", l: "Elementos", r: [ROLES.SA, ROLES.SV, ROLES.AX] },
     { k: "liqs", l: "Liquidación", r: [ROLES.SA, ROLES.SV, ROLES.AX, ROLES.IN] },
     { k: "reportes", l: "Reportes", r: [ROLES.SA, ROLES.SV, ROLES.AX] },
+    { k: "prestamos", l: "Préstamos", r: [ROLES.SA] },
     { k: "users", l: "Usuarios", r: [ROLES.SA, ROLES.SV, ROLES.AX] }
   ];
   return (
@@ -2744,11 +2758,12 @@ function Elementos({ elems, setElems, obras = [], openM, closeM, modals }) {
 }
 
 // ── LIQUIDACIÓN ───────────────────────────────────────────
-function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPrecio, toast }) {
+function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPres, setMovPres, getPrecio, toast }) {
   const cortes = getCorteFechas();
   const [ci, setCi] = useState(0);
   const [expM, setExpM] = useState(null);
   const [hist, setHist] = useState(false);
+  const [verTodos, setVerTodos] = useState(false);   // por defecto solo quien tiene corte
   const [filtInst, setFiltInst] = useState("");
   const [filtObra, setFiltObra] = useState("");
   const corte = cortes[ci];
@@ -2804,6 +2819,8 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
       desc: d.desc || "",                                // la actividad va en su propio campo
       cant: Number(d.dias), precio: Number(d.valorDia || 0), fecha: "", adj: true, apr: aj.aprobado,
     }));
+    // El corte vale lo causado. El abono a préstamo NO entra aquí: se aplica después,
+    // con el corte ya cerrado, cuando gerencia lo revisa antes de mandarlo a pagar.
     return { bruto, ret, sub, pas, bon, dia, total: sub + pas + bon + dia, pendAdj, rows: [...rows, ...filasDias] };
   }
 
@@ -2815,7 +2832,9 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
       inst_id: inst.id, inst_nombre: inst.nombre, inst_cedula: inst.cedula,
       inst_telefono: inst.telefono, inst_banco: inst.banco, inst_cuenta: inst.cuenta,
       corte: corte.label, fecha_cierre: new Date().toLocaleDateString("es-CO"),
-      cerrado_por: user.nombre, estado: "pagado",
+      // "cerrado": el coordinador terminó su parte. Gerencia revisa, aplica abonos y
+      // lo pasa a "pagado". Las liquidaciones viejas ya vienen marcadas "pagado".
+      cerrado_por: user.nombre, estado: "cerrado",
       bruto, ret, sub, pas, bon, total, rows,
     };
     const r = await dbUpsert("liquidaciones", liqToDb(l));
@@ -2825,11 +2844,60 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
       return;
     }
     setLiqs(x => [...x, l]);
-    toast("Liquidación cerrada", "ok");
+    toast("Corte cerrado. Queda pendiente la revisión de gerencia.", "ok");
   }
 
   // .find (no .some): el objeto guardado es la fuente de verdad de una liq cerrada.
   const cerrada = iid => liqs.find(l => l.inst_id === iid && l.corte === corte.label);
+
+  // ── Revisión de gerencia sobre un corte ya cerrado ────────
+  // Solo superadmin. El corte no se reescribe: el abono queda en préstamos, amarrado
+  // a ese corte, y el neto se calcula restando. Así una liquidación cerrada nunca
+  // cambia de número.
+  const esSuper = user.rol === ROLES.SA;
+  const abonoDelCorte = iid => (movPres || [])
+    .filter(m => m.usuario_id === iid && m.tipo === "abono" && m.corte === corte.label)
+    .reduce((s, m) => s + Number(m.valor || 0), 0);
+
+  async function aplicarAbono(inst, valor, ev) {
+    const actual = abonoDelCorte(inst.id);
+    const nuevo = Math.max(0, Number(valor) || 0);
+    if (nuevo === actual) return;
+    const cerr = cerrada(inst.id);
+    if (!cerr) return;
+    if (cerr.estado === "pagado") { toast("Ese corte ya se pagó: el abono no se cambia desde aquí", "err"); if (ev) ev.target.value = actual || ""; return; }
+    // Lo que ya está abonado en este corte no cuenta como deuda para el tope
+    const tope = saldoPrestamo(movPres, inst.id) + actual;
+    if (nuevo > tope) { toast(`No puede abonar más de lo que debe (${fmt(tope)})`, "err"); if (ev) ev.target.value = actual || ""; return; }
+    if (nuevo > Number(cerr.total || 0)) { toast(`El abono no puede superar el total del corte (${fmt(cerr.total)})`, "err"); if (ev) ev.target.value = actual || ""; return; }
+
+    // Se corrige reemplazando: se borran los abonos de este corte y se pone el nuevo
+    const viejos = (movPres || []).filter(m => m.usuario_id === inst.id && m.tipo === "abono" && m.corte === corte.label);
+    for (const m of viejos) {
+      const rd = await dbDel("movimientos_prestamo", m.id);
+      if (!rd.ok) { toast("No se pudo corregir el abono anterior", "err"); return; }
+    }
+    let creado = null;
+    if (nuevo > 0) {
+      creado = {
+        id: `mp${Date.now()}${Math.floor(Math.random() * 1000)}`, usuario_id: inst.id, tipo: "abono",
+        valor: nuevo, fecha: new Date().toISOString().slice(0, 10),
+        concepto: `Descuento del corte ${corte.label}`, corte: corte.label, registrado_por: user.nombre,
+      };
+      const ri = await dbInsert("movimientos_prestamo", creado);
+      if (!ri.ok) { toast("No se pudo guardar el abono", "err"); setMovPres(x => x.filter(m => !viejos.some(v2 => v2.id === m.id))); return; }
+    }
+    setMovPres(x => [...x.filter(m => !viejos.some(v2 => v2.id === m.id)), ...(creado ? [creado] : [])]);
+    toast(nuevo > 0 ? `Abono de ${fmt(nuevo)} aplicado` : "Abono retirado", "ok");
+  }
+
+  async function marcarPagado(liq) {
+    const act = { ...liq, estado: "pagado" };
+    const r = await dbUpsert("liquidaciones", liqToDb(act));
+    if (!r.ok) { toast("No se pudo marcar como pagado", "err"); return; }
+    setLiqs(x => x.map(l => l.id === liq.id ? act : l));
+    toast("Corte marcado como pagado", "ok");
+  }
 
   // Una sola pasada de filas por IN (snapshot si está cerrada, recálculo si no):
   // la reusan los filtros y el render. [] en Historial para no calcular de más.
@@ -2848,10 +2916,15 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
   const obrasCorte = [...new Set(datosPorIn.flatMap(d => d.rows.map(r => r.obra)).filter(Boolean))].sort();
 
   // AND: instalador Y obra. "" = sin filtrar.
+  // Por defecto solo salen los que tienen algo en el corte: con 30 instaladores en
+  // pantalla el proceso se vuelve dispendioso. El interruptor deja ver a todos.
+  const tieneCorte = d => d.rows.length > 0 || d.cerr || d.res.pas > 0 || d.res.bon > 0 || d.res.dia > 0;
   const visibles = datosPorIn.filter(d =>
+    (verTodos || tieneCorte(d)) &&
     (!filtInst || d.inst.id === filtInst) &&
     (!filtObra || d.rows.some(r => r.obra === filtObra))
   );
+  const ocultos = datosPorIn.filter(d => !tieneCorte(d)).length;
 
   // ── Pasajes/Bonificación por instalador+corte (viven en user.ajustes) ──
   const [ajTmp, setAjTmp] = useState({});  // buffer local; se confirma onBlur
@@ -2947,6 +3020,8 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
       ["Subtotal", fmt(res.sub)],
       ...(res.pas > 0 ? [["Pasajes", fmt(res.pas)]] : []),
       ...(res.bon > 0 ? [["Bonificación", fmt(res.bon)]] : []),
+      ...(res.dia > 0 ? [["Días laborados", fmt(res.dia)]] : []),
+      ...(res.abono > 0 ? [["Abono a préstamo", `- ${fmt(res.abono)}`]] : []),
       ["Total a pagar", fmt(res.total)],
     ];
     const totW = 240;
@@ -2985,7 +3060,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
             <tbody>{expM.rows.filter(r => !r.adj || r.apr).map((r, i) => <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : C.g0 }}><td style={{ padding: "5px 8px" }}>{r.obra}</td><td style={{ padding: "5px 8px" }}>{r.apto}</td><td style={{ padding: "5px 8px" }}>{r.el}{r.desc && <span style={{ color: "#8E8E93", fontStyle: "italic" }}> — {r.desc}</span>}</td><td style={{ padding: "5px 8px", textAlign: "center" }}>{r.cant}</td><td style={{ padding: "5px 8px", textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700 }}>{fmt(r.precio * r.cant)}</td><td style={{ padding: "5px 8px" }}>{r.fecha}</td></tr>)}</tbody>
           </table>
           <div style={{ background: C.g0, borderRadius: 8, padding: "12px 16px" }}>
-            {[["Total bruto", expM.res.bruto], ["Retención 10%", -expM.res.ret], ["Subtotal", expM.res.sub], expM.res.pas > 0 ? ["Pasajes", expM.res.pas] : null, expM.res.bon > 0 ? ["Bonificación", expM.res.bon] : null, ["Total a pagar", expM.res.total]].filter(Boolean).map(([l, v], i, a) => (
+            {[["Total bruto", expM.res.bruto], ["Retención 10%", -expM.res.ret], ["Subtotal", expM.res.sub], expM.res.pas > 0 ? ["Pasajes", expM.res.pas] : null, expM.res.bon > 0 ? ["Bonificación", expM.res.bon] : null, expM.res.abono > 0 ? ["Abono a préstamo", -expM.res.abono] : null, ["Total a pagar", expM.res.total]].filter(Boolean).map(([l, v], i, a) => (
               <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: i < a.length - 1 ? `1px solid ${C.g2}` : "none", fontWeight: i === a.length - 1 ? 700 : 400, fontSize: i === a.length - 1 ? 16 : 13, color: i === a.length - 1 ? C.gnD : C.bk, marginTop: i === a.length - 1 ? 6 : 0 }}><span>{l}</span><span>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>
             ))}
           </div>
@@ -3030,7 +3105,17 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
             </div>
             <p style={{ fontSize: 12, color: C.g4, margin: "8px 0 0" }}>Del {corte.desde.toLocaleDateString("es-CO")} al {corte.hasta.toLocaleDateString("es-CO")}</p>
           </div>
+          {ocultos > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, fontSize: 13, color: C.g5, flexWrap: "wrap" }}>
+              <span>{verTodos ? `Mostrando a todos (${ocultos} sin corte)` : `${ocultos} instalador(es) sin corte están ocultos`}</span>
+              <button onClick={() => setVerTodos(v => !v)}
+                style={{ ...bdg(verTodos ? "orange" : "gray"), cursor: "pointer", fontWeight: 600 }}>
+                {verTodos ? "Ver solo los que tienen corte" : "Ver todos"}
+              </button>
+            </div>
+          )}
           {visibles.length === 0 && (filtInst || filtObra) && <p style={{ fontSize: 13, color: C.g4 }}>Ningún instalador coincide con los filtros en este corte.</p>}
+          {visibles.length === 0 && !filtInst && !filtObra && <p style={{ fontSize: 13, color: C.g4 }}>Nadie tiene movimientos en este corte todavía.</p>}
           {visibles.map(({ inst, cerr, rows, res }) => {
             return <div key={inst.id} style={{ ...card, marginBottom: 16, borderLeft: `4px solid ${cerr ? C.gn : rows.length > 0 ? C.or : C.g2}` }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
@@ -3040,7 +3125,9 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
                   <div style={{ fontSize: 13, color: C.g5 }}>{inst.banco ? `${inst.banco} — ${inst.cuenta}` : "Sin datos bancarios"}</div>
                   <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
                     <span style={bdg("green")}>Instalador</span>
-                    {cerr && <span style={bdg("green")}>✓ Cerrada</span>}
+                    {cerr && <span style={bdg(cerr.estado === "pagado" ? "green" : "amber")}>
+                      {cerr.estado === "pagado" ? "✓ Pagada" : "Cerrada · falta pago"}
+                    </span>}
                     {res.pendAdj > 0 && <span style={bdg("amber")}>{res.pendAdj} ajuste(s) pendiente(s)</span>}
                   </div>
                 </div>
@@ -3058,7 +3145,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
                 </div>)}
               </div>}
               {rows.length > 0 && <div style={{ background: C.g0, borderRadius: 8, padding: "10px 14px", fontSize: 13, marginBottom: 12 }}>
-                {[["Total bruto", res.bruto], ["Retención 10%", -res.ret], ["Subtotal", res.sub], res.pas > 0 ? ["Pasajes", res.pas] : null, res.bon > 0 ? ["Bonificación", res.bon] : null, res.dia > 0 ? ["Días laborados", res.dia] : null].filter(Boolean).map(([l, v]) => (
+                {[["Total bruto", res.bruto], ["Retención 10%", -res.ret], ["Subtotal", res.sub], res.pas > 0 ? ["Pasajes", res.pas] : null, res.bon > 0 ? ["Bonificación", res.bon] : null, res.dia > 0 ? ["Días laborados", res.dia] : null, res.abono > 0 ? ["Abono a préstamo", -res.abono] : null].filter(Boolean).map(([l, v]) => (
                   <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: `1px solid ${C.g2}` }}><span style={{ color: C.g5 }}>{l}</span><span style={{ fontWeight: 500 }}>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>
                 ))}
                 <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0 0", fontWeight: 700, fontSize: 16, color: C.gnD }}><span>Total a pagar</span><span>{fmt(res.total)}</span></div>
@@ -3135,10 +3222,64 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, getPr
                 </div>;
               })()}
               {rows.length === 0 && <p style={{ fontSize: 13, color: C.g3, margin: "8px 0" }}>Sin instalaciones en este corte.</p>}
-              {canExp && rows.length > 0 && <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+
+              {/* ── Revisión de gerencia ───────────────────────────────
+                  El corte ya lo cerró el coordinador. Aquí superadmin aplica el abono
+                  a préstamo y lo manda a pagar. El corte NO se reescribe: el abono vive
+                  en préstamos y el neto se muestra restando. */}
+              {cerr && (() => {
+                const deuda = saldoPrestamo(movPres, inst.id);
+                const abonado = abonoDelCorte(inst.id);
+                const pagado = cerr.estado === "pagado";
+                const neto = Number(cerr.total || 0) - abonado;
+                if (!esSuper && !abonado && deuda <= 0) return null;
+                return (
+                  <div style={{ marginTop: 10, padding: "10px 14px", borderRadius: 10,
+                    background: pagado ? C.gnL : "#EFF6FF", border: `1px solid ${pagado ? "#BBF7D0" : "#BFDBFE"}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: pagado ? C.gnD : "#1E40AF", textTransform: "uppercase", letterSpacing: ".05em" }}>
+                        {pagado ? "✓ Pagado" : "Pendiente de pago — revisión de gerencia"}
+                      </span>
+                      {deuda > 0 && <span style={{ fontSize: 12, color: C.g5 }}>Debe de préstamos: <strong style={{ color: C.rd }}>{fmt(deuda)}</strong></span>}
+                    </div>
+
+                    <div style={{ display: "grid", gap: 3, fontSize: 13, maxWidth: 420, marginLeft: "auto" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span style={{ color: C.g5 }}>Total a pagar</span><strong>{fmt(cerr.total)}</strong>
+                      </div>
+                      {abonado > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: C.rd }}>
+                        <span>Abono a préstamo</span><strong>− {fmt(abonado)}</strong>
+                      </div>}
+                      <div style={{ display: "flex", justifyContent: "space-between", borderTop: `1px solid ${C.g2}`, paddingTop: 3, fontWeight: 800 }}>
+                        <span>Valor a pagar neto</span><span style={{ color: C.gnD }}>{fmt(neto)}</span>
+                      </div>
+                    </div>
+
+                    {esSuper && !pagado && (
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 10, justifyContent: "flex-end" }}>
+                        {deuda > 0 || abonado > 0 ? <>
+                          <span style={{ fontSize: 13, color: C.g5 }}>Abonar al préstamo</span>
+                          <input type="number" min="0" placeholder="0" defaultValue={abonado || ""}
+                            onBlur={e => aplicarAbono(inst, Number(e.target.value) || 0, e)}
+                            style={{ width: 120, padding: "6px 8px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 13, textAlign: "right" }} />
+                        </> : null}
+                        <Btn variant="success" onClick={() => marcarPagado(cerr)}>Marcar como pagado</Btn>
+                      </div>
+                    )}
+                    {esSuper && pagado && <div style={{ fontSize: 11.5, color: C.g5, marginTop: 6, textAlign: "right" }}>
+                      Ya pagado: el abono queda quieto. Si hay que corregir, regístralo en Préstamos.
+                    </div>}
+                    {!esSuper && !pagado && <div style={{ fontSize: 11.5, color: C.g5, marginTop: 6, textAlign: "right" }}>
+                      El descuento y el pago los maneja gerencia.
+                    </div>}
+                  </div>
+                );
+              })()}
+
+              {canExp && rows.length > 0 && <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap", marginTop: 10 }}>
                 <Btn variant="success" onClick={() => setExpM({ tipo: "excel", inst, rows, res, txt: excelTxt(inst, rows, res) })}>Excel</Btn>
                 <Btn variant="primary" onClick={() => setExpM({ tipo: "pdf", inst, rows, res })}>PDF</Btn>
-                {!cerr && esOficina(user) && <Btn variant="amber" onClick={() => cerrar(inst)}>✓ Cerrar y aprobar</Btn>}
+                {!cerr && esOficina(user) && <Btn variant="amber" onClick={() => cerrar(inst)}>✓ Cerrar corte</Btn>}
               </div>}
             </div>;
           })}
@@ -3280,7 +3421,7 @@ function Historial({ liqs, setLiqs, user, users, toast }) {
 }
 
 // ── REPORTES ──────────────────────────────────────────────
-function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] }) {
+function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [], movPres = [] }) {
   const [tipo, setTipo] = useState("resumen");
   const [obraId, setObraId] = useState("");
   const [instId, setInstId] = useState("");
@@ -3294,6 +3435,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
     { k: "instalador", l: "Por instalador" },
     { k: "retenidos", l: "Retenidos" },
     { k: "cortes", l: "Pagos por corte" },
+    ...(user.rol === ROLES.SA ? [{ k: "prestamos", l: "Préstamos" }] : []),   // solo gerencia
   ];
 
   // ── Informes sobre los cortes ya cerrados (tabla liquidaciones) ──
@@ -3545,6 +3687,8 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
       ["Subtotal", fmt(res.sub)],
       ...(res.pas > 0 ? [["Pasajes", fmt(res.pas)]] : []),
       ...(res.bon > 0 ? [["Bonificación", fmt(res.bon)]] : []),
+      ...(res.dia > 0 ? [["Días laborados", fmt(res.dia)]] : []),
+      ...(res.abono > 0 ? [["Abono a préstamo", `- ${fmt(res.abono)}`]] : []),
       ["Total a pagar", fmt(res.total)],
     ];
     const totW = 240;
@@ -3798,6 +3942,96 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
       })()}
 
       {/* ── Pago total del corte, por obra ── */}
+      {tipo === "prestamos" && (() => {
+        // Informe aparte del de obra: el préstamo es un tema administrativo, no un
+        // costo de la obra. Por eso no toca ninguno de los otros números.
+        const INs = users.filter(u => u.rol === ROLES.IN);
+        const filas = INs.map(u => {
+          const movs = (movPres || []).filter(m => m.usuario_id === u.id);
+          const prestado = movs.filter(m => m.tipo !== "abono").reduce((s2, m) => s2 + Number(m.valor || 0), 0);
+          const abonado = movs.filter(m => m.tipo === "abono").reduce((s2, m) => s2 + Number(m.valor || 0), 0);
+          const ultimo = movs.map(m => m.fecha).sort().pop() || "";
+          return { u, movs, prestado, abonado, saldo: prestado - abonado, ultimo };
+        }).filter(f => f.movs.length > 0).sort((a, b) => b.saldo - a.saldo);
+        const t = {
+          prestado: filas.reduce((s2, f) => s2 + f.prestado, 0),
+          abonado: filas.reduce((s2, f) => s2 + f.abonado, 0),
+          saldo: filas.reduce((s2, f) => s2 + f.saldo, 0),
+        };
+        return (
+          <div>
+            {filas.length > 0 && (
+              <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+                <Btn onClick={() => pdfTabla("Préstamos y anticipos", `Saldos al ${hoyStr()}`,
+                  ["Instalador", "Cédula", "Prestado", "Abonado", "Debe", "Último movim."],
+                  [...filas.map(f => [f.u.nombre, f.u.cedula || "—", fmt(f.prestado), fmt(f.abonado), fmt(f.saldo), f.ultimo || "—"]),
+                   ["TOTALES", "", fmt(t.prestado), fmt(t.abonado), fmt(t.saldo), ""]],
+                  `Prestamos ${hoyStr()}.pdf`,
+                  { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right", fontStyle: "bold" } })}>📄 PDF</Btn>
+                <Btn variant="success" onClick={() => excel("Préstamos", [
+                  ["Préstamos y anticipos a instaladores"], [`Generado el ${hoyStr()}`], [],
+                  ["Instalador", "Cédula", "Prestado", "Abonado", "Debe", "Último movimiento"],
+                  ...filas.map(f => [f.u.nombre, f.u.cedula || "", f.prestado, f.abonado, f.saldo, f.ultimo]),
+                  [], ["TOTALES", "", t.prestado, t.abonado, t.saldo, ""],
+                  [], ["DETALLE DE MOVIMIENTOS"],
+                  ["Instalador", "Fecha", "Tipo", "Concepto", "Valor", "Corte"],
+                  ...filas.flatMap(f => f.movs
+                    .slice().sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)))
+                    .map(m => [f.u.nombre, m.fecha, m.tipo === "abono" ? "Abono" : "Préstamo",
+                               m.concepto || "", m.tipo === "abono" ? -Number(m.valor) : Number(m.valor), m.corte || ""])),
+                ], [26, 14, 16, 16, 16, 18], [2, 3, 4], `Prestamos ${hoyStr()}.xlsx`)}>📊 Excel</Btn>
+              </div>
+            )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 14 }}>
+              {[["Prestado", t.prestado, C.bk], ["Abonado", t.abonado, C.gnD], ["Debe hoy", t.saldo, t.saldo > 0 ? C.rd : C.gnD]].map(([l, v2, col]) => (
+                <div key={l} style={{ ...card, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 11, color: C.g5 }}>{l}</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: col }}>{fmt(v2)}</div>
+                </div>
+              ))}
+            </div>
+
+            {filas.length === 0 ? (
+              <p style={{ fontSize: 13, color: C.g4 }}>No hay préstamos registrados todavía.</p>
+            ) : (
+              <div style={{ ...card, padding: 0, display: "block", maxWidth: "100%", minWidth: 0, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: C.orL }}>
+                    {["Instalador", "Cédula", "Prestado", "Abonado", "Debe", "Último movim."].map(h => (
+                      <th key={h} style={{ padding: "7px 10px", textAlign: h === "Instalador" || h === "Cédula" ? "left" : "right", fontSize: 10, fontWeight: 700, color: C.orD, textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {filas.map(f => (
+                      <tr key={f.u.id} style={{ borderTop: `1px solid ${C.g1}` }}>
+                        <td style={{ padding: "6px 10px", fontWeight: 600 }}>{f.u.nombre}</td>
+                        <td style={{ padding: "6px 10px", color: C.g5 }}>{f.u.cedula || "—"}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmt(f.prestado)}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", color: C.gnD }}>−{fmt(f.abonado)}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700, color: f.saldo > 0 ? C.rd : C.gnD }}>{fmt(f.saldo)}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", color: C.g5 }}>{f.ultimo || "—"}</td>
+                      </tr>
+                    ))}
+                    <tr style={{ background: C.g1, fontWeight: 700 }}>
+                      <td colSpan={2} style={{ padding: "8px 10px", textAlign: "right" }}>TOTALES</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right" }}>{fmt(t.prestado)}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right", color: C.gnD }}>−{fmt(t.abonado)}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right", color: t.saldo > 0 ? C.rd : C.gnD }}>{fmt(t.saldo)}</td>
+                      <td />
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p style={{ fontSize: 11, color: C.g5, marginTop: 8 }}>
+              Los préstamos no entran en el costo de las obras: el desembolso es un egreso aparte y
+              el abono es plata que vuelve. Los informes de obra siguen mostrando lo causado.
+            </p>
+          </div>
+        );
+      })()}
+
       {tipo === "cortes" && (() => {
         const label = corteSel || cortes[0] || "";
         const { obras: obrasCorte, pas, bon, dias, totalPagado } = pagosDeCorte(label);
@@ -3948,13 +4182,185 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [] 
   );
 }
 
+// ── PRÉSTAMOS Y ANTICIPOS ─────────────────────────────────
+// Un solo saldo consolidado por instalador. El desembolso no entra al corte
+// (va como egreso aparte); lo que toca el corte es el abono, que se descuenta
+// del total a pagar y se registra aquí automáticamente al cerrar la liquidación.
+function Prestamos({ users, movPres, setMovPres, user, toast, liqs }) {
+  const [form, setForm] = useState(null);      // { usuario_id, tipo, valor, concepto, fecha }
+  const [verDe, setVerDe] = useState(null);    // instalador cuyo historial se está mirando
+  const [busca, setBusca] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const INs = users.filter(u => u.rol === ROLES.IN);
+  const hoy = () => new Date().toISOString().slice(0, 10);
+
+  const filas = INs.map(u => ({ u, saldo: saldoPrestamo(movPres, u.id) }))
+    .filter(f => f.saldo !== 0 || (movPres || []).some(m => m.usuario_id === f.u.id))
+    .sort((a, b) => b.saldo - a.saldo);
+  const q = busca.trim().toLowerCase();
+  const visibles = q ? filas.filter(f => (f.u.nombre || "").toLowerCase().includes(q)) : filas;
+  const totalDeuda = filas.reduce((s, f) => s + Math.max(0, f.saldo), 0);
+
+  const movsDe = uid => (movPres || []).filter(m => m.usuario_id === uid)
+    .sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")) || String(b.id).localeCompare(String(a.id)));
+
+  function abrir(tipo, uid) {
+    setForm({ usuario_id: uid || "", tipo, valor: "", concepto: tipo === "prestamo" ? "" : "Abono", fecha: hoy() });
+  }
+
+  async function guardar() {
+    const val = Number(form.valor) || 0;
+    if (!form.usuario_id) { toast("Elige el instalador", "err"); return; }
+    if (val <= 0) { toast("El valor debe ser mayor que cero", "err"); return; }
+    if (form.tipo === "abono") {
+      const deuda = saldoPrestamo(movPres, form.usuario_id);
+      if (val > deuda) { toast(`No puede abonar más de lo que debe (${fmt(deuda)})`, "err"); return; }
+    }
+    setSaving(true);
+    const mov = {
+      id: `mp${Date.now()}${Math.floor(Math.random() * 1000)}`,
+      usuario_id: form.usuario_id, tipo: form.tipo, valor: val,
+      fecha: form.fecha || hoy(), concepto: (form.concepto || "").trim() || null,
+      corte: null, registrado_por: user.nombre,
+    };
+    const r = await dbInsert("movimientos_prestamo", mov);
+    setSaving(false);
+    if (!r.ok) { console.error("prestamo:", r.status, await r.text().catch(() => "")); toast("No se pudo guardar", "err"); return; }
+    setMovPres(x => [...x, mov]);
+    setForm(null);
+    toast(form.tipo === "prestamo" ? "Préstamo registrado" : "Abono registrado", "ok");
+  }
+
+  async function borrar(m) {
+    if (m.corte) { toast("Ese abono salió de un corte cerrado. No se borra desde aquí.", "err"); return; }
+    const r = await dbDel("movimientos_prestamo", m.id);
+    if (!r.ok) { toast("No se pudo borrar", "err"); return; }
+    setMovPres(x => x.filter(y => y.id !== m.id));
+    toast("Movimiento borrado", "ok");
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>Préstamos y anticipos</h2>
+        <Btn variant="primary" onClick={() => abrir("prestamo")}>+ Registrar préstamo</Btn>
+      </div>
+
+      <div style={{ ...card, padding: "12px 16px", marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ fontSize: 11, color: C.g5, textTransform: "uppercase", letterSpacing: ".06em" }}>Total prestado sin recuperar</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: totalDeuda > 0 ? C.rd : C.gnD }}>{fmt(totalDeuda)}</div>
+        </div>
+        <div style={{ fontSize: 12, color: C.g5, maxWidth: 380 }}>
+          El desembolso va como egreso aparte, no entra en el corte. Lo que toca la liquidación
+          es el abono, que se descuenta del total a pagar.
+        </div>
+      </div>
+
+      <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar instalador…"
+        style={{ width: "100%", maxWidth: 320, boxSizing: "border-box", padding: "9px 12px", border: `1px solid ${C.g2}`, borderRadius: 8, fontSize: 14, marginBottom: 12 }} />
+
+      {visibles.length === 0 ? (
+        <div style={{ ...card, textAlign: "center", color: C.g4, padding: "2rem", fontSize: 14 }}>
+          Nadie tiene préstamos registrados. Usa “Registrar préstamo” y marca el saldo que deben hoy.
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: 8 }}>
+          {visibles.map(({ u, saldo }) => (
+            <div key={u.id} style={{ ...card, padding: "12px 16px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 180 }}>
+                  <div style={{ fontWeight: 700 }}>{u.nombre}</div>
+                  <div style={{ fontSize: 12, color: C.g5 }}>{movsDe(u.id).length} movimiento(s)</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 11, color: C.g5 }}>Debe</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: saldo > 0 ? C.rd : C.gnD }}>{fmt(saldo)}</div>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <Btn size="sm" onClick={() => setVerDe(verDe === u.id ? null : u.id)}>{verDe === u.id ? "Ocultar" : "Ver"}</Btn>
+                  <Btn size="sm" onClick={() => abrir("prestamo", u.id)}>+ Préstamo</Btn>
+                  {saldo > 0 && <Btn size="sm" variant="success" onClick={() => abrir("abono", u.id)}>Abonar</Btn>}
+                </div>
+              </div>
+
+              {verDe === u.id && (
+                <div style={{ marginTop: 10, borderTop: `1px solid ${C.g1}`, paddingTop: 8, overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                    <thead><tr style={{ color: C.g5 }}>
+                      {["Fecha", "Movimiento", "Concepto", "Valor", ""].map((h, i) =>
+                        <th key={h} style={{ padding: "5px 8px", textAlign: i === 3 ? "right" : "left", fontSize: 10, textTransform: "uppercase", fontWeight: 700 }}>{h}</th>)}
+                    </tr></thead>
+                    <tbody>
+                      {movsDe(u.id).map(m => (
+                        <tr key={m.id} style={{ borderTop: `1px solid ${C.g1}` }}>
+                          <td style={{ padding: "5px 8px", whiteSpace: "nowrap" }}>{m.fecha}</td>
+                          <td style={{ padding: "5px 8px" }}>
+                            <span style={{ ...bdg(m.tipo === "abono" ? "green" : "orange"), fontSize: 10 }}>
+                              {m.tipo === "abono" ? "Abono" : "Préstamo"}
+                            </span>
+                          </td>
+                          <td style={{ padding: "5px 8px", color: C.g5 }}>{m.concepto || "—"}</td>
+                          <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700, color: m.tipo === "abono" ? C.gnD : C.bk }}>
+                            {m.tipo === "abono" ? "−" : "+"}{fmt(m.valor)}
+                          </td>
+                          <td style={{ padding: "5px 8px", textAlign: "center" }}>
+                            {!m.corte && <span onClick={() => borrar(m)} title="Borrar movimiento"
+                              style={{ cursor: "pointer", color: C.g3, fontWeight: 700 }}>✕</span>}
+                          </td>
+                        </tr>
+                      ))}
+                      {movsDe(u.id).length === 0 && <tr><td colSpan={5} style={{ padding: "10px 8px", color: C.g4 }}>Sin movimientos.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {form && (
+        <Modal title={form.tipo === "prestamo" ? "Registrar préstamo" : "Registrar abono"} onClose={() => setForm(null)}>
+          <Sel label="Instalador" value={form.usuario_id} onChange={e => setForm(f => ({ ...f, usuario_id: e.target.value }))}>
+            <option value="">— Elegir —</option>
+            {INs.map(u => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+          </Sel>
+          {form.usuario_id && (
+            <div style={{ fontSize: 13, color: C.g5, margin: "-4px 0 10px" }}>
+              Debe hoy: <strong style={{ color: C.rd }}>{fmt(saldoPrestamo(movPres, form.usuario_id))}</strong>
+            </div>
+          )}
+          <Inp label="Valor ($)" type="number" min="0" value={form.valor}
+            onChange={e => setForm(f => ({ ...f, valor: e.target.value }))} />
+          <Inp label="Fecha" type="date" value={form.fecha}
+            onChange={e => setForm(f => ({ ...f, fecha: e.target.value }))} />
+          <Inp label="Concepto" value={form.concepto}
+            onChange={e => setForm(f => ({ ...f, concepto: e.target.value }))}
+            placeholder={form.tipo === "prestamo" ? "Ej: Saldo inicial, anticipo, préstamo personal…" : "Ej: Abono en efectivo"} />
+          {form.tipo === "prestamo" && (
+            <div style={{ fontSize: 12, color: C.g5, background: C.g0, border: `1px solid ${C.g2}`, borderRadius: 8, padding: "8px 10px", marginBottom: 12 }}>
+              Para arrancar con lo que ya deben, registra un préstamo con concepto <strong>“Saldo inicial”</strong> y la fecha de hoy.
+            </div>
+          )}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+            <Btn onClick={() => setForm(null)}>Cancelar</Btn>
+            <Btn variant="primary" onClick={guardar} disabled={saving}>{saving ? "Guardando…" : "Guardar"}</Btn>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 // ── USUARIOS ──────────────────────────────────────────────
 function Usuarios({ users, setUsers, openM, closeM, modals, toast }) {
   const emp = { nombre: "", email: "", rol: ROLES.IN, oficio: "instalador", pin: "", cedula: "", telefono: "", banco: "", cuenta: "" };
   const [form, setForm] = useState(emp);
   const [editId, setEditId] = useState(null);
   const [delId, setDelId] = useState(null);
-  const rL = { superadmin: "Superadmin", supervisor: "Supervisor", auxiliar: "Auxiliar", instalador: "Instalador" };
+  const rL = { superadmin: "Gerencia", supervisor: "Coordinador", auxiliar: "Auxiliar", instalador: "Instalador" };
   const rC = { superadmin: "orange", supervisor: "amber", auxiliar: "gray", instalador: "green" };
   const oL = { instalador: "Instalador", detallador: "Detallador", ambos: "Instalador y detallador" };
   const oC = { instalador: "green", detallador: "amber", ambos: "orange" };
@@ -4016,8 +4422,8 @@ function Usuarios({ users, setUsers, openM, closeM, modals, toast }) {
           <Sel label="Rol" value={form.rol} onChange={e => setForm(f => ({ ...f, rol: e.target.value }))}>
             <option value={ROLES.IN}>Instalador</option>
             <option value={ROLES.AX}>Auxiliar</option>
-            <option value={ROLES.SV}>Supervisor</option>
-            <option value={ROLES.SA}>Superadmin</option>
+            <option value={ROLES.SV}>Coordinador</option>
+            <option value={ROLES.SA}>Gerencia</option>
           </Sel>
           <Inp label={editId ? "Nuevo PIN (vacío = no cambiar)" : "PIN (4 dígitos)"} type="password" maxLength={4} value={form.pin} onChange={e => setForm(f => ({ ...f, pin: e.target.value }))} placeholder="••••" />
         </div>
