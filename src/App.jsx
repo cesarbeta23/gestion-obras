@@ -150,6 +150,14 @@ const lbl = () => ({ fontSize: 12, color: C.g5, display: "block", marginBottom: 
 // Un elemento que nació del contrato puede servir para varias torres (obras) del mismo proyecto
 const esDeObra = (e, obraId) => e.obra_id === obraId || (e.obras_extra || []).includes(obraId);
 
+// Orden alfabético "de gente": no distingue mayúsculas ni tildes, y los números
+// los lee como números, para que Torre 2 vaya antes que Torre 10.
+const cmpTxt = (a, b) => String(a ?? "").localeCompare(String(b ?? ""), "es", { numeric: true, sensitivity: "base" });
+const porNombre = (a, b) => cmpTxt(a?.nombre, b?.nombre);
+const ordNom = xs => [...(xs || [])].sort(porNombre);
+// Listas que guardan ids (instaladores asignados a un apto): se ordenan por el nombre del dueño del id.
+const ordIds = (ids, users) => [...(ids || [])].sort((a, b) => cmpTxt(users.find(u => u.id === a)?.nombre || a, users.find(u => u.id === b)?.nombre || b));
+
 const GRUPOS = ["Puertas", "Closets y vestier", "Cocinas", "Zócalos y molduras", "Pisos", "Otros"];
 
 function bdg(t) {
@@ -463,10 +471,10 @@ export default function App() {
         dbGet("elementos"), dbGet("obras"), dbGet("liquidaciones"),
         dbGet("movimientos_prestamo").catch(() => []),   // si la tabla aún no existe, se sigue sin ella
       ]);
-      setUsers(u);
+      setUsers(ordNom(u));
       setMovPres(Array.isArray(mp) ? mp : []);
-      if (!e.length) { await Promise.all(ELEMENTOS_DEF.map(x => dbUpsert("elementos", x))); setElems(ELEMENTOS_DEF); } else setElems(e);
-      setObras(o.map(mapObra));
+      if (!e.length) { await Promise.all(ELEMENTOS_DEF.map(x => dbUpsert("elementos", x))); setElems(ELEMENTOS_DEF); } else setElems(ordNom(e));
+      setObras(ordNom(o.map(mapObra)));
       setLiqs(l.map(mapLiq));
       // Copia en el teléfono, para poder abrir la app en un sótano sin señal
       localSet("datos", { u, e: e.length ? e : ELEMENTOS_DEF, o, l, mp: Array.isArray(mp) ? mp : [], fecha: Date.now() });
@@ -476,7 +484,7 @@ export default function App() {
       // Sin línea: se abre con lo último que se alcanzó a guardar
       const g = await localGet("datos");
       if (g) {
-        setUsers(g.u); setElems(g.e); setObras((g.o || []).map(mapObra)); setLiqs((g.l || []).map(mapLiq)); setMovPres(g.mp || []);
+        setUsers(ordNom(g.u)); setElems(ordNom(g.e)); setObras(ordNom((g.o || []).map(mapObra))); setLiqs((g.l || []).map(mapLiq)); setMovPres(g.mp || []);
         setDesdeLocal(g.fecha || Date.now());
         toast("Sin señal: mostrando los últimos datos guardados", "info");
       } else {
@@ -958,7 +966,7 @@ function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra,
       }))
     }));
     const n = { id: `o${Date.now()}`, nombre: form.nombre, direccion: form.direccion, coordinadorId: form.coordinadorId, pisos, estado: "activa", tipologias: [], instaladoresAutorizados: [], aptosHabilitados: {}, solicitudes: [], preciosOverride: {} };
-    await saveObra(n); setObras(x => [...x, n]); setForm({ nombre: "", direccion: "", coordinadorId: "", pisoInicio: 1, pisos: 1, aptos: 1 }); closeM("nObra");
+    await saveObra(n); setObras(x => ordNom([...x, n])); setForm({ nombre: "", direccion: "", coordinadorId: "", pisoInicio: 1, pisos: 1, aptos: 1 }); closeM("nObra");
     toast("Obra creada", "ok");
   }
 
@@ -984,7 +992,7 @@ function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra,
   const q = buscaObra.trim().toLowerCase();
   const visibles = [...conAcceso]
     .filter(o => !q || (o.nombre || "").toLowerCase().includes(q) || (o.direccion || "").toLowerCase().includes(q))
-    .sort((a, b) => (a.nombre || "").localeCompare(b.nombre || ""));
+    .sort(porNombre);
   const sinAcceso = user.rol === ROLES.IN ? obras.filter(o => !(o.instaladoresAutorizados || []).includes(user.id)) : [];
 
   return (
@@ -1002,7 +1010,7 @@ function Obras({ obras, setObras, updateObra, saveObra, user, users, avanceObra,
           <select value="" onChange={e => { const o = conAcceso.find(x => x.id === e.target.value); if (o) goObra(o); }}
             style={{ minWidth: 190, padding: "9px 12px", border: `1px solid ${C.g2}`, borderRadius: 10, fontSize: 14, fontFamily: "system-ui", background: C.wh }}>
             <option value="">Ir a una obra…</option>
-            {[...conAcceso].sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "")).map(o => (
+            {ordNom(conAcceso).map(o => (
               <option key={o.id} value={o.id}>{o.nombre}</option>
             ))}
           </select>
@@ -1328,7 +1336,7 @@ const [nuevoPisoF, setNuevoPisoF] = useState({ numero: "", aptos: 1 });
     setRepNom(null);
   }
 
-  const tips = cur.tipologias || [];
+  const tips = ordNom(cur.tipologias);
   // Se agrupa por el número real del apartamento: lo que queda al quitarle el
   // número del piso al nombre (601, 615… → 01, 15). Así, si la obra va del 15 al 21,
   // eso es lo que se ve, y no "Apto x1, x2, x3".
@@ -1936,7 +1944,7 @@ const disponibles = misHabilitados.filter(a => {
                   (hayPropios && !verGenerales
                     ? esDeObra(e, obra.id)                             // solo los de esta obra
                     : (!e.obra_id || esDeObra(e, obra.id)))))
-              .sort((a, b) => ((a.grupo || "Sin grupo") + a.nombre).localeCompare((b.grupo || "Sin grupo") + b.nombre))
+              .sort((a, b) => cmpTxt((a.grupo || "Sin grupo") + a.nombre, (b.grupo || "Sin grupo") + b.nombre))
               .map(e => <label key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", cursor: "pointer", fontSize: 14, borderRadius: 6, background: tipForm.eids.includes(e.id) ? C.orL : "transparent" }}>
               <input type="checkbox" checked={tipForm.eids.includes(e.id)} onChange={x => setTipForm(f => ({ ...f, eids: x.target.checked ? [...f.eids, e.id] : f.eids.filter(i => i !== e.id) }))} />
               <span style={{ flex: 1, color: C.bk }}>{e.nombre}<span style={{ fontSize: 11, color: C.g4, marginLeft: 6 }}>{e.grupo || "Sin grupo"}</span></span>
@@ -2373,7 +2381,7 @@ const totLiq = totNorm + totAd + totExtra;
               </div>
               {canEdit && asignados.length >= 2 && !hecho && (
                 <select onClick={e => e.stopPropagation()} value={instSel[pk(idx)] ?? asignados[0]} onChange={e => { e.stopPropagation(); setInstSel(s => ({ ...s, [pk(idx)]: e.target.value })); }} style={{ fontSize: 12, padding: "4px 6px", border: `1px solid ${C.g2}`, borderRadius: 6, maxWidth: 130 }}>
-                  {asignados.map(id => { const u = users.find(x => x.id === id); return <option key={id} value={id}>{u?.nombre || id}</option>; })}
+                  {ordIds(asignados, users).map(id => { const u = users.find(x => x.id === id); return <option key={id} value={id}>{u?.nombre || id}</option>; })}
                 </select>
               )}
               {cT && puedePartirse(elem?.unidad, ca) && (
@@ -2447,7 +2455,7 @@ const totLiq = totNorm + totAd + totExtra;
           </div>
           {asignados.length >= 2 && (
             <Sel label="Instalador" value={nAd.inst || asignados[0]} onChange={e => setNAd(n => ({ ...n, inst: e.target.value }))}>
-              {asignados.map(id => { const u = users.find(x => x.id === id); return <option key={id} value={id}>{u?.nombre || id}</option>; })}
+              {ordIds(asignados, users).map(id => { const u = users.find(x => x.id === id); return <option key={id} value={id}>{u?.nombre || id}</option>; })}
             </Sel>
           )}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -2535,7 +2543,7 @@ const totLiq = totNorm + totAd + totExtra;
             </div>
             {canEdit && asignados.length >= 2 && !hecho && (
               <select onClick={e => e.stopPropagation()} value={instSel[kx] ?? asignados[0]} onChange={e => { e.stopPropagation(); setInstSel(s => ({ ...s, [kx]: e.target.value })); }} style={{ fontSize: 12, padding: "4px 6px", border: `1px solid ${C.g2}`, borderRadius: 6, maxWidth: 130 }}>
-                {asignados.map(id => { const u = users.find(x => x.id === id); return <option key={id} value={id}>{u?.nombre || id}</option>; })}
+                {ordIds(asignados, users).map(id => { const u = users.find(x => x.id === id); return <option key={id} value={id}>{u?.nombre || id}</option>; })}
               </select>
             )}
             <div style={{ textAlign: "right", minWidth: 90 }}>
@@ -2639,7 +2647,7 @@ function Elementos({ elems, setElems, obras = [], openM, closeM, modals }) {
     const base = { ...form, precio: Number(form.precio) || 0, precio_detallado: Number(form.precio_detallado) || 0 };
     const el = editId ? { ...elems.find(e => e.id === editId), ...base } : { id: `e${Date.now()}`, ...base };
     await dbUpsert("elementos", el);
-    if (editId) setElems(x => x.map(e => e.id === editId ? el : e)); else setElems(x => [...x, el]);
+    if (editId) setElems(x => ordNom(x.map(e => e.id === editId ? el : e))); else setElems(x => ordNom([...x, el]));
     setEditId(null); setForm(vacio); closeM("el");
   }
 
@@ -2691,7 +2699,7 @@ function Elementos({ elems, setElems, obras = [], openM, closeM, modals }) {
 
       {gruposUsados.map(g => {
         const delGrupo = visibles.filter(e => (e.grupo || "Sin grupo") === g)
-          .sort((a, b) => (a.nombre || "").localeCompare(b.nombre || ""));
+          .sort(porNombre);
         const plegado = plegados[g];
         return (
           <div key={g} style={{ marginBottom: 14 }}>
@@ -2913,7 +2921,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
 
   // Solo obras con trabajo real en este corte, no el catálogo completo de `obras`.
   // Clave = nombre, porque es lo que guardan detalle() y el snapshot cerrado.
-  const obrasCorte = [...new Set(datosPorIn.flatMap(d => d.rows.map(r => r.obra)).filter(Boolean))].sort();
+  const obrasCorte = [...new Set(datosPorIn.flatMap(d => d.rows.map(r => r.obra)).filter(Boolean))].sort(cmpTxt);
 
   // AND: instalador Y obra. "" = sin filtrar.
   // Por defecto solo salen los que tienen algo en el corte: con 30 instaladores en
@@ -3876,7 +3884,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
               <div style={{ minWidth: 220 }}>
                 <Sel label="Obra" value={obraId} onChange={e => setObraId(e.target.value)}>
                   <option value="">Todas</option>
-                  {[...obras].sort((a, b) => (a.nombre || "").localeCompare(b.nombre || "")).map(o => (
+                  {obras.map(o => (
                     <option key={o.id} value={o.id}>{o.nombre}</option>
                   ))}
                 </Sel>
@@ -4380,7 +4388,7 @@ function Usuarios({ users, setUsers, openM, closeM, modals, toast }) {
     const { id: _idFijo, ...cambios } = u;   // el id no se manda en el PATCH
     const res = editId ? await dbPatch("usuarios", editId, cambios) : await dbInsert("usuarios", u);
     if (!res.ok) { console.error("guardar usuario falló:", res.status, await res.text().catch(() => "")); toast("No se pudo guardar el usuario", "err"); return; }
-    if (editId) setUsers(x => x.map(y => y.id === editId ? u : y)); else setUsers(x => [...x, u]);
+    if (editId) setUsers(x => ordNom(x.map(y => y.id === editId ? u : y))); else setUsers(x => ordNom([...x, u]));
     setForm(emp); setEditId(null); closeM("usr");
   }
   const editar = u => { setEditId(u.id); setForm({ nombre: u.nombre, email: u.email, rol: u.rol, oficio: u.oficio || "instalador", pin: "", cedula: u.cedula || "", telefono: u.telefono || "", banco: u.banco || "", cuenta: u.cuenta || "" }); openM("usr"); };
