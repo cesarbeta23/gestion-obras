@@ -2143,11 +2143,11 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
                 const total = Number(u.cantidad || 1);
                 const n = porUnidad ? Math.min(total, Number(parcial[i] || total)) : total;
                 out[0] = { ...u, cantidad: n, completado: true, fecha: hoy,
-                  ...(yaPagOn ? { yaPagado: true } : {}),
+                  yaPagado: yaPagOn,          // siempre explícito: si está apagado, se limpia lo que hubiera
                   // Un adicional ya trae instalador atribuido desde su creación (ver guardarAd): respetarlo.
                   instaladorId: (el.esAdicional && el.instaladorId) ? el.instaladorId : instaladorPara(i) };
                 if (n < total) out.push({ ...u, cantidad: total - n, completado: false, instaladorId: null, fecha: null,
-                  detCompletado: false, detId: null, detFecha: null });
+                  yaPagado: false, detCompletado: false, detId: null, detFecha: null, detYaPagado: false });
               }
 
               // Detallado: segunda marca del mismo elemento, con su propio responsable y fecha.
@@ -2156,8 +2156,8 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
                 const total = Number(base.cantidad || 1);
                 const n = porUnidad ? Math.min(total, Number(parcial[`d${i}`] || total)) : total;
                 out[0] = { ...base, cantidad: n, detCompletado: true, detId: detalladorPara(`d${i}`), detFecha: hoy,
-                  ...(yaPagOn ? { detYaPagado: true } : {}) };
-                if (n < total) out.splice(1, 0, { ...base, cantidad: total - n, detCompletado: false, detId: null, detFecha: null });
+                  detYaPagado: yaPagOn };
+                if (n < total) out.splice(1, 0, { ...base, cantidad: total - n, detCompletado: false, detId: null, detFecha: null, detYaPagado: false });
               }
               return out;
             });
@@ -2170,8 +2170,8 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
 const newElsExtra = (a.elementosExtra || []).map((el, i) => {
   let u = { ...el };
   if (cnts[`x${i}`] !== undefined) u.cantidad = cnts[`x${i}`];
-  if (pend[`x${i}`]) { u.completado = true; u.instaladorId = instaladorPara(`x${i}`); u.fecha = new Date().toLocaleDateString("es-CO"); if (yaPagOn) u.yaPagado = true; }
-  if (pend[`dx${i}`] && u.completado) { u.detCompletado = true; u.detId = detalladorPara(`dx${i}`); u.detFecha = new Date().toLocaleDateString("es-CO"); if (yaPagOn) u.detYaPagado = true; }
+  if (pend[`x${i}`]) { u.completado = true; u.instaladorId = instaladorPara(`x${i}`); u.fecha = new Date().toLocaleDateString("es-CO"); u.yaPagado = yaPagOn; }
+  if (pend[`dx${i}`] && u.completado) { u.detCompletado = true; u.detId = detalladorPara(`dx${i}`); u.detFecha = new Date().toLocaleDateString("es-CO"); u.detYaPagado = yaPagOn; }
   return u;
 });
 return { ...a, elementos: final, elementosExtra: newElsExtra };
@@ -2183,8 +2183,8 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
   }
 
   // Al desmarcar la instalación también se cae el detallado (no puede quedar detallado sin instalar).
-  const desmarcar = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, completado: false, instaladorId: null, fecha: null, detCompletado: false, detId: null, detFecha: null }) }) }) }));
-  const desmarcarDet = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, detCompletado: false, detId: null, detFecha: null }) }) }) }));
+  const desmarcar = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, completado: false, instaladorId: null, fecha: null, yaPagado: false, detCompletado: false, detId: null, detFecha: null, detYaPagado: false }) }) }) }));
+  const desmarcarDet = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, detCompletado: false, detId: null, detFecha: null, detYaPagado: false }) }) }) }));
 
   // Quitar una tipología extra del apto (con sus elementos), solo si no hay nada marcado en ella
   function quitarTipExtra(tipId) {
@@ -2297,7 +2297,7 @@ const totLiq = totNorm + totAd + totExtra;
       {/* Pestañas de actividad */}
       <div style={{ display: "flex", gap: 4, marginBottom: 16, background: C.g1, padding: 4, borderRadius: 10, width: "fit-content" }}>
         {[["inst", "🔧 Instalación"], ["det", "🎨 Detallado"]].map(([k, l]) => (
-          <button key={k} onClick={() => { setAct(k); setPend({}); setInstSel({}); }} style={{
+          <button key={k} onClick={() => { setAct(k); setPend({}); setInstSel({}); setYaPag(false); }} style={{
             padding: "8px 16px", border: "none", borderRadius: 8, cursor: "pointer", fontFamily: "system-ui",
             fontSize: 13, fontWeight: act === k ? 700 : 500,
             background: act === k ? C.bk : "transparent", color: act === k ? C.wh : C.g5,
@@ -2373,7 +2373,11 @@ const totLiq = totNorm + totAd + totExtra;
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600, fontSize: 14, color: hecho ? C.gnD : eP ? C.orD : C.bk }}>{elem?.nombre || el.elementoId}</div>
-                {hecho && quien && <div style={{ fontSize: 12, color: C.gnD, fontWeight: 500 }}>{quien.nombre} · {cuando}</div>}
+                {hecho && quien && <div style={{ fontSize: 12, color: C.gnD, fontWeight: 500 }}>
+                  {quien.nombre} · {cuando}
+                  {/* Sin este aviso, una marca que no se va a liquidar se ve igualita a una normal */}
+                  {(esDet ? el.detYaPagado : el.yaPagado) && <span style={{ ...bdg("amber"), marginLeft: 6, fontSize: 10 }}>Ya pagado · no liquida</span>}
+                </div>}
                 {esperaInst && <div style={{ fontSize: 12, color: C.g4 }}>Falta instalarlo</div>}
                 {esDet && el.completado && !el.detCompletado && !eP && precio === 0 && <div style={{ fontSize: 11, color: C.or, fontWeight: 600 }}>sin precio de detallado</div>}
                 {eP && <div style={{ fontSize: 12, color: C.orD, fontWeight: 500 }}>Pendiente de guardar</div>}
@@ -2549,7 +2553,7 @@ const totLiq = totNorm + totAd + totExtra;
             <div style={{ textAlign: "right", minWidth: 90 }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>{fmt(precio * ca)}</div>
             </div>
-            {canEdit && hecho && <button onClick={e => { e.stopPropagation(); updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementosExtra: a.elementosExtra.map((x, i) => i !== irx ? x : (esDet ? { ...x, detCompletado: false, detId: null, detFecha: null } : { ...x, completado: false, instaladorId: null, fecha: null, detCompletado: false, detId: null, detFecha: null })) }) }) })); }} style={{ ...bdg("red"), cursor: "pointer", width: 28, height: 28, borderRadius: 6, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>}
+            {canEdit && hecho && <button onClick={e => { e.stopPropagation(); updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementosExtra: a.elementosExtra.map((x, i) => i !== irx ? x : (esDet ? { ...x, detCompletado: false, detId: null, detFecha: null, detYaPagado: false } : { ...x, completado: false, instaladorId: null, fecha: null, yaPagado: false, detCompletado: false, detId: null, detFecha: null, detYaPagado: false })) }) }) })); }} style={{ ...bdg("red"), cursor: "pointer", width: 28, height: 28, borderRadius: 6, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>}
           </div>;
         })}
       </div>
