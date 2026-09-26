@@ -2046,7 +2046,6 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const asignadosDet  = curA.detalladoresAsignados || [];
   const tip = cur?.tipologias?.find(t => t.id === curA.tipologia);
   const av = avanceApto(curA);
-  const SVs = users.filter(u => u.rol === ROLES.SV);
   const [pend, setPend] = useState({});
   const [cnts, setCnts] = useState({});
   // Cuántas unidades se marcan cuando el elemento trae varias (ej: 1 de 2 puertas)
@@ -2165,7 +2164,8 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
             // Los __pasajes__/__bonificacion__ viejos que pudieran quedar se preservan tal cual y se ignoran en los cálculos.
             const final = newEls;
             const done = newEls.filter(e => !e.esAdicional && !e.elementoId?.startsWith("__")).every(e => e.completado);
-            if (done) SVs.forEach(s => toast(`🔔 ${s.nombre}: Apto completado en ${obra.nombre}`));
+            // Un solo aviso, sin nombres: no se le manda nada a nadie, solo se avisa en pantalla.
+            if (done) toast(`✓ Apto ${a.nombre} completado en ${obra.nombre}`, "ok");
             // También guardar elementosExtra pendientes
 const newElsExtra = (a.elementosExtra || []).map((el, i) => {
   let u = { ...el };
