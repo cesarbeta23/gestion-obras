@@ -193,9 +193,6 @@ function saldoPrestamo(movs, uid) {
     .reduce((s, m) => s + (m.tipo === "abono" ? -Number(m.valor || 0) : Number(m.valor || 0)), 0);
 }
 
-// Lee el ajuste (pasajes/bonificación) de un instalador para un corte. Tolera ausencia de .ajustes.
-function ajusteDe(usuarios, iid, corteLabel) {
-  const a = usuarios.find(x => x.id === iid)?.ajustes?.[corteLabel] || {};
 // Los días laborados se muestran uno por uno debajo del subtotal, que es donde se suman
 // de verdad. Cada línea lleva la obra y la actividad, porque casi siempre son jornales
 // que asume la empresa y hay que poder justificarlos después.
@@ -208,6 +205,9 @@ function lineasDias(rows) {
     ]);
 }
 
+// Lee el ajuste (pasajes/bonificación) de un instalador para un corte. Tolera ausencia de .ajustes.
+function ajusteDe(usuarios, iid, corteLabel) {
+  const a = usuarios.find(x => x.id === iid)?.ajustes?.[corteLabel] || {};
   // Días laborados: jornales pagados en el corte, por obra. No llevan retención (igual que pasajes).
   const dias = Array.isArray(a.dias) ? a.dias.filter(d => Number(d.dias) > 0) : [];
   const diasVal = dias.reduce((s, d) => s + Number(d.dias || 0) * Number(d.valorDia || 0), 0);
