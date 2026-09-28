@@ -2302,6 +2302,10 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
   }
   const setMemoAd = (idx, memo) => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, memorando: String(memo || "").trim() || null }) }) }) }));
   const setRespAd = (idx, resp) => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, responsable: resp }) }) }) }));
+  // Valor y cantidad de un adicional, corregibles después de creado: muchas veces
+  // el instalador lo reporta sin saber a cómo se le va a pagar. Antes tocaba borrarlo
+  // y volverlo a crear, lo que le cambiaba la fecha y el responsable.
+  const setValorAd = (idx, campo, valor) => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, [campo]: Math.max(0, Number(valor) || 0) }) }) }) }));
   const elimAd = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.filter((_, i) => i !== idx) }) }) }));
 
   // Precio individual del apto: instalación usa apto__…, detallado usa det__apto__…
@@ -2554,7 +2558,25 @@ const totLiq = totNorm + totAd + totExtra;
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 600, fontSize: 14 }}>{el.descripcion}</div>
               <div style={{ fontSize: 12, color: C.g4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                Adicional · {el.cantidad} · {fmt(el.valorUnitario)} c/u
+                {canEdit ? (
+                  <span onClick={e => e.stopPropagation()} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    Adicional ·
+                    <input type="number" min="0" step="1" defaultValue={el.cantidad}
+                      key={`c${ir}-${el.cantidad}`}
+                      onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                      onBlur={e => { const v = Number(e.target.value); if (v > 0 && v !== el.cantidad) setValorAd(ir, "cantidad", v); else e.target.value = el.cantidad; }}
+                      title="Cantidad"
+                      style={{ width: 46, padding: "2px 4px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 12, textAlign: "right" }} />
+                    ·
+                    <input type="number" min="0" step="1000" defaultValue={el.valorUnitario}
+                      key={`v${ir}-${el.valorUnitario}`}
+                      onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                      onBlur={e => { const v = Number(e.target.value); if (v !== Number(el.valorUnitario)) setValorAd(ir, "valorUnitario", v); }}
+                      title="Valor unitario"
+                      style={{ width: 90, padding: "2px 4px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 12, textAlign: "right" }} />
+                    c/u
+                  </span>
+                ) : <>Adicional · {el.cantidad} · {fmt(el.valorUnitario)} c/u</>}
                 {el.responsable === "obra" && <span style={{ ...bdg("green"), fontSize: 10 }}>🏗️ De la obra{el.memorando ? ` · memo ${el.memorando}` : ""}</span>}
                 {el.responsable === "santalucia" && <span style={{ ...bdg("red"), fontSize: 10 }}>🪵 Santa Lucía</span>}
                 {!el.responsable && canEdit && (
