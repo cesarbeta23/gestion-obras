@@ -2996,7 +2996,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
     if (nuevo === actual) return;
     const cerr = cerrada(inst.id);
     if (!cerr) return;
-    if (cerr.estado === "pagado") { toast("Ese corte ya se pagó: el abono no se cambia desde aquí", "err"); if (ev) ev.target.value = actual || ""; return; }
+    if (cerr.estado === "pagado") { toast("Ese corte ya está aprobado: el abono no se cambia desde aquí", "err"); if (ev) ev.target.value = actual || ""; return; }
     // Lo que ya está abonado en este corte no cuenta como deuda para el tope
     const tope = saldoPrestamo(movPres, inst.id) + actual;
     if (nuevo > tope) { toast(`No puede abonar más de lo que debe (${fmt(tope)})`, "err"); if (ev) ev.target.value = actual || ""; return; }
@@ -3029,7 +3029,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
   // El abono del corte se retira, porque era una decisión de pago sobre un corte que
   // deja de existir; si no, el saldo del préstamo quedaría rebajado sin respaldo.
   async function reabrir(liq) {
-    if (liq.estado === "pagado") { toast("Ese corte ya se pagó: no se puede reabrir desde aquí", "err"); return; }
+    if (liq.estado === "pagado") { toast("Ese corte ya está aprobado: no se puede reabrir desde aquí", "err"); return; }
     if (!esSuper && abonoDelCorte(liq.inst_id) > 0) { toast("Ese corte ya tiene abono aplicado: lo reabre gerencia", "err"); return; }
     const abonos = (movPres || []).filter(m => m.usuario_id === liq.inst_id && m.tipo === "abono" && m.corte === liq.corte);
     for (const m of abonos) {
@@ -3044,12 +3044,14 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
     toast("Corte reabierto: vuelve a calcularse con todo lo marcado", "ok");
   }
 
-  async function marcarPagado(liq) {
+  // "pagado" es el valor que ya está guardado en la base; en pantalla se llama
+  // "aprobado", que es lo que de verdad hace gerencia: la plata sale por contabilidad.
+  async function aprobarCorte(liq) {
     const act = { ...liq, estado: "pagado" };
     const r = await dbUpsert("liquidaciones", liqToDb(act));
     if (!r.ok) { toast("No se pudo marcar como pagado", "err"); return; }
     setLiqs(x => x.map(l => l.id === liq.id ? act : l));
-    toast("Corte marcado como pagado", "ok");
+    toast("Corte aprobado", "ok");
   }
 
   // Una sola pasada de filas por IN (snapshot si está cerrada, recálculo si no):
@@ -3316,7 +3318,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                   <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
                     <span style={bdg("green")}>Instalador</span>
                     {cerr && <span style={bdg(cerr.estado === "pagado" ? "green" : "amber")}>
-                      {cerr.estado === "pagado" ? "✓ Pagada" : "Cerrada · falta pago"}
+                      {cerr.estado === "pagado" ? "✓ Aprobada" : "Cerrada · falta aprobar"}
                     </span>}
                     {res.pendAdj > 0 && <span style={bdg("amber")}>{res.pendAdj} ajuste(s) pendiente(s)</span>}
                   </div>
@@ -3427,45 +3429,49 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                 const abonado = abonoDelCorte(inst.id);
                 const pagado = cerr.estado === "pagado";
                 const neto = Number(cerr.total || 0) - abonado;
-                if (!esSuper && !abonado && deuda <= 0) return null;
+                // El recuadro es solo para el préstamo. Si la persona no debe nada, sobra:
+                // el estado ya lo dice el badge de arriba y el botón de pago vive abajo,
+                // con los demás. Antes repetía "pendiente de pago" y el mismo monto.
+                if (!abonado && deuda <= 0) return null;
                 return (
                   <div style={{ marginTop: 10, padding: "10px 14px", borderRadius: 10,
                     background: pagado ? C.gnL : "#EFF6FF", border: `1px solid ${pagado ? "#BBF7D0" : "#BFDBFE"}` }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 6 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: pagado ? C.gnD : "#1E40AF", textTransform: "uppercase", letterSpacing: ".05em" }}>
-                        {pagado ? "✓ Pagado" : "Pendiente de pago — revisión de gerencia"}
+                        Préstamo
                       </span>
                       {deuda > 0 && <span style={{ fontSize: 12, color: C.g5 }}>Debe de préstamos: <strong style={{ color: C.rd }}>{fmt(deuda)}</strong></span>}
                     </div>
 
-                    <div style={{ display: "grid", gap: 3, fontSize: 13, maxWidth: 420, marginLeft: "auto" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between" }}>
-                        <span style={{ color: C.g5 }}>Total a pagar</span><strong>{fmt(cerr.total)}</strong>
+                    {/* El desglose solo tiene sentido si hay algo que descontar. Sin abono,
+                        las tres líneas repiten el mismo número que ya está en el resumen. */}
+                    {abonado > 0 && (
+                      <div style={{ display: "grid", gap: 3, fontSize: 13, maxWidth: 420, marginLeft: "auto" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between" }}>
+                          <span style={{ color: C.g5 }}>Total a pagar</span><strong>{fmt(cerr.total)}</strong>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", color: C.rd }}>
+                          <span>Abono a préstamo</span><strong>− {fmt(abonado)}</strong>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", borderTop: `1px solid ${C.g2}`, paddingTop: 3, fontWeight: 800 }}>
+                          <span>Valor a pagar neto</span><span style={{ color: C.gnD }}>{fmt(neto)}</span>
+                        </div>
                       </div>
-                      {abonado > 0 && <div style={{ display: "flex", justifyContent: "space-between", color: C.rd }}>
-                        <span>Abono a préstamo</span><strong>− {fmt(abonado)}</strong>
-                      </div>}
-                      <div style={{ display: "flex", justifyContent: "space-between", borderTop: `1px solid ${C.g2}`, paddingTop: 3, fontWeight: 800 }}>
-                        <span>Valor a pagar neto</span><span style={{ color: C.gnD }}>{fmt(neto)}</span>
-                      </div>
-                    </div>
+                    )}
 
                     {esSuper && !pagado && (
                       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 10, justifyContent: "flex-end" }}>
-                        {deuda > 0 || abonado > 0 ? <>
-                          <span style={{ fontSize: 13, color: C.g5 }}>Abonar al préstamo</span>
-                          <input type="number" min="0" placeholder="0" defaultValue={abonado || ""}
-                            onBlur={e => aplicarAbono(inst, Number(e.target.value) || 0, e)}
-                            style={{ width: 120, padding: "6px 8px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 13, textAlign: "right" }} />
-                        </> : null}
-                        <Btn variant="success" onClick={() => marcarPagado(cerr)}>Marcar como pagado</Btn>
+                        <span style={{ fontSize: 13, color: C.g5 }}>Abonar al préstamo</span>
+                        <input type="number" min="0" placeholder="0" defaultValue={abonado || ""}
+                          onBlur={e => aplicarAbono(inst, Number(e.target.value) || 0, e)}
+                          style={{ width: 120, padding: "6px 8px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 13, textAlign: "right" }} />
                       </div>
                     )}
                     {esSuper && pagado && <div style={{ fontSize: 11.5, color: C.g5, marginTop: 6, textAlign: "right" }}>
-                      Ya pagado: el abono queda quieto. Si hay que corregir, regístralo en Préstamos.
+                      Corte aprobado: el abono queda quieto. Si hay que corregir, regístralo en Préstamos.
                     </div>}
                     {!esSuper && !pagado && <div style={{ fontSize: 11.5, color: C.g5, marginTop: 6, textAlign: "right" }}>
-                      El descuento y el pago los maneja gerencia.
+                      El descuento lo maneja gerencia.
                     </div>}
                   </div>
                 );
@@ -3482,6 +3488,8 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                   <Btn onClick={() => setReabrirM(cerr)}>↩ Reabrir corte</Btn>}
                 {cerr && cerr.estado !== "pagado" && !esSuper && abonoDelCorte(inst.id) > 0 &&
                   <span style={{ fontSize: 11.5, color: C.g5, alignSelf: "center" }}>Con abono aplicado, lo reabre gerencia</span>}
+                {cerr && cerr.estado !== "pagado" && esSuper &&
+                  <Btn variant="success" onClick={() => aprobarCorte(cerr)}>✓ Aprobar corte</Btn>}
               </div>}
             </div>;
           })}
