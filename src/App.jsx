@@ -2985,6 +2985,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
   // a ese corte, y el neto se calcula restando. Así una liquidación cerrada nunca
   // cambia de número.
   const esSuper = user.rol === ROLES.SA;
+  const [reabrirM, setReabrirM] = useState(null);   // corte que se está por reabrir
   const abonoDelCorte = iid => (movPres || [])
     .filter(m => m.usuario_id === iid && m.tipo === "abono" && m.corte === corte.label)
     .reduce((s, m) => s + Number(m.valor || 0), 0);
@@ -3019,6 +3020,28 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
     }
     setMovPres(x => [...x.filter(m => !viejos.some(v2 => v2.id === m.id)), ...(creado ? [creado] : [])]);
     toast(nuevo > 0 ? `Abono de ${fmt(nuevo)} aplicado` : "Abono retirado", "ok");
+  }
+
+  // Reabrir un corte: se borra la liquidación cerrada y con ella la foto. A partir de
+  // ahí la quincena se vuelve a calcular sola desde las obras, así que entra todo lo que
+  // se haya marcado después. También desaparece del ERP (costos y retenidos leen esta
+  // misma tabla), que es justo lo que se busca: que no quede un dato a medias.
+  // El abono del corte se retira, porque era una decisión de pago sobre un corte que
+  // deja de existir; si no, el saldo del préstamo quedaría rebajado sin respaldo.
+  async function reabrir(liq) {
+    if (liq.estado === "pagado") { toast("Ese corte ya se pagó: no se puede reabrir desde aquí", "err"); return; }
+    if (!esSuper && abonoDelCorte(liq.inst_id) > 0) { toast("Ese corte ya tiene abono aplicado: lo reabre gerencia", "err"); return; }
+    const abonos = (movPres || []).filter(m => m.usuario_id === liq.inst_id && m.tipo === "abono" && m.corte === liq.corte);
+    for (const m of abonos) {
+      const rd = await dbDel("movimientos_prestamo", m.id);
+      if (!rd.ok) { toast("No se pudo retirar el abono: el corte no se reabrió", "err"); return; }
+    }
+    const r = await dbDel("liquidaciones", liq.id);
+    if (!r.ok) { toast("No se pudo reabrir el corte", "err"); return; }
+    if (abonos.length) setMovPres(x => x.filter(m => !abonos.some(v => v.id === m.id)));
+    setLiqs(x => x.filter(l => l.id !== liq.id));
+    setReabrirM(null);
+    toast("Corte reabierto: vuelve a calcularse con todo lo marcado", "ok");
   }
 
   async function marcarPagado(liq) {
@@ -3189,6 +3212,32 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
 
   return (
     <div>
+      {reabrirM && (() => {
+        const inst = users.find(u => u.id === reabrirM.inst_id);
+        const ab = (movPres || []).filter(m => m.usuario_id === reabrirM.inst_id && m.tipo === "abono" && m.corte === reabrirM.corte)
+          .reduce((x, m) => x + Number(m.valor || 0), 0);
+        return (
+          <Modal title="Reabrir corte" onClose={() => setReabrirM(null)}>
+            <p style={{ fontSize: 14, margin: "0 0 12px" }}>
+              <strong>{inst?.nombre || reabrirM.inst_nombre}</strong> · {reabrirM.corte}
+            </p>
+            <div style={{ background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 10, padding: "12px 14px", fontSize: 13, lineHeight: 1.6, color: C.orD, marginBottom: 14 }}>
+              El corte vuelve a quedar abierto y se recalcula desde cero con todo lo que esté
+              marcado hoy en las obras. La liquidación cerrada de <strong>{fmt(reabrirM.total)}</strong> se borra:
+              desaparece del historial y también del ERP, donde alimenta costos y retenidos.
+              {ab > 0 && <> Además se retira el abono de <strong>{fmt(ab)}</strong>, que vuelve al saldo del préstamo.</>}
+            </div>
+            <p style={{ fontSize: 13, color: C.g5, margin: "0 0 16px" }}>
+              Después hay que volver a cerrar el corte y, si aplica, volver a poner el abono.
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Btn onClick={() => setReabrirM(null)}>Cancelar</Btn>
+              <Btn variant="danger" onClick={() => reabrir(reabrirM)}>Sí, reabrir</Btn>
+            </div>
+          </Modal>
+        );
+      })()}
+
       {expM && <Modal title={expM.tipo === "pdf" ? "Reporte" : "Excel — Copiar"} onClose={() => setExpM(null)} wide>
         {expM.tipo === "pdf" ? (<div style={{ border: `1px solid ${C.g2}`, borderRadius: 12, padding: 20, fontSize: 13, lineHeight: 1.7 }}>
           <div style={{ borderBottom: `3px solid ${C.or}`, paddingBottom: 12, marginBottom: 16 }}>
@@ -3426,6 +3475,13 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                 <Btn variant="success" onClick={() => setExpM({ tipo: "excel", inst, rows, res, txt: excelTxt(inst, rows, res) })}>Excel</Btn>
                 <Btn variant="primary" onClick={() => setExpM({ tipo: "pdf", inst, rows, res })}>PDF</Btn>
                 {!cerr && esOficina(user) && <Btn variant="amber" onClick={() => cerrar(inst)}>✓ Cerrar corte</Btn>}
+                {/* Reabrir lo hace quien cierra: los coordinadores son los que corrigen
+                    cantidades. Pero si gerencia ya aplicó un abono, solo gerencia reabre:
+                    esa plata ya movió el saldo del préstamo. */}
+                {cerr && cerr.estado !== "pagado" && esOficina(user) && (esSuper || abonoDelCorte(inst.id) === 0) &&
+                  <Btn onClick={() => setReabrirM(cerr)}>↩ Reabrir corte</Btn>}
+                {cerr && cerr.estado !== "pagado" && !esSuper && abonoDelCorte(inst.id) > 0 &&
+                  <span style={{ fontSize: 11.5, color: C.g5, alignSelf: "center" }}>Con abono aplicado, lo reabre gerencia</span>}
               </div>}
             </div>;
           })}
