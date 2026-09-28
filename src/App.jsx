@@ -3741,17 +3741,25 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
       const dias = (l.rows || []).filter(r => r.el === "Día laborado" && r.apr !== false)
         .reduce((s, r) => s + Number(r.precio || 0) * Number(r.cant || 1), 0);
       const obrasDeEl = [...new Set((l.rows || []).filter(r => !esAdjRow(r)).map(r => r.obra || "—"))];
+      // El abono al préstamo no vive en la liquidación (el corte no se reescribe):
+      // vive en movimientos_prestamo, amarrado a esta persona y a este corte. Este
+      // informe es el que manda la plata al banco, así que tiene que descontarlo.
+      const abono = (movPres || [])
+        .filter(m => m.usuario_id === l.inst_id && m.tipo === "abono" && m.corte === label)
+        .reduce((x, m) => x + Number(m.valor || 0), 0);
       return {
         id: l.id, inst: l.inst_nombre || "—", cedula: l.inst_cedula || "",
         obras: obrasDeEl, causado: Number(l.bruto || 0), ret: Number(l.ret || 0),
         sub: Number(l.sub || 0), pas: Number(l.pas || 0), bon: Number(l.bon || 0),
         dias, total: Number(l.total || 0),
+        abono, neto: Number(l.total || 0) - abono,
       };
-    }).sort((a, b) => b.total - a.total);
+    }).sort((a, b) => b.neto - a.neto);
     const suma = k => filas.reduce((s, f) => s + f[k], 0);
     return {
       filas,
-      tot: { causado: suma("causado"), ret: suma("ret"), sub: suma("sub"), pas: suma("pas"), bon: suma("bon"), dias: suma("dias"), total: suma("total") },
+      tot: { causado: suma("causado"), ret: suma("ret"), sub: suma("sub"), pas: suma("pas"), bon: suma("bon"),
+             dias: suma("dias"), total: suma("total"), abono: suma("abono"), neto: suma("neto") },
     };
   }
 
@@ -4269,17 +4277,17 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
             {label && porInst && (
               <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
                 <Btn onClick={() => pdfTabla("Pagos del corte por instalador", label,
-                  ["Instalador", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonif.", "Días", "Valor a pagar"],
-                  [...fInst.map(f => [f.inst, f.obras.join(", ") || "—", fmt(f.causado), `−${fmt(f.ret)}`, fmt(f.sub), f.pas ? `+${fmt(f.pas)}` : "—", f.bon ? `+${fmt(f.bon)}` : "—", f.dias ? `+${fmt(f.dias)}` : "—", fmt(f.total)]),
-                   ["TOTALES", "", fmt(tInst.causado), `−${fmt(tInst.ret)}`, fmt(tInst.sub), `+${fmt(tInst.pas)}`, `+${fmt(tInst.bon)}`, `+${fmt(tInst.dias)}`, fmt(tInst.total)]],
+                  ["Instalador", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonif.", "Días", "Total corte", "Abono préstamo", "Neto a pagar"],
+                  [...fInst.map(f => [f.inst, f.obras.join(", ") || "—", fmt(f.causado), `−${fmt(f.ret)}`, fmt(f.sub), f.pas ? `+${fmt(f.pas)}` : "—", f.bon ? `+${fmt(f.bon)}` : "—", f.dias ? `+${fmt(f.dias)}` : "—", fmt(f.total), f.abono ? `−${fmt(f.abono)}` : "—", fmt(f.neto)]),
+                   ["TOTALES", "", fmt(tInst.causado), `−${fmt(tInst.ret)}`, fmt(tInst.sub), `+${fmt(tInst.pas)}`, `+${fmt(tInst.bon)}`, `+${fmt(tInst.dias)}`, fmt(tInst.total), `−${fmt(tInst.abono)}`, fmt(tInst.neto)]],
                   `Pagos corte por instalador ${label}.pdf`,
-                  { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right" }, 8: { halign: "right", fontStyle: "bold" } })}>📄 PDF</Btn>
+                  { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right" }, 8: { halign: "right" }, 9: { halign: "right" }, 10: { halign: "right", fontStyle: "bold" } })}>📄 PDF</Btn>
                 <Btn variant="success" onClick={() => excel("Pagos corte instalador", [
                   [`Pagos del corte por instalador — ${label}`], [`Generado el ${hoyStr()}`], [],
-                  ["Instalador", "Cédula", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonificación", "Días", "Valor a pagar"],
-                  ...fInst.map(f => [f.inst, f.cedula, f.obras.join(", "), f.causado, -f.ret, f.sub, f.pas, f.bon, f.dias, f.total]),
-                  [], ["TOTALES", "", "", tInst.causado, -tInst.ret, tInst.sub, tInst.pas, tInst.bon, tInst.dias, tInst.total],
-                ], [26, 14, 30, 16, 14, 16, 14, 14, 12, 16], [3, 4, 5, 6, 7, 8, 9], `Pagos corte por instalador ${label}.xlsx`)}>📊 Excel</Btn>
+                  ["Instalador", "Cédula", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonificación", "Días", "Total corte", "Abono préstamo", "NETO A PAGAR"],
+                  ...fInst.map(f => [f.inst, f.cedula, f.obras.join(", "), f.causado, -f.ret, f.sub, f.pas, f.bon, f.dias, f.total, -f.abono, f.neto]),
+                  [], ["TOTALES", "", "", tInst.causado, -tInst.ret, tInst.sub, tInst.pas, tInst.bon, tInst.dias, tInst.total, -tInst.abono, tInst.neto],
+                ], [26, 14, 30, 16, 14, 16, 14, 14, 12, 16, 16, 18], [3, 4, 5, 6, 7, 8, 9, 10, 11], `Pagos corte por instalador ${label}.xlsx`)}>📊 Excel</Btn>
               </div>
             )}
             {label && !porInst && obrasCorte.length > 0 && (
@@ -4316,7 +4324,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
               <div style={{ ...card, padding: 0, display: "block", maxWidth: "100%", minWidth: 0, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead><tr style={{ background: C.orL }}>
-                    {["Instalador", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonif.", "Días", "Valor a pagar"].map(h => (
+                    {["Instalador", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonif.", "Días", "Total corte", "Abono préstamo", "NETO A PAGAR"].map(h => (
                       <th key={h} style={{ padding: "7px 10px", textAlign: h === "Instalador" || h === "Obras" ? "left" : "right", fontSize: 10, fontWeight: 700, color: C.orD, textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr></thead>
@@ -4331,10 +4339,12 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
                         <td style={{ padding: "6px 10px", textAlign: "right", color: f.pas ? C.or : C.g3 }}>{f.pas ? `+${fmt(f.pas)}` : "—"}</td>
                         <td style={{ padding: "6px 10px", textAlign: "right", color: f.bon ? C.or : C.g3 }}>{f.bon ? `+${fmt(f.bon)}` : "—"}</td>
                         <td style={{ padding: "6px 10px", textAlign: "right", color: f.dias ? C.or : C.g3 }}>{f.dias ? `+${fmt(f.dias)}` : "—"}</td>
-                        <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700, color: C.gnD }}>{fmt(f.total)}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmt(f.total)}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", color: f.abono ? C.rd : C.g3 }}>{f.abono ? `−${fmt(f.abono)}` : "—"}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700, color: C.gnD }}>{fmt(f.neto)}</td>
                       </tr>
                     ))}
-                    {fInst.length === 0 && <tr><td colSpan={9} style={{ padding: "14px 10px", color: C.g4, fontSize: 13 }}>Nadie tiene liquidación cerrada en este corte.</td></tr>}
+                    {fInst.length === 0 && <tr><td colSpan={11} style={{ padding: "14px 10px", color: C.g4, fontSize: 13 }}>Nadie tiene liquidación cerrada en este corte.</td></tr>}
                     <tr style={{ background: C.g1, fontWeight: 700 }}>
                       <td colSpan={2} style={{ padding: "8px 10px", textAlign: "right" }}>TOTALES</td>
                       <td style={{ padding: "8px 10px", textAlign: "right" }}>{fmt(tInst.causado)}</td>
@@ -4343,7 +4353,9 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
                       <td style={{ padding: "8px 10px", textAlign: "right", color: C.or }}>+{fmt(tInst.pas)}</td>
                       <td style={{ padding: "8px 10px", textAlign: "right", color: C.or }}>+{fmt(tInst.bon)}</td>
                       <td style={{ padding: "8px 10px", textAlign: "right", color: C.or }}>+{fmt(tInst.dias)}</td>
-                      <td style={{ padding: "8px 10px", textAlign: "right", color: C.gnD }}>{fmt(tInst.total)}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right" }}>{fmt(tInst.total)}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right", color: C.rd }}>−{fmt(tInst.abono)}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right", color: C.gnD }}>{fmt(tInst.neto)}</td>
                     </tr>
                   </tbody>
                 </table>
