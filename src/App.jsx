@@ -2118,7 +2118,9 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
     esDet ? ["detallador", "ambos"].includes(oficio) : ["instalador", "ambos"].includes(oficio)
   ));
   const hayPend = Object.keys(pend).length > 0 || (canEdit && (curA.elementos?.some(e => e.completado) || (curA.elementosExtra || []).some(e => !e.esAdicional)));
-  const pk = i => esDet ? `d${i}` : i;   // llave de lo pendiente según la actividad
+  // Llave de lo pendiente según la actividad. El adicional va siempre por la de
+  // instalación, que es la rama que guarda su marca única con su valor.
+  const pk = i => (esDet && !curA.elementos?.[i]?.esAdicional) ? `d${i}` : i;
   const corteAct = getCorteFechas()[0];
 
   // Un adicional de la obra sin memorando no se paga: no se deja marcar hasta tenerlo
@@ -2127,6 +2129,10 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
     const e = curA.elementos?.[idx];
     if (!e || !canAct) return false;
     if (sinMemo(e)) return false;
+    // Un adicional no se parte en instalación y detallado: es UNA sola marca, con su
+    // propio valor, y así lo paga la liquidación. Por eso se puede marcar desde
+    // cualquiera de las dos pestañas, sin exigir que esté instalado antes.
+    if (e.esAdicional) return !e.completado;
     if (esDet) return !!e.completado && !e.detCompletado;   // el detallado va después de instalar
     return !e.completado;
   };
@@ -2136,12 +2142,14 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const puedeExtra = el => canAct && (esDet ? (!!el.completado && !el.detCompletado) : !el.completado);
   function marcarTodo() {
     const nuevo = {};
-    (curA.elementos || []).forEach((el, i) => { if (canToggle(i)) nuevo[pk(i)] = true; });
+    // Los adicionales no entran en "marcar todo" del detallado: llevan plata y
+    // responsable, se marcan uno por uno.
+    (curA.elementos || []).forEach((el, i) => { if (canToggle(i) && !(esDet && el.esAdicional)) nuevo[pk(i)] = true; });
     (curA.elementosExtra || []).forEach((el, i) => { if (puedeExtra(el)) nuevo[esDet ? `dx${i}` : `x${i}`] = true; });
     if (!Object.keys(nuevo).length) { toast(esDet ? "No hay nada pendiente de detallar" : "No hay nada pendiente de instalar", "ok"); return; }
     setPend(p => ({ ...p, ...nuevo }));
   }
-  const faltantes = (curA.elementos || []).filter((el, i) => canToggle(i)).length
+  const faltantes = (curA.elementos || []).filter((el, i) => canToggle(i) && !(esDet && el.esAdicional)).length
     + (curA.elementosExtra || []).filter(el => puedeExtra(el)).length;
 
   // "Ya pagado": para cargar avance viejo que se pagó en otra obra (duplicados de la
@@ -2264,7 +2272,11 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
       //  - 2+ asignados: el seleccionado en el dropdown (o el primero por defecto), para cualquier rol
       //  - 1 asignado: ese instalador automáticamente
       //  - 0 asignados: el usuario actual
-      const asignadosA = a.instaladoresAsignados || (a.instaladorAsignado ? [a.instaladorAsignado] : []);
+      // Se toma la lista de la pestaña en la que se está creando: si el adicional
+      // nace en Detallado, el responsable es un detallador, no un instalador.
+      const asignadosA = esDet
+        ? (a.detalladoresAsignados || [])
+        : (a.instaladoresAsignados || (a.instaladorAsignado ? [a.instaladorAsignado] : []));
       const instaladorId = asignadosA.length >= 2 ? (nAd.inst || asignadosA[0])
         : asignadosA.length === 1 ? asignadosA[0]
         : user.id;
