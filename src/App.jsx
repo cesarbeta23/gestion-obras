@@ -681,9 +681,17 @@ export default function App() {
     return els.length === 0 ? 0 : Math.round(els.filter(e => e.completado).length / els.length * 100);
   };
   // El avance mide la instalación. El detallado solo pone su chulito cuando está todo hecho.
-  const detListo = a => {
-    const els = elsAvance(a);
-    return els.length > 0 && els.every(e => e.detCompletado);
+  //
+  // "Todo" son únicamente los elementos que LLEVAN detallado, o sea los que tienen
+  // precio de detallado. En una puerta el detallado se cobra una sola vez: el precio
+  // va en un elemento y la chapa, la moldura y el tope quedan en cero. Esos no se
+  // detallan aparte, así que no se exigen ni se cuentan.
+  const llevaDetallado = (el, a, oid) =>
+    getPrecio(el.elementoId, oid, getCorteFechas()[0].label, a.id, el.tipologiaId || a.tipologia, "det") > 0;
+
+  const detListo = (a, oid) => {
+    const conDet = elsAvance(a).filter(e => llevaDetallado(e, a, oid));
+    return conDet.length > 0 && conDet.every(e => e.detCompletado);
   };
 
   // Diagnóstico de cantidades vs. tipología — SOLO LECTURA, no escribe en Supabase.
@@ -814,7 +822,7 @@ export default function App() {
   );
   if (!user) return <LoginScreen login={login} setLogin={setLogin} doLogin={doLogin} err={loginErr} />;
 
-  const sh = { obras, setObras, updateObra, saveObra, elems, setElems, users, setUsers, liqs, setLiqs, movPres, setMovPres, openM, closeM, modals, toast, user, getPrecio, avanceApto, detListo };
+  const sh = { obras, setObras, updateObra, saveObra, elems, setElems, users, setUsers, liqs, setLiqs, movPres, setMovPres, openM, closeM, modals, toast, user, getPrecio, llevaDetallado, avanceApto, detListo };
 
   return (
     <div style={{ fontFamily: "system-ui,sans-serif", maxWidth: 920, margin: "0 auto", padding: "1rem", background: C.g0, minHeight: "100vh" }}>
@@ -1652,7 +1660,7 @@ const disponibles = misHabilitados.filter(a => {
                 </div>
                 <div style={{ fontSize: 11, color: C.g4, fontWeight: 600, marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
                   {av}%
-                  {detListo(a) && <span title="Detallado terminado" style={{ color: C.gnD, fontWeight: 800 }}>✓</span>}
+                  {detListo(a, obra.id) && <span title="Detallado terminado" style={{ color: C.gnD, fontWeight: 800 }}>✓</span>}
                 </div>
                 <button onClick={e => { e.stopPropagation(); liberar(a.pisoId, a.id); }} style={{ ...bdg("red"), cursor: "pointer", fontSize: 10, width: "100%", textAlign: "center" }}>Liberar</button>
               </div>;
@@ -1790,7 +1798,7 @@ const disponibles = misHabilitados.filter(a => {
                       </div>
                       <div style={{ fontSize: 10, color: C.g4, fontWeight: 600, marginBottom: 4, display: "flex", alignItems: "center", gap: 5 }}>
                         {av}%
-                        {detListo(apto) && <span title="Detallado terminado" style={{ color: C.gnD, fontWeight: 800 }}>✓ detallado</span>}
+                        {detListo(apto, obra.id) && <span title="Detallado terminado" style={{ color: C.gnD, fontWeight: 800 }}>✓ detallado</span>}
                       </div>
                       {user.rol !== ROLES.AX && (
                         <div style={{ display: "flex", gap: 3 }} onClick={e => e.stopPropagation()}>
@@ -2088,7 +2096,7 @@ const disponibles = misHabilitados.filter(a => {
 }
 
 // ── APTO ──────────────────────────────────────────────────
-function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceApto, detListo, toast, getPrecio }) {
+function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceApto, detListo, llevaDetallado, toast, getPrecio }) {
   const cur = obras.find(o => o.id === obra.id);
   const curP = cur?.pisos?.find(p => p.id === piso.id);
   const curA = curP?.aptos?.find(a => a.id === apto.id) || apto;
@@ -2133,13 +2141,16 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
     // propio valor, y así lo paga la liquidación. Por eso se puede marcar desde
     // cualquiera de las dos pestañas, sin exigir que esté instalado antes.
     if (e.esAdicional) return !e.completado;
-    if (esDet) return !!e.completado && !e.detCompletado;   // el detallado va después de instalar
+    // En detallado solo se marca lo que lleva detallado (lo que tiene precio).
+    // La chapa y la moldura de una puerta van en cero: su detallado ya está
+    // cobrado en el elemento principal, no se marcan aparte.
+    if (esDet) return !!e.completado && !e.detCompletado && llevaDetallado(e, curA, obra.id);
     return !e.completado;
   };
   const togglePend = idx => { if (!canToggle(idx)) return; const k = pk(idx); setPend(p => { const c = { ...p }; if (c[k] !== undefined) delete c[k]; else c[k] = true; return c; }); };
 
   // Marcar de una vez todo lo que falte en la pestaña actual (el apto llegó completo)
-  const puedeExtra = el => canAct && (esDet ? (!!el.completado && !el.detCompletado) : !el.completado);
+  const puedeExtra = el => canAct && (esDet ? (!!el.completado && !el.detCompletado && llevaDetallado(el, curA, obra.id)) : !el.completado);
   function marcarTodo() {
     const nuevo = {};
     // Los adicionales no entran en "marcar todo" del detallado: llevan plata y
@@ -2346,7 +2357,7 @@ const totLiq = totNorm + totAd + totExtra;
         <div>
           <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk, display: "flex", alignItems: "center", gap: 10 }}>
             Apto {curA.nombre || `${piso.numero}${String(apto.numero).padStart(2, "0")}`} — {tip?.nombre || "Sin tipología"}
-            {detListo(curA) && <span style={{ ...bdg("green"), fontSize: 12 }}>✓ Detallado</span>}
+            {detListo(curA, obra.id) && <span style={{ ...bdg("green"), fontSize: 12 }}>✓ Detallado</span>}
           </h2>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: C.g5 }}>{obra.nombre} · Piso {piso.numero}</p>
         </div>
@@ -2393,7 +2404,9 @@ const totLiq = totNorm + totAd + totExtra;
         {[["Avance", `${av}%`],
           // El contador incluye las tipologías extra, igual que el avance
           [esDet ? "Detallados" : "Instalados", (() => {
-            const todos = elsAvance(curA);
+            // En detallado el denominador son solo los elementos que lo llevan,
+            // no todos: si no, un apto detallado nunca llegaría a su total.
+            const todos = esDet ? elsAvance(curA).filter(e => llevaDetallado(e, curA, obra.id)) : elsAvance(curA);
             return `${todos.filter(e => esDet ? e.detCompletado : e.completado).length}/${todos.length}`;
           })()],
           [user.rol === ROLES.IN ? "Mi liquidación" : "Liquidación", fmt(totLiq)]].map(([l, v]) => (
@@ -2426,10 +2439,12 @@ const totLiq = totNorm + totAd + totExtra;
           const ca = cnts[idx] ?? el.cantidad ?? 1;
           const precio = getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, curA.tipologia, esDet ? "det" : "inst");
           const esperaInst = esDet && !el.completado;   // no se puede detallar sin instalar
+          // Sin precio de detallado no lleva detallado: se ve apagado y no se marca.
+          const sinDet = esDet && el.completado && precio === 0;
           // Indicar si tiene precio individual
           const tieneOvInd = cur?.preciosOverride?.[keyPrecioApto(el.elementoId)] !== undefined;
           return (
-            <div key={idx} onClick={() => cT && togglePend(idx)} style={{ display: "flex", alignItems: "center", gap: 12, opacity: esperaInst ? .55 : 1, background: hecho ? C.gnL : eP ? C.orL : C.wh, border: `1.5px solid ${hecho ? "#BBF7D0" : eP ? C.orM : C.g2}`, borderRadius: 10, padding: "12px 14px", cursor: cT ? "pointer" : "default", transition: "all .12s" }}>
+            <div key={idx} onClick={() => cT && togglePend(idx)} style={{ display: "flex", alignItems: "center", gap: 12, opacity: (esperaInst || sinDet) ? .55 : 1, background: hecho ? C.gnL : eP ? C.orL : C.wh, border: `1.5px solid ${hecho ? "#BBF7D0" : eP ? C.orM : C.g2}`, borderRadius: 10, padding: "12px 14px", cursor: cT ? "pointer" : "default", transition: "all .12s" }}>
               <div style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0, border: `2.5px solid ${hecho ? C.gn : eP ? C.or : C.g3}`, background: hecho ? C.gn : eP ? C.or : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {marc && <span style={{ color: C.wh, fontSize: 14, fontWeight: 700 }}>✓</span>}
               </div>
@@ -2441,7 +2456,7 @@ const totLiq = totNorm + totAd + totExtra;
                   {(esDet ? el.detYaPagado : el.yaPagado) && <span style={{ ...bdg("amber"), marginLeft: 6, fontSize: 10 }}>Ya pagado · no liquida</span>}
                 </div>}
                 {esperaInst && <div style={{ fontSize: 12, color: C.g4 }}>Falta instalarlo</div>}
-                {esDet && el.completado && !el.detCompletado && !eP && precio === 0 && <div style={{ fontSize: 11, color: C.or, fontWeight: 600 }}>sin precio de detallado</div>}
+                {esDet && el.completado && !el.detCompletado && !eP && precio === 0 && <div style={{ fontSize: 11, color: C.g4 }}>No lleva detallado</div>}
                 {eP && <div style={{ fontSize: 12, color: C.orD, fontWeight: 500 }}>Pendiente de guardar</div>}
                 {tieneOvInd && <div style={{ fontSize: 10, color: C.or, fontWeight: 600 }}>precio personalizado</div>}
               </div>
@@ -2594,10 +2609,11 @@ const totLiq = totNorm + totAd + totExtra;
           const eP = !!pend[kx];
           const marc = hecho || eP;
           const esperaInst = esDet && !el.completado;
-          const cT = canAct && (esDet ? (!!el.completado && !el.detCompletado) : !el.completado);
+          const sinDet = esDet && el.completado && precio === 0;
+          const cT = puedeExtra(el);
           const ca = cnts[`x${irx}`] ?? el.cantidad ?? 1;
           const precio = getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, tipId, esDet ? "det" : "inst");
-          return <div key={irx} onClick={() => { if (!cT) return; setPend(p => { const c = {...p}; if (c[kx] !== undefined) delete c[kx]; else c[kx] = true; return c; }); }} style={{ display: "flex", alignItems: "center", gap: 12, opacity: esperaInst ? .55 : 1, background: hecho ? C.gnL : eP ? C.orL : C.wh, border: `1.5px solid ${hecho ? "#BBF7D0" : eP ? C.orM : C.g2}`, borderRadius: 10, padding: "12px 14px", cursor: cT ? "pointer" : "default" }}>
+          return <div key={irx} onClick={() => { if (!cT) return; setPend(p => { const c = {...p}; if (c[kx] !== undefined) delete c[kx]; else c[kx] = true; return c; }); }} style={{ display: "flex", alignItems: "center", gap: 12, opacity: (esperaInst || sinDet) ? .55 : 1, background: hecho ? C.gnL : eP ? C.orL : C.wh, border: `1.5px solid ${hecho ? "#BBF7D0" : eP ? C.orM : C.g2}`, borderRadius: 10, padding: "12px 14px", cursor: cT ? "pointer" : "default" }}>
             <div style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0, border: `2.5px solid ${hecho ? C.gn : eP ? C.or : C.g3}`, background: hecho ? C.gn : eP ? C.or : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
               {marc && <span style={{ color: C.wh, fontSize: 14, fontWeight: 700 }}>✓</span>}
             </div>
@@ -2852,8 +2868,14 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
           && el.elementoId !== "__pasajes__" && el.elementoId !== "__bonificacion__") {
         const elemD = elems.find(e => e.id === el.elementoId);
         const tipD = esExtra ? el.tipologiaId : (el.tipologiaId || a.tipologia);
-        rows.push({ obra: o.nombre, apto: a.nombre, el: `[Detallado] ${elemD?.nombre || el.elementoId}`, actividad: "Detallado",
-          cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label, a.id, tipD, "det"), fecha: el.detFecha, adj: false, apr: true });
+        const precioD = getPrecio(el.elementoId, o.id, corte.label, a.id, tipD, "det");
+        // Sin precio no hay detallado que cobrar: la chapa y la moldura de una puerta
+        // van en cero porque el detallado de la puerta ya está en el elemento principal.
+        // Incluirlas sería una lista eterna de ceros en la liquidación.
+        if (precioD > 0) {
+          rows.push({ obra: o.nombre, apto: a.nombre, el: `[Detallado] ${elemD?.nombre || el.elementoId}`, actividad: "Detallado",
+            cant: el.cantidad || 1, precio: precioD, fecha: el.detFecha, adj: false, apr: true });
+        }
       }
       // yaPagado: avance cargado de una obra anterior, ya pagado. Alimenta el ERP, no se liquida.
       if (el.completado && !el.yaPagado && el.instaladorId === iid && enCorte(el.fecha, d, h)) {
