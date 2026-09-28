@@ -3291,7 +3291,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                 ))}
               </div>}
               {rows.length > 0 && <div style={{ background: C.g0, borderRadius: 8, padding: "10px 14px", fontSize: 13, marginBottom: 12 }}>
-                {[[["Total bruto", res.bruto]], [["Retención 10%", -res.ret]], [["Subtotal", res.sub]], res.pas > 0 ? [["Pasajes", res.pas]] : [], res.bon > 0 ? [["Bonificación", res.bon]] : [], ...lineasDias(rows), res.abono > 0 ? [["Abono a préstamo", -res.abono]] : []].flat().filter(Boolean).map(([l, v]) => (
+                {[[["Total bruto", res.bruto]], [["Retención 10%", -res.ret]], [["Subtotal", res.sub]], res.pas > 0 ? [["Pasajes", res.pas]] : [], res.bon > 0 ? [["Bonificación", res.bon]] : [], lineasDias(rows), res.abono > 0 ? [["Abono a préstamo", -res.abono]] : []].flat().filter(Boolean).map(([l, v]) => (
                   <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: `1px solid ${C.g2}` }}><span style={{ color: C.g5 }}>{l}</span><span style={{ fontWeight: 500 }}>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>
                 ))}
                 <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0 0", fontWeight: 700, fontSize: 16, color: C.gnD }}><span>Total a pagar</span><span>{fmt(res.total)}</span></div>
