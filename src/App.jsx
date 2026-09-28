@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Fragment } from "react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
@@ -3108,10 +3108,21 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
     doc.setTextColor(0);
 
     // ── Tabla de filas (paginación automática) ──
-    const body = rows.filter(r => !r.adj || r.apr).map(r => [
-      r.obra || "", r.apto || "", r.el || "",
+    // Lo causado va primero y lo que se suma aparte después, con su rótulo: si van
+    // revueltos, el mismo valor arriba en la tabla y abajo en el resumen parece doble pago.
+    const fila = r => [
+      r.obra || "", r.apto || "", r.el + (r.desc ? ` — ${r.desc}` : ""),
       String(r.cant ?? 1), fmt(r.precio || 0), fmt((r.precio || 0) * (r.cant || 1)),
-    ]);
+    ];
+    const visibles = rows.filter(r => !r.adj || r.apr);
+    const caus = visibles.filter(r => !r.adj);
+    const apar = visibles.filter(r => r.adj);
+    const body = [
+      ...caus.map(fila),
+      ...(apar.length ? [[{ content: "Se suma aparte · no lleva retención", colSpan: 6,
+        styles: { fontStyle: "bold", fillColor: [241, 243, 246], textColor: [97, 107, 120], fontSize: 7 } }]] : []),
+      ...apar.map(fila),
+    ];
     autoTable(doc, {
       startY: 108,
       head: [["Obra", "Apto", "Elemento", "Cant.", "P. unit.", "Total"]],
@@ -3255,12 +3266,22 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                 </div>
               </div>
               {rows.length > 0 && <div style={{ borderTop: `1px solid ${C.g2}`, paddingTop: 12, marginBottom: 12 }}>
-                {rows.map((r, i) => <div key={i} style={{ display: "flex", gap: 10, fontSize: 13, padding: "5px 0", borderBottom: `1px solid ${C.g1}`, flexWrap: "wrap", opacity: r.adj && !r.apr ? 0.55 : 1 }}>
+                {/* Primero lo causado (que es lo que forma el bruto y lleva retención) y
+                    después, rotulado, lo que se suma aparte. Si van revueltos, ver el mismo
+                    valor arriba en una fila y abajo en el resumen parece un pago doble. */}
+                {[...rows.filter(r => !r.adj), ...rows.filter(r => r.adj)].map((r, i, arr) => <Fragment key={i}>
+                  {r.adj && (i === 0 || !arr[i - 1].adj) && (
+                    <div style={{ fontSize: 11, color: C.g4, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", padding: "10px 0 4px", borderTop: `1px dashed ${C.g2}`, marginTop: 6 }}>
+                      Se suma aparte · no lleva retención
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 10, fontSize: 13, padding: "5px 0", borderBottom: `1px solid ${C.g1}`, flexWrap: "wrap", opacity: r.adj && !r.apr ? 0.55 : 1 }}>
                   <span style={{ color: C.g4, minWidth: 80 }}>{r.obra?.substring(0, 14)}</span>
                   <span style={{ fontWeight: 500 }}>Apto {r.apto}</span>
                   <span style={{ flex: 1 }}>{r.el}{r.desc && <span style={{ color: C.g5, fontStyle: "italic" }}> — {r.desc}</span>}{r.adj && !r.apr && <span style={{ marginLeft: 6, ...bdg("amber"), fontSize: 10 }}>pendiente</span>}</span>
                   <span style={{ fontWeight: 700, minWidth: 90, textAlign: "right" }}>{fmt(r.precio * r.cant)}</span>
-                </div>)}
+                  </div>
+                </Fragment>)}
               </div>}
               {rows.length > 0 && <div style={{ background: C.g0, borderRadius: 8, padding: "10px 14px", fontSize: 13, marginBottom: 12 }}>
                 {[["Total bruto", res.bruto], ["Retención 10%", -res.ret], ["Subtotal", res.sub], res.pas > 0 ? ["Pasajes", res.pas] : null, res.bon > 0 ? ["Bonificación", res.bon] : null, res.dia > 0 ? ["Días laborados", res.dia] : null, res.abono > 0 ? ["Abono a préstamo", -res.abono] : null].filter(Boolean).map(([l, v]) => (
