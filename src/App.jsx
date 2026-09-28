@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, Fragment } from "react";
+import { useState, useEffect, useRef } from "react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
@@ -196,6 +196,18 @@ function saldoPrestamo(movs, uid) {
 // Lee el ajuste (pasajes/bonificación) de un instalador para un corte. Tolera ausencia de .ajustes.
 function ajusteDe(usuarios, iid, corteLabel) {
   const a = usuarios.find(x => x.id === iid)?.ajustes?.[corteLabel] || {};
+// Los días laborados se muestran uno por uno debajo del subtotal, que es donde se suman
+// de verdad. Cada línea lleva la obra y la actividad, porque casi siempre son jornales
+// que asume la empresa y hay que poder justificarlos después.
+function lineasDias(rows) {
+  return (rows || [])
+    .filter(r => r.adj && r.el === "Día laborado" && r.apr)
+    .map(r => [
+      `Día laborado · ${r.obra || "—"} · ${r.cant} × ${fmt(r.precio || 0)}${r.desc ? ` — ${r.desc}` : ""}`,
+      (r.precio || 0) * (r.cant || 1),
+    ]);
+}
+
   // Días laborados: jornales pagados en el corte, por obra. No llevan retención (igual que pasajes).
   const dias = Array.isArray(a.dias) ? a.dias.filter(d => Number(d.dias) > 0) : [];
   const diasVal = dias.reduce((s, d) => s + Number(d.dias || 0) * Number(d.valorDia || 0), 0);
@@ -3149,7 +3161,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
       ["Subtotal", fmt(res.sub)],
       ...(res.pas > 0 ? [["Pasajes", fmt(res.pas)]] : []),
       ...(res.bon > 0 ? [["Bonificación", fmt(res.bon)]] : []),
-      ...(res.dia > 0 ? [["Días laborados", fmt(res.dia)]] : []),
+      ...lineasDias(rows).map(([l, v]) => [l, fmt(v)]),
       ...(res.abono > 0 ? [["Abono a préstamo", `- ${fmt(res.abono)}`]] : []),
       ["Total a pagar", fmt(res.total)],
     ];
@@ -3266,25 +3278,20 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                 </div>
               </div>
               {rows.length > 0 && <div style={{ borderTop: `1px solid ${C.g2}`, paddingTop: 12, marginBottom: 12 }}>
-                {/* Primero lo causado (que es lo que forma el bruto y lleva retención) y
-                    después, rotulado, lo que se suma aparte. Si van revueltos, ver el mismo
-                    valor arriba en una fila y abajo en el resumen parece un pago doble. */}
-                {[...rows.filter(r => !r.adj), ...rows.filter(r => r.adj)].map((r, i, arr) => <Fragment key={i}>
-                  {r.adj && (i === 0 || !arr[i - 1].adj) && (
-                    <div style={{ fontSize: 11, color: C.g4, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", padding: "10px 0 4px", borderTop: `1px dashed ${C.g2}`, marginTop: 6 }}>
-                      Se suma aparte · no lleva retención
-                    </div>
-                  )}
-                  <div style={{ display: "flex", gap: 10, fontSize: 13, padding: "5px 0", borderBottom: `1px solid ${C.g1}`, flexWrap: "wrap", opacity: r.adj && !r.apr ? 0.55 : 1 }}>
+                {/* Solo lo causado: este listado suma exactamente el Total bruto y es lo que
+                    lleva retención. Los días laborados se detallan abajo, después del
+                    subtotal, que es donde realmente se suman. */}
+                {rows.filter(r => !r.adj).map((r, i) => (
+                  <div key={i} style={{ display: "flex", gap: 10, fontSize: 13, padding: "5px 0", borderBottom: `1px solid ${C.g1}`, flexWrap: "wrap" }}>
                   <span style={{ color: C.g4, minWidth: 80 }}>{r.obra?.substring(0, 14)}</span>
                   <span style={{ fontWeight: 500 }}>Apto {r.apto}</span>
                   <span style={{ flex: 1 }}>{r.el}{r.desc && <span style={{ color: C.g5, fontStyle: "italic" }}> — {r.desc}</span>}{r.adj && !r.apr && <span style={{ marginLeft: 6, ...bdg("amber"), fontSize: 10 }}>pendiente</span>}</span>
                   <span style={{ fontWeight: 700, minWidth: 90, textAlign: "right" }}>{fmt(r.precio * r.cant)}</span>
                   </div>
-                </Fragment>)}
+                ))}
               </div>}
               {rows.length > 0 && <div style={{ background: C.g0, borderRadius: 8, padding: "10px 14px", fontSize: 13, marginBottom: 12 }}>
-                {[["Total bruto", res.bruto], ["Retención 10%", -res.ret], ["Subtotal", res.sub], res.pas > 0 ? ["Pasajes", res.pas] : null, res.bon > 0 ? ["Bonificación", res.bon] : null, res.dia > 0 ? ["Días laborados", res.dia] : null, res.abono > 0 ? ["Abono a préstamo", -res.abono] : null].filter(Boolean).map(([l, v]) => (
+                {[[["Total bruto", res.bruto]], [["Retención 10%", -res.ret]], [["Subtotal", res.sub]], res.pas > 0 ? [["Pasajes", res.pas]] : [], res.bon > 0 ? [["Bonificación", res.bon]] : [], ...lineasDias(rows), res.abono > 0 ? [["Abono a préstamo", -res.abono]] : []].flat().filter(Boolean).map(([l, v]) => (
                   <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: `1px solid ${C.g2}` }}><span style={{ color: C.g5 }}>{l}</span><span style={{ fontWeight: 500 }}>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>
                 ))}
                 <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0 0", fontWeight: 700, fontSize: 16, color: C.gnD }}><span>Total a pagar</span><span>{fmt(res.total)}</span></div>
@@ -3807,7 +3814,9 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
     doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(90);
     doc.text(`C.C. ${inst?.cedula || "-"}   ·   Tel: ${inst?.telefono || "-"}`, margin, 66);
     doc.text(`${inst?.banco || "-"} ${inst?.cuenta || ""}`.trim(), margin, 79); doc.setTextColor(0);
-    const body = rows.filter(r => !r.adj || r.apr).map(r => [
+    // Solo lo causado: esta tabla suma el Total bruto. Los días laborados van
+    // detallados en el resumen, después del subtotal.
+    const body = rows.filter(r => !r.adj).map(r => [
       r.obra || "", r.apto || "", r.el || "", String(r.cant ?? 1), fmt(r.precio || 0), fmt((r.precio || 0) * (r.cant || 1)),
     ]);
     autoTable(doc, {
@@ -3826,7 +3835,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
       ["Subtotal", fmt(res.sub)],
       ...(res.pas > 0 ? [["Pasajes", fmt(res.pas)]] : []),
       ...(res.bon > 0 ? [["Bonificación", fmt(res.bon)]] : []),
-      ...(res.dia > 0 ? [["Días laborados", fmt(res.dia)]] : []),
+      ...lineasDias(rows).map(([l, v]) => [l, fmt(v)]),
       ...(res.abono > 0 ? [["Abono a préstamo", `- ${fmt(res.abono)}`]] : []),
       ["Total a pagar", fmt(res.total)],
     ];
