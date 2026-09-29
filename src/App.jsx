@@ -193,6 +193,21 @@ function saldoPrestamo(movs, uid) {
     .reduce((s, m) => s + (m.tipo === "abono" ? -Number(m.valor || 0) : Number(m.valor || 0)), 0);
 }
 
+// Vuelve a sacar los totales de una liquidación a partir de sus filas. Lo usan
+// Historial (al editar una liquidación vieja) y la pantalla de Liquidación (al
+// quitar una fila de un corte cerrado), así que vive acá y no dentro de una.
+function recalcTotales(rows, base) {
+  const bruto = rows.filter(r => !r.adj).reduce((s, r) => s + (r.precio || 0) * (r.cant || r.cantidad || 1), 0);
+  const ret = Math.round(bruto * 0.1);
+  const sub = bruto - ret;
+  const fPas = rows.filter(r => r.adj && r.el === "Pasajes" && r.apr);
+  const fBon = rows.filter(r => r.adj && r.el === "Bonificación" && r.apr);
+  const pas = fPas.length ? fPas.reduce((s, r) => s + (r.precio || 0), 0) : (base?.pas || 0);
+  const bon = fBon.length ? fBon.reduce((s, r) => s + (r.precio || 0), 0) : (base?.bon || 0);
+  const dia = rows.filter(r => r.adj && r.el === "Día laborado" && r.apr).reduce((s, r) => s + (r.precio || 0) * (r.cant || 1), 0);
+  return { bruto, ret, sub, pas, bon, total: sub + pas + bon + dia };
+}
+
 // Los días laborados se muestran uno por uno debajo del subtotal, que es donde se suman
 // de verdad. Cada línea lleva la obra y la actividad, porque casi siempre son jornales
 // que asume la empresa y hay que poder justificarlos después.
@@ -863,7 +878,13 @@ export default function App() {
       {view === "obra" && selObra && <Obra {...sh} obra={obras.find(o => o.id === selObra.id) || selObra} goApto={(a, p) => { setSelApto(a); setSelPiso(p); setView("apto"); }} />}
       {view === "apto" && selApto && selObra && <Apto {...sh} apto={selApto} piso={selPiso} obra={obras.find(o => o.id === selObra.id)} />}
       {view === "elems" && esOficina(user) && <Elementos {...sh} />}
-      {view === "liqs" && <Liquidacion {...sh} avanceObra={avanceObra} />}
+      {view === "liqs" && <Liquidacion {...sh} avanceObra={avanceObra} irAlApto={(oid, pid, aid) => {
+        const o = obras.find(x => x.id === oid);
+        const p = o?.pisos?.find(x => x.id === pid);
+        const a = p?.aptos?.find(x => x.id === aid);
+        if (!o || !p || !a) { toast("Ese apartamento ya no está en la obra", "error"); return; }
+        setSelObra(o); setSelPiso(p); setSelApto(a); setView("apto");
+      }} />}
       {view === "reportes" && esOficina(user) && <Reportes obras={obras} elems={elems} users={users} user={user} getPrecio={getPrecio} avanceObra={avanceObra} liqs={liqs} movPres={movPres} />}
       {view === "prestamos" && user.rol === ROLES.SA && <Prestamos {...sh} />}
       {view === "users" && esOficina(user) && <Usuarios {...sh} />}
@@ -2882,7 +2903,7 @@ function Elementos({ elems, setElems, obras = [], openM, closeM, modals }) {
 }
 
 // ── LIQUIDACIÓN ───────────────────────────────────────────
-function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPres, setMovPres, getPrecio, toast }) {
+function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPres, setMovPres, getPrecio, updateObra, irAlApto, toast }) {
   const cortes = getCorteFechas();
   const [ci, setCi] = useState(0);
   const [expM, setExpM] = useState(null);
@@ -2896,7 +2917,13 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
 
   function detalle(iid, d, h) {
     const rows = [];
-    const proc = (o, a, el, esExtra) => {
+    // Cada fila guarda de dónde salió: obra, piso, apto, en cuál lista del apto y en
+    // qué posición, más el elemento. Sin esto, una fila solo dice "Apto 913 · Closet
+    // alc 3" y para desmarcarla habría que adivinar por nombre — y un apto puede
+    // tener el mismo elemento dos veces.
+    const proc = (o, p, a, el, esExtra, i) => {
+      const ref = { refObra: o.id, refPiso: p.id, refApto: a.id,
+                    refLista: esExtra ? "ex" : "el", refIdx: i, refElem: el.elementoId };
       // Detallado: segunda marca del mismo elemento, con su propio precio y corte.
       if (el.detCompletado && !el.detYaPagado && el.detId === iid && enCorte(el.detFecha, d, h) && !el.esAdicional
           && el.elementoId !== "__pasajes__" && el.elementoId !== "__bonificacion__") {
@@ -2907,7 +2934,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
         // van en cero porque el detallado de la puerta ya está en el elemento principal.
         // Incluirlas sería una lista eterna de ceros en la liquidación.
         if (precioD > 0) {
-          rows.push({ obra: o.nombre, apto: a.nombre, el: `[Detallado] ${elemD?.nombre || el.elementoId}`, actividad: "Detallado",
+          rows.push({ ...ref, refTipo: "det", obra: o.nombre, apto: a.nombre, el: `[Detallado] ${elemD?.nombre || el.elementoId}`, actividad: "Detallado",
             cant: el.cantidad || 1, precio: precioD, fecha: el.detFecha, adj: false, apr: true });
         }
       }
@@ -2916,17 +2943,17 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
         if (el.elementoId === "__pasajes__" || el.elementoId === "__bonificacion__") return; // migrados a user.ajustes
         if (el.esAdicional) {
           if (el.responsable === "obra" && !String(el.memorando || "").trim()) return;   // sin memorando no se paga
-          rows.push({ obra: o.nombre, apto: a.nombre, el: `[Adicional] ${el.descripcion}`, responsable: el.responsable || null, memorando: el.memorando || null, cant: el.cantidad || 1, precio: el.valorUnitario || 0, fecha: el.fecha, adj: false, apr: true });
+          rows.push({ ...ref, refTipo: "ad", obra: o.nombre, apto: a.nombre, el: `[Adicional] ${el.descripcion}`, responsable: el.responsable || null, memorando: el.memorando || null, cant: el.cantidad || 1, precio: el.valorUnitario || 0, fecha: el.fecha, adj: false, apr: true });
           return;
         }
         const elem = elems.find(e => e.id === el.elementoId);
         const tip = esExtra ? el.tipologiaId : (el.tipologiaId || a.tipologia);
-        rows.push({ obra: o.nombre, apto: a.nombre, el: elem?.nombre, actividad: "Instalación", cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label, a.id, tip), fecha: el.fecha, adj: false, apr: true });
+        rows.push({ ...ref, refTipo: "inst", obra: o.nombre, apto: a.nombre, el: elem?.nombre, actividad: "Instalación", cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label, a.id, tip), fecha: el.fecha, adj: false, apr: true });
       }
     };
     obras.forEach(o => o.pisos?.forEach(p => p.aptos?.forEach(a => {
-      a.elementos?.forEach(el => proc(o, a, el, false));
-      a.elementosExtra?.forEach(el => proc(o, a, el, true));
+      a.elementos?.forEach((el, i) => proc(o, p, a, el, false, i));
+      a.elementosExtra?.forEach((el, i) => proc(o, p, a, el, true, i));
     })));
     return rows;
   }
@@ -2986,6 +3013,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
   // cambia de número.
   const esSuper = user.rol === ROLES.SA;
   const [reabrirM, setReabrirM] = useState(null);   // corte que se está por reabrir
+  const [quitConf, setQuitConf] = useState(null);   // fila armada para quitar (segundo clic)
   const abonoDelCorte = iid => (movPres || [])
     .filter(m => m.usuario_id === iid && m.tipo === "abono" && m.corte === corte.label)
     .reduce((s, m) => s + Number(m.valor || 0), 0);
@@ -3046,6 +3074,53 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
 
   // "pagado" es el valor que ya está guardado en la base; en pantalla se llama
   // "aprobado", que es lo que de verdad hace gerencia: la plata sale por contabilidad.
+  // Quitar una fila de un corte ya cerrado. Además de sacarla de la liquidación,
+  // desmarca el elemento en el apto, que es la fuente de verdad. Antes tocaba salir
+  // a la obra, buscar el apto, desmarcar y volver.
+  //
+  // Solo se puede si la fila sabe de dónde salió (refApto). Las filas de cortes
+  // cerrados antes de este cambio no lo saben, y ahí no se adivina: se avisa.
+  async function quitarFila(liq, i) {
+    const r = (liq.rows || [])[i];
+    if (!r) return;
+    if (r.adj) { toast("Los días, pasajes y bonificación se editan abajo, no aquí", "err"); return; }
+    if (!r.refApto) { toast("Esta fila es de un corte cerrado antes de esta mejora: quítala desde la obra", "err"); return; }
+
+    const o = obras.find(x => x.id === r.refObra);
+    const pi = o?.pisos?.find(x => x.id === r.refPiso);
+    const ap = pi?.aptos?.find(x => x.id === r.refApto);
+    const lista = r.refLista === "ex" ? ap?.elementosExtra : ap?.elementos;
+    const el = lista?.[r.refIdx];
+    // Red de seguridad: si el apto cambió desde que se cerró el corte, la posición
+    // puede apuntar a otro elemento. Antes que desmarcar el equivocado, no se toca.
+    if (!el || el.elementoId !== r.refElem) {
+      toast("El apartamento cambió desde que se cerró el corte: quítalo desde la obra", "err");
+      return;
+    }
+
+    // En el apto: si la fila es del detallado, solo se cae el detallado; si es de
+    // instalación o un adicional, se cae la marca completa.
+    updateObra(r.refObra, ob => ({ ...ob, pisos: ob.pisos.map(p2 => p2.id !== r.refPiso ? p2 : {
+      ...p2, aptos: p2.aptos.map(a2 => a2.id !== r.refApto ? a2 : {
+        ...a2,
+        [r.refLista === "ex" ? "elementosExtra" : "elementos"]: lista.map((x, k) => k !== r.refIdx ? x : (
+          r.refTipo === "det"
+            ? { ...x, detCompletado: false, detId: null, detFecha: null, detYaPagado: false }
+            : { ...x, completado: false, instaladorId: null, fecha: null, yaPagado: false,
+                detCompletado: false, detId: null, detFecha: null, detYaPagado: false }
+        )),
+      }),
+    }) }));
+
+    // Y en la liquidación: fuera la fila y a recalcular bruto, retención y total.
+    const nuevas = (liq.rows || []).filter((_, k) => k !== i);
+    const act = { ...liq, rows: nuevas, ...recalcTotales(nuevas, liq) };
+    const rr = await dbUpsert("liquidaciones", liqToDb(act));
+    if (!rr.ok) { toast("Se desmarcó en la obra pero no se pudo guardar la liquidación", "err"); return; }
+    setLiqs(x => x.map(l => l.id === liq.id ? act : l));
+    toast(`Quitado: ${r.el}. También quedó desmarcado en el apto ${r.apto}.`, "ok");
+  }
+
   async function aprobarCorte(liq) {
     const act = { ...liq, estado: "pagado" };
     const r = await dbUpsert("liquidaciones", liqToDb(act));
@@ -3332,12 +3407,30 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                 {/* Solo lo causado: este listado suma exactamente el Total bruto y es lo que
                     lleva retención. Los días laborados se detallan abajo, después del
                     subtotal, que es donde realmente se suman. */}
-                {rows.filter(r => !r.adj).map((r, i) => (
-                  <div key={i} style={{ display: "flex", gap: 10, fontSize: 13, padding: "5px 0", borderBottom: `1px solid ${C.g1}`, flexWrap: "wrap" }}>
+                {/* Se conserva la posición original de cada fila: es la que usa quitarFila
+                    para saber cuál sacar de la liquidación guardada. */}
+                {rows.map((r, i) => ({ r, i })).filter(x => !x.r.adj).map(({ r, i }) => (
+                  <div key={i} style={{ display: "flex", gap: 10, fontSize: 13, padding: "5px 0", borderBottom: `1px solid ${C.g1}`, flexWrap: "wrap", alignItems: "center" }}>
                   <span style={{ color: C.g4, minWidth: 80 }}>{r.obra?.substring(0, 14)}</span>
-                  <span style={{ fontWeight: 500 }}>Apto {r.apto}</span>
+                  {r.refApto && irAlApto
+                    ? <span onClick={() => irAlApto(r.refObra, r.refPiso, r.refApto)} title="Abrir este apartamento"
+                        style={{ fontWeight: 600, color: C.or, cursor: "pointer", textDecoration: "underline" }}>Apto {r.apto} ↗</span>
+                    : <span style={{ fontWeight: 500 }}>Apto {r.apto}</span>}
                   <span style={{ flex: 1 }}>{r.el}{r.desc && <span style={{ color: C.g5, fontStyle: "italic" }}> — {r.desc}</span>}{r.adj && !r.apr && <span style={{ marginLeft: 6, ...bdg("amber"), fontSize: 10 }}>pendiente</span>}</span>
                   <span style={{ fontWeight: 700, minWidth: 90, textAlign: "right" }}>{fmt(r.precio * r.cant)}</span>
+                  {/* La ✕ solo cuando el corte está cerrado y sin aprobar, y solo gerencia.
+                      Pide un segundo clic: desmarca en el apto, no es solo quitar de la lista. */}
+                  {cerr && cerr.estado !== "pagado" && esSuper && (
+                    quitConf === `${cerr.id}-${i}`
+                      ? <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                          <button onClick={() => { quitarFila(cerr, i); setQuitConf(null); }}
+                            style={{ ...bdg("red"), cursor: "pointer", fontWeight: 700 }}>Sí, quitar</button>
+                          <button onClick={() => setQuitConf(null)}
+                            style={{ ...bdg("gray"), cursor: "pointer" }}>No</button>
+                        </span>
+                      : <button onClick={() => setQuitConf(`${cerr.id}-${i}`)} title="Quitar de la liquidación y desmarcar en el apto"
+                          style={{ ...bdg("gray"), cursor: "pointer", width: 24, height: 24, borderRadius: 6, fontWeight: 700 }}>✕</button>
+                  )}
                   </div>
                 ))}
               </div>}
@@ -3514,17 +3607,6 @@ function Historial({ liqs, setLiqs, user, users, toast }) {
   // Las filas persistidas nunca traen ajustes: detalle() las crea con adj:false y
   // cerrar() guarda pas/bon aparte, desde user.ajustes. Sin filas adj se conservan
   // los del snapshot (base) en vez de pisarlos con cero.
-  function recalcTotales(rows, base) {
-    const bruto = rows.filter(r => !r.adj).reduce((s, r) => s + (r.precio || 0) * (r.cant || r.cantidad || 1), 0);
-    const ret = Math.round(bruto * 0.1);
-    const sub = bruto - ret;
-    const fPas = rows.filter(r => r.adj && r.el === "Pasajes" && r.apr);
-    const fBon = rows.filter(r => r.adj && r.el === "Bonificación" && r.apr);
-    const pas = fPas.length ? fPas.reduce((s, r) => s + (r.precio || 0), 0) : (base?.pas || 0);
-    const bon = fBon.length ? fBon.reduce((s, r) => s + (r.precio || 0), 0) : (base?.bon || 0);
-    const dia = rows.filter(r => r.adj && r.el === "Día laborado" && r.apr).reduce((s, r) => s + (r.precio || 0) * (r.cant || 1), 0);
-    return { bruto, ret, sub, pas, bon, total: sub + pas + bon + dia };
-  }
 
   async function guardarEdicion() {
     const totales = recalcTotales(editRows, editL);
