@@ -227,6 +227,9 @@ function ajusteDe(usuarios, iid, corteLabel) {
   const dias = Array.isArray(a.dias) ? a.dias.filter(d => Number(d.dias) > 0) : [];
   const diasVal = dias.reduce((s, d) => s + Number(d.dias || 0) * Number(d.valorDia || 0), 0);
   return { pasajes: Number(a.pasajes) || 0, bonificacion: Number(a.bonificacion) || 0, dias, diasVal,
+           // Valores netos que vienen de cortes viejos llevados en Excel, de obras que
+           // no están en el ERP. Se suman al final; no pasan por bruto ni retención.
+           otros: Number(a.otros) || 0, otrosNota: a.otrosNota || "",
            abono: Number(a.abono) || 0,   // descuento de préstamo de este corte (lo pone la oficina)
            aprobado: !!a.aprobado, editadoPor: a.editadoPor || "" };
 }
@@ -3134,10 +3137,19 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
   const datosPorIn = hist ? [] : INs.map(inst => {
     const cerr = cerrada(inst.id);
     // pendAdj:0 porque un ajuste pendiente ya no es accionable tras el cierre.
-    const { rows, ...res } = cerr
+    const { rows, ...base } = cerr
       ? { rows: cerr.rows || [], bruto: cerr.bruto, ret: cerr.ret, sub: cerr.sub, pas: cerr.pas, bon: cerr.bon, total: cerr.total, pendAdj: 0,
           dia: (cerr.rows || []).filter(r => r.adj && r.el === "Día laborado" && r.apr).reduce((x, r) => x + (r.precio || 0) * (r.cant || 1), 0) }
       : resumen(inst.id);
+    // El abono vive en movimientos_prestamo, no en la liquidación. Se mete acá para que
+    // el PDF y el visor —que es lo que recibe el instalador— también lo muestren: antes
+    // solo salía en el recuadro de gerencia y el papel decía otro número.
+    const abono = cerr ? abonoDelCorte(inst.id) : 0;
+    // "otros" se lee en vivo de los ajustes, no de la foto del corte: así se puede
+    // digitar antes o después de cerrar y el pago siempre queda con el valor bueno.
+    const ajI = ajusteDe(users, inst.id, corte.label);
+    const res = { ...base, abono, otros: ajI.otros, otrosNota: ajI.otrosNota,
+                  neto: Number(base.total || 0) - abono + ajI.otros };
     return { inst, cerr, rows, res };
   });
 
@@ -3270,8 +3282,12 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
       ...(res.pas > 0 ? [["Pasajes", fmt(res.pas)]] : []),
       ...(res.bon > 0 ? [["Bonificación", fmt(res.bon)]] : []),
       ...lineasDias(rows).map(([l, v]) => [l, fmt(v)]),
-      ...(res.abono > 0 ? [["Abono a préstamo", `- ${fmt(res.abono)}`]] : []),
-      ["Total a pagar", fmt(res.total)],
+      ...(res.otros ? [[`Otros cortes${res.otrosNota ? ` · ${res.otrosNota}` : ""}`, fmt(res.otros)]] : []),
+      ...((res.abono > 0 || res.otros)
+        ? [["Total del corte", fmt(res.total)],
+           ...(res.abono > 0 ? [["Abono a préstamo", `- ${fmt(res.abono)}`]] : []),
+           ["Valor a pagar", fmt(res.neto ?? (res.total - (res.abono || 0)))]]
+        : [["Total a pagar", fmt(res.total)]]),
     ];
     const totW = 240;
     autoTable(doc, {
@@ -3335,7 +3351,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
             <tbody>{expM.rows.filter(r => !r.adj).map((r, i) => <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : C.g0 }}><td style={{ padding: "5px 8px" }}>{r.obra}</td><td style={{ padding: "5px 8px" }}>{r.apto}</td><td style={{ padding: "5px 8px" }}>{r.el}{r.desc && <span style={{ color: "#8E8E93", fontStyle: "italic" }}> — {r.desc}</span>}</td><td style={{ padding: "5px 8px", textAlign: "center" }}>{r.cant}</td><td style={{ padding: "5px 8px", textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700 }}>{fmt(r.precio * r.cant)}</td><td style={{ padding: "5px 8px" }}>{r.fecha}</td></tr>)}</tbody>
           </table>
           <div style={{ background: C.g0, borderRadius: 8, padding: "12px 16px" }}>
-            {[["Total bruto", expM.res.bruto], ["Retención 10%", -expM.res.ret], ["Subtotal", expM.res.sub], expM.res.pas > 0 ? ["Pasajes", expM.res.pas] : null, expM.res.bon > 0 ? ["Bonificación", expM.res.bon] : null, ...lineasDias(expM.rows), expM.res.abono > 0 ? ["Abono a préstamo", -expM.res.abono] : null, ["Total a pagar", expM.res.total]].filter(Boolean).map(([l, v], i, a) => (
+            {[["Total bruto", expM.res.bruto], ["Retención 10%", -expM.res.ret], ["Subtotal", expM.res.sub], expM.res.pas > 0 ? ["Pasajes", expM.res.pas] : null, expM.res.bon > 0 ? ["Bonificación", expM.res.bon] : null, ...lineasDias(expM.rows), ...(expM.res.otros ? [[`Otros cortes${expM.res.otrosNota ? ` · ${expM.res.otrosNota}` : ""}`, expM.res.otros]] : []), ...((expM.res.abono > 0 || expM.res.otros) ? [["Total del corte", expM.res.total], ...(expM.res.abono > 0 ? [["Abono a préstamo", -expM.res.abono]] : []), ["Valor a pagar", expM.res.neto]] : [["Total a pagar", expM.res.total]])].filter(Boolean).map(([l, v], i, a) => (
               <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: i < a.length - 1 ? `1px solid ${C.g2}` : "none", fontWeight: i === a.length - 1 ? 700 : 400, fontSize: i === a.length - 1 ? 16 : 13, color: i === a.length - 1 ? C.gnD : C.bk, marginTop: i === a.length - 1 ? 6 : 0 }}><span>{l}</span><span>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>
             ))}
           </div>
@@ -3464,6 +3480,35 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                   </div>
                 ))}
               </div>}
+              {/* Valor traído de cortes viejos que se llevan en Excel (obras que no están
+                  en el ERP). Es un neto: se suma al final, no pasa por retención. Se puede
+                  digitar con el corte abierto o cerrado, hasta que se apruebe. */}
+              {esOficina(user) && (!cerr || cerr.estado !== "pagado") && (() => {
+                const ajo = ajusteDe(users, inst.id, corte.label);
+                const t = ajTmp[inst.id] || {};
+                return (
+                  <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#1E40AF", marginBottom: 8 }}>
+                      Otros cortes (los que aún se llevan en Excel)
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 10 }}>
+                      <Inp label="Valor neto ($)" type="number"
+                        value={t.otros ?? (ajo.otros || "")}
+                        onChange={e => setAjTmp(x => ({ ...x, [inst.id]: { ...t, otros: e.target.value } }))}
+                        onBlur={e => guardarAjuste(inst.id, { otros: Number(e.target.value) || 0 })} />
+                      <Inp label="De qué obra o corte" placeholder="Ej: Bosques 1-15 sep"
+                        value={t.otrosNota ?? (ajo.otrosNota || "")}
+                        onChange={e => setAjTmp(x => ({ ...x, [inst.id]: { ...t, otrosNota: e.target.value } }))}
+                        onBlur={e => guardarAjuste(inst.id, { otrosNota: e.target.value })} />
+                    </div>
+                    <div style={{ fontSize: 11.5, color: C.g5 }}>
+                      Ya viene neto: se suma al final, sin retención. Aparece en el PDF del instalador
+                      y en el informe de pagos por instalador.
+                    </div>
+                  </div>
+                );
+              })()}
+
               {cerr && cerr.estado !== "pagado" && esSuper && rows.some(r => !r.adj && !r.refApto) && (
                 <div style={{ fontSize: 12, color: C.orD, background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 8, padding: "8px 12px", marginBottom: 10 }}>
                   Este corte se cerró antes de que las filas guardaran de qué apartamento salieron,
@@ -3477,10 +3522,10 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                 </div>
               )}
               {rows.length > 0 && <div style={{ background: C.g0, borderRadius: 8, padding: "10px 14px", fontSize: 13, marginBottom: 12 }}>
-                {[[["Total bruto", res.bruto]], [["Retención 10%", -res.ret]], [["Subtotal", res.sub]], res.pas > 0 ? [["Pasajes", res.pas]] : [], res.bon > 0 ? [["Bonificación", res.bon]] : [], lineasDias(rows), res.abono > 0 ? [["Abono a préstamo", -res.abono]] : []].flat().filter(Boolean).map(([l, v]) => (
+                {[[["Total bruto", res.bruto]], [["Retención 10%", -res.ret]], [["Subtotal", res.sub]], res.pas > 0 ? [["Pasajes", res.pas]] : [], res.bon > 0 ? [["Bonificación", res.bon]] : [], lineasDias(rows), res.otros ? [[`Otros cortes${res.otrosNota ? ` · ${res.otrosNota}` : ""}`, res.otros]] : [], res.abono > 0 ? [["Abono a préstamo", -res.abono]] : []].flat().filter(Boolean).map(([l, v]) => (
                   <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: `1px solid ${C.g2}` }}><span style={{ color: C.g5 }}>{l}</span><span style={{ fontWeight: 500 }}>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>
                 ))}
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0 0", fontWeight: 700, fontSize: 16, color: C.gnD }}><span>Total a pagar</span><span>{fmt(res.total)}</span></div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0 0", fontWeight: 700, fontSize: 16, color: C.gnD }}><span>Total a pagar</span><span>{fmt(res.neto ?? res.total)}</span></div>
               </div>}
               {(() => {
                 const aj = users.find(u => u.id === inst.id)?.ajustes?.[corte.label] || {};
@@ -3905,19 +3950,23 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
       const abono = (movPres || [])
         .filter(m => m.usuario_id === l.inst_id && m.tipo === "abono" && m.corte === label)
         .reduce((x, m) => x + Number(m.valor || 0), 0);
+      // Valor neto de cortes viejos que todavía se llevan en Excel: se digita en la
+      // liquidación y se suma acá, que es la hoja de donde sale el pago.
+      const ajo = ajusteDe(users, l.inst_id, label);
       return {
         id: l.id, inst: l.inst_nombre || "—", cedula: l.inst_cedula || "",
         obras: obrasDeEl, causado: Number(l.bruto || 0), ret: Number(l.ret || 0),
         sub: Number(l.sub || 0), pas: Number(l.pas || 0), bon: Number(l.bon || 0),
         dias, total: Number(l.total || 0),
-        abono, neto: Number(l.total || 0) - abono,
+        abono, otros: ajo.otros, otrosNota: ajo.otrosNota,
+        neto: Number(l.total || 0) - abono + ajo.otros,
       };
     }).sort((a, b) => b.neto - a.neto);
     const suma = k => filas.reduce((s, f) => s + f[k], 0);
     return {
       filas,
       tot: { causado: suma("causado"), ret: suma("ret"), sub: suma("sub"), pas: suma("pas"), bon: suma("bon"),
-             dias: suma("dias"), total: suma("total"), abono: suma("abono"), neto: suma("neto") },
+             dias: suma("dias"), total: suma("total"), abono: suma("abono"), otros: suma("otros"), neto: suma("neto") },
     };
   }
 
@@ -4066,8 +4115,12 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
       ...(res.pas > 0 ? [["Pasajes", fmt(res.pas)]] : []),
       ...(res.bon > 0 ? [["Bonificación", fmt(res.bon)]] : []),
       ...lineasDias(rows).map(([l, v]) => [l, fmt(v)]),
-      ...(res.abono > 0 ? [["Abono a préstamo", `- ${fmt(res.abono)}`]] : []),
-      ["Total a pagar", fmt(res.total)],
+      ...(res.otros ? [[`Otros cortes${res.otrosNota ? ` · ${res.otrosNota}` : ""}`, fmt(res.otros)]] : []),
+      ...((res.abono > 0 || res.otros)
+        ? [["Total del corte", fmt(res.total)],
+           ...(res.abono > 0 ? [["Abono a préstamo", `- ${fmt(res.abono)}`]] : []),
+           ["Valor a pagar", fmt(res.neto ?? (res.total - (res.abono || 0)))]]
+        : [["Total a pagar", fmt(res.total)]]),
     ];
     const totW = 240;
     autoTable(doc, {
@@ -4461,17 +4514,17 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
             {label && porInst && (
               <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
                 <Btn onClick={() => pdfTabla("Pagos del corte por instalador", label,
-                  ["Instalador", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonif.", "Días", "Total corte", "Abono préstamo", "Neto a pagar"],
-                  [...fInst.map(f => [f.inst, f.obras.join(", ") || "—", fmt(f.causado), `−${fmt(f.ret)}`, fmt(f.sub), f.pas ? `+${fmt(f.pas)}` : "—", f.bon ? `+${fmt(f.bon)}` : "—", f.dias ? `+${fmt(f.dias)}` : "—", fmt(f.total), f.abono ? `−${fmt(f.abono)}` : "—", fmt(f.neto)]),
-                   ["TOTALES", "", fmt(tInst.causado), `−${fmt(tInst.ret)}`, fmt(tInst.sub), `+${fmt(tInst.pas)}`, `+${fmt(tInst.bon)}`, `+${fmt(tInst.dias)}`, fmt(tInst.total), `−${fmt(tInst.abono)}`, fmt(tInst.neto)]],
+                  ["Instalador", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonif.", "Días", "Total corte", "Abono préstamo", "Otros cortes", "Neto a pagar"],
+                  [...fInst.map(f => [f.inst, f.obras.join(", ") || "—", fmt(f.causado), `−${fmt(f.ret)}`, fmt(f.sub), f.pas ? `+${fmt(f.pas)}` : "—", f.bon ? `+${fmt(f.bon)}` : "—", f.dias ? `+${fmt(f.dias)}` : "—", fmt(f.total), f.abono ? `−${fmt(f.abono)}` : "—", f.otros ? `+${fmt(f.otros)}` : "—", fmt(f.neto)]),
+                   ["TOTALES", "", fmt(tInst.causado), `−${fmt(tInst.ret)}`, fmt(tInst.sub), `+${fmt(tInst.pas)}`, `+${fmt(tInst.bon)}`, `+${fmt(tInst.dias)}`, fmt(tInst.total), `−${fmt(tInst.abono)}`, `+${fmt(tInst.otros)}`, fmt(tInst.neto)]],
                   `Pagos corte por instalador ${label}.pdf`,
-                  { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right" }, 8: { halign: "right" }, 9: { halign: "right" }, 10: { halign: "right", fontStyle: "bold" } })}>📄 PDF</Btn>
+                  { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right" }, 8: { halign: "right" }, 9: { halign: "right" }, 10: { halign: "right" }, 11: { halign: "right", fontStyle: "bold" } })}>📄 PDF</Btn>
                 <Btn variant="success" onClick={() => excel("Pagos corte instalador", [
                   [`Pagos del corte por instalador — ${label}`], [`Generado el ${hoyStr()}`], [],
-                  ["Instalador", "Cédula", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonificación", "Días", "Total corte", "Abono préstamo", "NETO A PAGAR"],
-                  ...fInst.map(f => [f.inst, f.cedula, f.obras.join(", "), f.causado, -f.ret, f.sub, f.pas, f.bon, f.dias, f.total, -f.abono, f.neto]),
-                  [], ["TOTALES", "", "", tInst.causado, -tInst.ret, tInst.sub, tInst.pas, tInst.bon, tInst.dias, tInst.total, -tInst.abono, tInst.neto],
-                ], [26, 14, 30, 16, 14, 16, 14, 14, 12, 16, 16, 18], [3, 4, 5, 6, 7, 8, 9, 10, 11], `Pagos corte por instalador ${label}.xlsx`)}>📊 Excel</Btn>
+                  ["Instalador", "Cédula", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonificación", "Días", "Total corte", "Abono préstamo", "Otros cortes", "Concepto otros", "NETO A PAGAR"],
+                  ...fInst.map(f => [f.inst, f.cedula, f.obras.join(", "), f.causado, -f.ret, f.sub, f.pas, f.bon, f.dias, f.total, -f.abono, f.otros, f.otrosNota || "", f.neto]),
+                  [], ["TOTALES", "", "", tInst.causado, -tInst.ret, tInst.sub, tInst.pas, tInst.bon, tInst.dias, tInst.total, -tInst.abono, tInst.otros, "", tInst.neto],
+                ], [26, 14, 30, 16, 14, 16, 14, 14, 12, 16, 16, 16, 24, 18], [3, 4, 5, 6, 7, 8, 9, 10, 11, 13], `Pagos corte por instalador ${label}.xlsx`)}>📊 Excel</Btn>
               </div>
             )}
             {label && !porInst && obrasCorte.length > 0 && (
@@ -4508,7 +4561,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
               <div style={{ ...card, padding: 0, display: "block", maxWidth: "100%", minWidth: 0, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead><tr style={{ background: C.orL }}>
-                    {["Instalador", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonif.", "Días", "Total corte", "Abono préstamo", "NETO A PAGAR"].map(h => (
+                    {["Instalador", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonif.", "Días", "Total corte", "Abono préstamo", "Otros cortes", "NETO A PAGAR"].map(h => (
                       <th key={h} style={{ padding: "7px 10px", textAlign: h === "Instalador" || h === "Obras" ? "left" : "right", fontSize: 10, fontWeight: 700, color: C.orD, textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr></thead>
@@ -4525,10 +4578,11 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
                         <td style={{ padding: "6px 10px", textAlign: "right", color: f.dias ? C.or : C.g3 }}>{f.dias ? `+${fmt(f.dias)}` : "—"}</td>
                         <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmt(f.total)}</td>
                         <td style={{ padding: "6px 10px", textAlign: "right", color: f.abono ? C.rd : C.g3 }}>{f.abono ? `−${fmt(f.abono)}` : "—"}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", color: f.otros ? C.or : C.g3 }} title={f.otrosNota || ""}>{f.otros ? `+${fmt(f.otros)}` : "—"}</td>
                         <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700, color: C.gnD }}>{fmt(f.neto)}</td>
                       </tr>
                     ))}
-                    {fInst.length === 0 && <tr><td colSpan={11} style={{ padding: "14px 10px", color: C.g4, fontSize: 13 }}>Nadie tiene liquidación cerrada en este corte.</td></tr>}
+                    {fInst.length === 0 && <tr><td colSpan={12} style={{ padding: "14px 10px", color: C.g4, fontSize: 13 }}>Nadie tiene liquidación cerrada en este corte.</td></tr>}
                     <tr style={{ background: C.g1, fontWeight: 700 }}>
                       <td colSpan={2} style={{ padding: "8px 10px", textAlign: "right" }}>TOTALES</td>
                       <td style={{ padding: "8px 10px", textAlign: "right" }}>{fmt(tInst.causado)}</td>
@@ -4539,6 +4593,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
                       <td style={{ padding: "8px 10px", textAlign: "right", color: C.or }}>+{fmt(tInst.dias)}</td>
                       <td style={{ padding: "8px 10px", textAlign: "right" }}>{fmt(tInst.total)}</td>
                       <td style={{ padding: "8px 10px", textAlign: "right", color: C.rd }}>−{fmt(tInst.abono)}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right", color: C.or }}>+{fmt(tInst.otros)}</td>
                       <td style={{ padding: "8px 10px", textAlign: "right", color: C.gnD }}>{fmt(tInst.neto)}</td>
                     </tr>
                   </tbody>
