@@ -3784,7 +3784,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
   // pagarle. Por eso antes de imprimir se revisa el corte completo.
   function faltantesDelCorte(label) {
     const cerradas = liqs.filter(l => l.corte === label);
-    const sinAprobar = cerradas.filter(l => l.estado !== "pagado").map(l => l.inst_nombre || "—");
+    const sinAprobar = cerradas.filter(l => !aprobada(l)).map(l => l.inst_nombre || "—");
     const f = getCorteFechas().find(c => c.label === label);
     // Si el corte es viejo y ya no está entre los recientes, no hay con qué comparar.
     if (!f) return { sinCerrar: [], sinAprobar, sinFechas: true };
@@ -3889,6 +3889,11 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
 
   // Los mismos pagos del corte, pero uno por instalador. Sale de la liquidación
   // que se le cerró a cada quien, así que cuadra con lo que se le pagó.
+  // Aprobada = gerencia ya la revisó y le puso el abono. Solo sirve para el aviso de
+  // arriba: el informe se puede mirar en cualquier momento y trae todo lo que haya.
+  // Las liquidaciones viejas no traen estado; esas cuentan como aprobadas.
+  const aprobada = l => l.estado !== "cerrado";
+
   function pagosDeCorteInst(label) {
     const filas = liqs.filter(x => x.corte === label).map(l => {
       const dias = (l.rows || []).filter(r => r.el === "Día laborado" && r.apr !== false)
@@ -4432,20 +4437,20 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
               if (!fl.sinCerrar.length && !fl.sinAprobar.length) {
                 return (
                   <div style={{ background: C.gnL, border: "1px solid #BBF7D0", borderRadius: 10, padding: "9px 14px", marginBottom: 12, fontSize: 13, color: C.gnD, fontWeight: 600, flexBasis: "100%" }}>
-                    ✓ Corte completo: todos cerrados y aprobados. Este informe los trae a todos.
+                    ✓ Corte completo: todos cerrados y aprobados. No falta nadie.
                   </div>
                 );
               }
               return (
-                <div style={{ background: C.rdL, border: "1px solid #FECACA", borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 13, color: C.rd, flexBasis: "100%" }}>
-                  <div style={{ fontWeight: 800, marginBottom: 4 }}>⚠ Ojo antes de imprimir</div>
+                <div style={{ background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 13, color: C.orD, flexBasis: "100%" }}>
+                  <div style={{ fontWeight: 800, marginBottom: 4 }}>Este corte todavía no está completo</div>
                   {fl.sinCerrar.length > 0 && <div style={{ marginBottom: 2 }}>
-                    <strong>Trabajaron y no se les cerró el corte ({fl.sinCerrar.length}):</strong> {fl.sinCerrar.join(", ")}.
-                    {" "}No salen en este informe, o sea que no se les pagaría.
+                    <strong>Falta cerrarles el corte ({fl.sinCerrar.length}):</strong> {fl.sinCerrar.join(", ")}.
+                    {" "}Mientras no se cierren no aparecen abajo.
                   </div>}
                   {fl.sinAprobar.length > 0 && <div>
-                    <strong>Cerrados sin aprobar por gerencia ({fl.sinAprobar.length}):</strong> {fl.sinAprobar.join(", ")}.
-                    {" "}Sí salen, pero el abono a préstamo puede estar sin poner.
+                    <strong>Falta aprobarlos ({fl.sinAprobar.length}):</strong> {fl.sinAprobar.join(", ")}.
+                    {" "}Ya aparecen abajo, pero el abono a préstamo puede estar sin poner.
                   </div>}
                   {fl.sinFechas && <div style={{ fontSize: 11.5, marginTop: 4 }}>
                     (Corte antiguo: no se pudo revisar quién quedó sin cerrar, solo lo que falta por aprobar.)
