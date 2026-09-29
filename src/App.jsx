@@ -3149,6 +3149,14 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
   // Por defecto solo salen los que tienen algo en el corte: con 30 instaladores en
   // pantalla el proceso se vuelve dispendioso. El interruptor deja ver a todos.
   const tieneCorte = d => d.rows.length > 0 || d.cerr || d.res.pas > 0 || d.res.bon > 0 || d.res.dia > 0;
+
+  // Estado del corte completo. Quien no tiene nada marcado no cuenta: el que preocupa
+  // es el que trabajó y quedó sin cerrar, porque ese no sale en el informe de pagos
+  // y nadie se entera hasta que reclama.
+  const conCorte = datosPorIn.filter(tieneCorte);
+  const faltaCerrar  = conCorte.filter(d => !d.cerr);
+  const faltaAprobar = conCorte.filter(d => d.cerr && d.cerr.estado !== "pagado");
+  const alDia = conCorte.length > 0 && faltaCerrar.length === 0 && faltaAprobar.length === 0;
   const visibles = datosPorIn.filter(d =>
     (verTodos || tieneCorte(d)) &&
     (!filtInst || d.inst.id === filtInst) &&
@@ -3372,6 +3380,27 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
             </div>
             <p style={{ fontSize: 12, color: C.g4, margin: "8px 0 0" }}>Del {corte.desde.toLocaleDateString("es-CO")} al {corte.hasta.toLocaleDateString("es-CO")}</p>
           </div>
+
+          {/* Semáforo del corte: quién falta por cerrar y quién por aprobar. Solo cuenta
+              a quien tiene trabajo marcado; el que no trabajó no falta. */}
+          {conCorte.length > 0 && (alDia ? (
+            <div style={{ background: C.gnL, border: "1px solid #BBF7D0", borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: C.gnD, fontWeight: 600 }}>
+              ✓ Corte completo: los {conCorte.length} con trabajo en esta quincena están cerrados y aprobados.
+            </div>
+          ) : (
+            <div style={{ background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: C.orD }}>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>Este corte todavía no está completo</div>
+              {faltaCerrar.length > 0 && <div style={{ marginBottom: 2 }}>
+                <strong>Falta cerrar ({faltaCerrar.length}):</strong> {faltaCerrar.map(d => d.inst.nombre).join(", ")}
+              </div>}
+              {faltaAprobar.length > 0 && <div>
+                <strong>Cerrados sin aprobar ({faltaAprobar.length}):</strong> {faltaAprobar.map(d => d.inst.nombre).join(", ")}
+              </div>}
+              <div style={{ fontSize: 11.5, marginTop: 4 }}>
+                Quien quede sin cerrar no sale en el informe de pagos por instalador.
+              </div>
+            </div>
+          ))}
           {ocultos > 0 && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, fontSize: 13, color: C.g5, flexWrap: "wrap" }}>
               <span>{verTodos ? `Mostrando a todos (${ocultos} sin corte)` : `${ocultos} instalador(es) sin corte están ocultos`}</span>
@@ -3748,6 +3777,35 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
   // lo causado y el retenido (10%) obra por obra.
   const esAdjRow = r => !!r.adj || r.el === "Día laborado";
   const cortes = [...new Set(liqs.map(l => l.corte))].sort().reverse();
+
+  // ── Quién falta en un corte ────────────────────────────────
+  // El informe de pagos se arma con las liquidaciones cerradas. Si alguien trabajó y
+  // no se le cerró, no aparece en el archivo y nadie lo nota: sale del banco sin
+  // pagarle. Por eso antes de imprimir se revisa el corte completo.
+  function faltantesDelCorte(label) {
+    const cerradas = liqs.filter(l => l.corte === label);
+    const sinAprobar = cerradas.filter(l => l.estado !== "pagado").map(l => l.inst_nombre || "—");
+    const f = getCorteFechas().find(c => c.label === label);
+    // Si el corte es viejo y ya no está entre los recientes, no hay con qué comparar.
+    if (!f) return { sinCerrar: [], sinAprobar, sinFechas: true };
+
+    const yaCerrado = new Set(cerradas.map(l => l.inst_id));
+    const trabajo = (iid) => {
+      const aj = ajusteDe(users, iid, label);
+      if (aj.pasajes || aj.bonificacion || aj.diasVal) return true;
+      return obras.some(o => (o.pisos || []).some(p => (p.aptos || []).some(a =>
+        [...(a.elementos || []), ...(a.elementosExtra || [])].some(el => {
+          if (el.elementoId === "__pasajes__" || el.elementoId === "__bonificacion__") return false;
+          // Un adicional de la obra sin memorando no se paga, así que tampoco falta.
+          if (el.esAdicional && el.responsable === "obra" && !String(el.memorando || "").trim()) return false;
+          if (el.completado && !el.yaPagado && el.instaladorId === iid && enCorte(el.fecha, f.desde, f.hasta)) return true;
+          if (el.detCompletado && !el.detYaPagado && el.detId === iid && enCorte(el.detFecha, f.desde, f.hasta)) return true;
+          return false;
+        }))));
+    };
+    const sinCerrar = users.filter(u => u.rol === ROLES.IN && !yaCerrado.has(u.id) && trabajo(u.id)).map(u => u.nombre);
+    return { sinCerrar, sinAprobar, sinFechas: false };
+  }
 
   function porObraDeLiq(l) {
     const m = {};
@@ -4369,6 +4427,32 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
                 <option value="inst">Por instalador</option>
               </Sel>
             </div>
+            {label && porInst && (() => {
+              const fl = faltantesDelCorte(label);
+              if (!fl.sinCerrar.length && !fl.sinAprobar.length) {
+                return (
+                  <div style={{ background: C.gnL, border: "1px solid #BBF7D0", borderRadius: 10, padding: "9px 14px", marginBottom: 12, fontSize: 13, color: C.gnD, fontWeight: 600, flexBasis: "100%" }}>
+                    ✓ Corte completo: todos cerrados y aprobados. Este informe los trae a todos.
+                  </div>
+                );
+              }
+              return (
+                <div style={{ background: C.rdL, border: "1px solid #FECACA", borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 13, color: C.rd, flexBasis: "100%" }}>
+                  <div style={{ fontWeight: 800, marginBottom: 4 }}>⚠ Ojo antes de imprimir</div>
+                  {fl.sinCerrar.length > 0 && <div style={{ marginBottom: 2 }}>
+                    <strong>Trabajaron y no se les cerró el corte ({fl.sinCerrar.length}):</strong> {fl.sinCerrar.join(", ")}.
+                    {" "}No salen en este informe, o sea que no se les pagaría.
+                  </div>}
+                  {fl.sinAprobar.length > 0 && <div>
+                    <strong>Cerrados sin aprobar por gerencia ({fl.sinAprobar.length}):</strong> {fl.sinAprobar.join(", ")}.
+                    {" "}Sí salen, pero el abono a préstamo puede estar sin poner.
+                  </div>}
+                  {fl.sinFechas && <div style={{ fontSize: 11.5, marginTop: 4 }}>
+                    (Corte antiguo: no se pudo revisar quién quedó sin cerrar, solo lo que falta por aprobar.)
+                  </div>}
+                </div>
+              );
+            })()}
             {label && porInst && (
               <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
                 <Btn onClick={() => pdfTabla("Pagos del corte por instalador", label,
