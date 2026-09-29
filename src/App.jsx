@@ -3118,7 +3118,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
     const rr = await dbUpsert("liquidaciones", liqToDb(act));
     if (!rr.ok) { toast("Se desmarcó en la obra pero no se pudo guardar la liquidación", "err"); return; }
     setLiqs(x => x.map(l => l.id === liq.id ? act : l));
-    toast(`Quitado: ${r.el}. También quedó desmarcado en el apto ${r.apto}.`, "ok");
+    toast(`Quitado: ${r.el} y desmarcado en el apto ${r.apto}. Si lo vuelves a marcar allá, hay que reabrir y cerrar el corte para que regrese.`, "ok");
   }
 
   async function aprobarCorte(liq) {
@@ -3424,6 +3424,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                     quitConf === `${cerr.id}-${i}`
                       ? <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
                           <button onClick={() => { quitarFila(cerr, i); setQuitConf(null); }}
+                            title="Lo desmarca en el apto. Para devolverlo hay que reabrir y cerrar el corte otra vez."
                             style={{ ...bdg("red"), cursor: "pointer", fontWeight: 700 }}>Sí, quitar</button>
                           <button onClick={() => setQuitConf(null)}
                             style={{ ...bdg("gray"), cursor: "pointer" }}>No</button>
@@ -3438,6 +3439,12 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                 <div style={{ fontSize: 12, color: C.orD, background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 8, padding: "8px 12px", marginBottom: 10 }}>
                   Este corte se cerró antes de que las filas guardaran de qué apartamento salieron,
                   por eso no traen el enlace ni la ✕. Reábrelo y ciérralo otra vez y quedan con todo.
+                </div>
+              )}
+              {cerr && cerr.estado !== "pagado" && esSuper && (
+                <div style={{ fontSize: 11.5, color: C.g5, marginBottom: 8 }}>
+                  Esta lista es la foto del corte al cerrarlo: lo que marques ahora en las obras no entra
+                  hasta que lo reabras y lo cierres de nuevo.
                 </div>
               )}
               {rows.length > 0 && <div style={{ background: C.g0, borderRadius: 8, padding: "10px 14px", fontSize: 13, marginBottom: 12 }}>
