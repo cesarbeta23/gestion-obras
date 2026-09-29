@@ -3420,7 +3420,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                   <span style={{ fontWeight: 700, minWidth: 90, textAlign: "right" }}>{fmt(r.precio * r.cant)}</span>
                   {/* La ✕ solo cuando el corte está cerrado y sin aprobar, y solo gerencia.
                       Pide un segundo clic: desmarca en el apto, no es solo quitar de la lista. */}
-                  {cerr && cerr.estado !== "pagado" && esSuper && (
+                  {cerr && cerr.estado !== "pagado" && esSuper && r.refApto && (
                     quitConf === `${cerr.id}-${i}`
                       ? <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
                           <button onClick={() => { quitarFila(cerr, i); setQuitConf(null); }}
@@ -3434,6 +3434,12 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                   </div>
                 ))}
               </div>}
+              {cerr && cerr.estado !== "pagado" && esSuper && rows.some(r => !r.adj && !r.refApto) && (
+                <div style={{ fontSize: 12, color: C.orD, background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 8, padding: "8px 12px", marginBottom: 10 }}>
+                  Este corte se cerró antes de que las filas guardaran de qué apartamento salieron,
+                  por eso no traen el enlace ni la ✕. Reábrelo y ciérralo otra vez y quedan con todo.
+                </div>
+              )}
               {rows.length > 0 && <div style={{ background: C.g0, borderRadius: 8, padding: "10px 14px", fontSize: 13, marginBottom: 12 }}>
                 {[[["Total bruto", res.bruto]], [["Retención 10%", -res.ret]], [["Subtotal", res.sub]], res.pas > 0 ? [["Pasajes", res.pas]] : [], res.bon > 0 ? [["Bonificación", res.bon]] : [], lineasDias(rows), res.abono > 0 ? [["Abono a préstamo", -res.abono]] : []].flat().filter(Boolean).map(([l, v]) => (
                   <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: `1px solid ${C.g2}` }}><span style={{ color: C.g5 }}>{l}</span><span style={{ fontWeight: 500 }}>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>
