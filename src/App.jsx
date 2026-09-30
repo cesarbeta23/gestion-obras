@@ -2908,7 +2908,15 @@ function Elementos({ elems, setElems, obras = [], openM, closeM, modals }) {
 // ── LIQUIDACIÓN ───────────────────────────────────────────
 function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPres, setMovPres, getPrecio, updateObra, irAlApto, toast }) {
   const cortes = getCorteFechas();
-  const [ci, setCi] = useState(0);
+  // Arranca en el corte donde cae hoy, no en el primero de la lista: la lista trae
+  // también los que vienen, y abrir en una quincena futura hace creer que no hay nada.
+  const [ci, setCi] = useState(() => {
+    // A medianoche, igual que las fechas de los cortes: si se compara con la hora
+    // actual, el último día de la quincena queda por fuera (12:00 > 00:00).
+    const n = new Date(), h = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+    const i = cortes.findIndex(c => h >= c.desde && h <= c.hasta);
+    return i >= 0 ? i : 0;
+  });
   const [expM, setExpM] = useState(null);
   const [hist, setHist] = useState(false);
   const [verTodos, setVerTodos] = useState(false);   // por defecto solo quien tiene corte
@@ -4024,7 +4032,9 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
         abono, otros: ajo.otros, otrosNota: ajo.otrosNota,
         neto: Number(l.total || 0) - abono + ajo.otros,
       };
-    }).sort((a, b) => b.neto - a.neto);
+    // Alfabético por instalador: así se lee igual en pantalla, en el PDF y en el Excel,
+    // y cuadra con cualquier lista de pago ordenada por nombre.
+    }).sort((a, b) => cmpTxt(a.inst, b.inst));
     const suma = k => filas.reduce((s, f) => s + f[k], 0);
     return {
       filas,
