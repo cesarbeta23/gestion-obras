@@ -2918,8 +2918,32 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
   const INs = user.rol === ROLES.IN ? users.filter(u => u.id === user.id) : users.filter(u => u.rol === ROLES.IN);
   const canExp = [ROLES.SA, ROLES.SV, ROLES.AX].includes(user.rol);
 
+  // Una marca "ya se liquidó" si aparece en las filas de una liquidación cerrada.
+  // Se compara por los identificadores que guardan las filas desde el 29/9/2026.
+  const llaveFila = r => `${r.refObra}|${r.refApto}|${r.refLista}|${r.refIdx}|${r.refElem}|${r.refTipo}`;
+
+  // Arrastre: lo que quedó marcado en el corte anterior DESPUÉS de que se le cerró
+  // a esa persona no se pierde — entra a este corte. Es la regla acordada: cerrado el
+  // corte, todo lo que se marque cuenta para el siguiente, sea 29, 30 o el día que sea.
+  //
+  // Solo se mira UN corte hacia atrás, y solo si su liquidación trae identificadores.
+  // Sin ellos no hay cómo saber qué ya se pagó, y antes que arriesgar un pago doble
+  // se deja quieto (se avisa en pantalla).
+  function arrastreDe(iid) {
+    const ant = cortes[ci + 1];
+    if (!ant) return null;
+    const liqAnt = liqs.find(l => l.inst_id === iid && l.corte === ant.label);
+    if (!liqAnt) return null;                        // el anterior sigue abierto: es de allá
+    const filas = liqAnt.rows || [];
+    const conRef = filas.filter(r => !r.adj && r.refApto);
+    const sinRef = filas.some(r => !r.adj && !r.refApto);
+    if (sinRef || (filas.some(r => !r.adj) && conRef.length === 0)) return { bloqueado: true, ant };
+    return { bloqueado: false, ant, yaPagadas: new Set(conRef.map(llaveFila)) };
+  }
+
   function detalle(iid, d, h) {
     const rows = [];
+    const arr = arrastreDe(iid);
     // Cada fila guarda de dónde salió: obra, piso, apto, en cuál lista del apto y en
     // qué posición, más el elemento. Sin esto, una fila solo dice "Apto 913 · Closet
     // alc 3" y para desmarcarla habría que adivinar por nombre — y un apto puede
@@ -2927,8 +2951,16 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
     const proc = (o, p, a, el, esExtra, i) => {
       const ref = { refObra: o.id, refPiso: p.id, refApto: a.id,
                     refLista: esExtra ? "ex" : "el", refIdx: i, refElem: el.elementoId };
+      // Entra si la marca cae en este corte, o si cayó en el anterior y allá no se pagó.
+      const entra = (fecha, tipo) => {
+        if (enCorte(fecha, d, h)) return { ok: true, arrastrada: false };
+        if (!arr || arr.bloqueado) return { ok: false };
+        if (!enCorte(fecha, arr.ant.desde, arr.ant.hasta)) return { ok: false };
+        return { ok: !arr.yaPagadas.has(llaveFila({ ...ref, refTipo: tipo })), arrastrada: true };
+      };
       // Detallado: segunda marca del mismo elemento, con su propio precio y corte.
-      if (el.detCompletado && !el.detYaPagado && el.detId === iid && enCorte(el.detFecha, d, h) && !el.esAdicional
+      const eDet = el.detCompletado && !el.detYaPagado && el.detId === iid ? entra(el.detFecha, "det") : { ok: false };
+      if (eDet.ok && !el.esAdicional
           && el.elementoId !== "__pasajes__" && el.elementoId !== "__bonificacion__") {
         const elemD = elems.find(e => e.id === el.elementoId);
         const tipD = esExtra ? el.tipologiaId : (el.tipologiaId || a.tipologia);
@@ -2937,21 +2969,22 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
         // van en cero porque el detallado de la puerta ya está en el elemento principal.
         // Incluirlas sería una lista eterna de ceros en la liquidación.
         if (precioD > 0) {
-          rows.push({ ...ref, refTipo: "det", obra: o.nombre, apto: a.nombre, el: `[Detallado] ${elemD?.nombre || el.elementoId}`, actividad: "Detallado",
+          rows.push({ ...ref, refTipo: "det", arrastrada: eDet.arrastrada, obra: o.nombre, apto: a.nombre, el: `[Detallado] ${elemD?.nombre || el.elementoId}`, actividad: "Detallado",
             cant: el.cantidad || 1, precio: precioD, fecha: el.detFecha, adj: false, apr: true });
         }
       }
       // yaPagado: avance cargado de una obra anterior, ya pagado. Alimenta el ERP, no se liquida.
-      if (el.completado && !el.yaPagado && el.instaladorId === iid && enCorte(el.fecha, d, h)) {
+      const eIns = el.completado && !el.yaPagado && el.instaladorId === iid ? entra(el.fecha, el.esAdicional ? "ad" : "inst") : { ok: false };
+      if (eIns.ok) {
         if (el.elementoId === "__pasajes__" || el.elementoId === "__bonificacion__") return; // migrados a user.ajustes
         if (el.esAdicional) {
           if (el.responsable === "obra" && !String(el.memorando || "").trim()) return;   // sin memorando no se paga
-          rows.push({ ...ref, refTipo: "ad", obra: o.nombre, apto: a.nombre, el: `[Adicional] ${el.descripcion}`, responsable: el.responsable || null, memorando: el.memorando || null, cant: el.cantidad || 1, precio: el.valorUnitario || 0, fecha: el.fecha, adj: false, apr: true });
+          rows.push({ ...ref, refTipo: "ad", arrastrada: eIns.arrastrada, obra: o.nombre, apto: a.nombre, el: `[Adicional] ${el.descripcion}`, responsable: el.responsable || null, memorando: el.memorando || null, cant: el.cantidad || 1, precio: el.valorUnitario || 0, fecha: el.fecha, adj: false, apr: true });
           return;
         }
         const elem = elems.find(e => e.id === el.elementoId);
         const tip = esExtra ? el.tipologiaId : (el.tipologiaId || a.tipologia);
-        rows.push({ ...ref, refTipo: "inst", obra: o.nombre, apto: a.nombre, el: elem?.nombre, actividad: "Instalación", cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label, a.id, tip), fecha: el.fecha, adj: false, apr: true });
+        rows.push({ ...ref, refTipo: "inst", arrastrada: eIns.arrastrada, obra: o.nombre, apto: a.nombre, el: elem?.nombre, actividad: "Instalación", cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label, a.id, tip), fecha: el.fecha, adj: false, apr: true });
       }
     };
     obras.forEach(o => o.pisos?.forEach(p => p.aptos?.forEach(a => {
@@ -3017,6 +3050,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
   const esSuper = user.rol === ROLES.SA;
   const [reabrirM, setReabrirM] = useState(null);   // corte que se está por reabrir
   const [quitConf, setQuitConf] = useState(null);   // fila armada para quitar (segundo clic)
+  const [desaprobar, setDesaprobar] = useState(null);   // corte armado para quitarle la aprobación
   const abonoDelCorte = iid => (movPres || [])
     .filter(m => m.usuario_id === iid && m.tipo === "abono" && m.corte === corte.label)
     .reduce((s, m) => s + Number(m.valor || 0), 0);
@@ -3124,6 +3158,19 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
     toast(`Quitado: ${r.el} y desmarcado en el apto ${r.apto}. Si lo vuelves a marcar allá, hay que reabrir y cerrar el corte para que regrese.`, "ok");
   }
 
+  // Quitar la aprobación: el corte vuelve a "cerrado". Aprobar no es que la plata ya
+  // salió —eso pasa después, en contabilidad, con el Excel— así que gerencia tiene que
+  // poder devolverse. Desde "cerrado" ya se puede reabrir y corregir como siempre.
+  // El abono NO se toca acá: sigue amarrado al corte. Se retira si además se reabre.
+  async function quitarAprobacion(liq) {
+    const act = { ...liq, estado: "cerrado" };
+    const r = await dbUpsert("liquidaciones", liqToDb(act));
+    if (!r.ok) { toast("No se pudo quitar la aprobación", "err"); return; }
+    setLiqs(x => x.map(l => l.id === liq.id ? act : l));
+    setDesaprobar(null);
+    toast("Aprobación retirada: el corte vuelve a quedar cerrado", "ok");
+  }
+
   async function aprobarCorte(liq) {
     const act = { ...liq, estado: "pagado" };
     const r = await dbUpsert("liquidaciones", liqToDb(act));
@@ -3150,7 +3197,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
     const ajI = ajusteDe(users, inst.id, corte.label);
     const res = { ...base, abono, otros: ajI.otros, otrosNota: ajI.otrosNota,
                   neto: Number(base.total || 0) - abono + ajI.otros };
-    return { inst, cerr, rows, res };
+    return { inst, cerr, rows, res, arr: cerr ? null : arrastreDe(inst.id) };
   });
 
   // Solo obras con trabajo real en este corte, no el catálogo completo de `obras`.
@@ -3428,7 +3475,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
           )}
           {visibles.length === 0 && (filtInst || filtObra) && <p style={{ fontSize: 13, color: C.g4 }}>Ningún instalador coincide con los filtros en este corte.</p>}
           {visibles.length === 0 && !filtInst && !filtObra && <p style={{ fontSize: 13, color: C.g4 }}>Nadie tiene movimientos en este corte todavía.</p>}
-          {visibles.map(({ inst, cerr, rows, res }) => {
+          {visibles.map(({ inst, cerr, rows, res, arr }) => {
             return <div key={inst.id} style={{ ...card, marginBottom: 16, borderLeft: `4px solid ${cerr ? C.gn : rows.length > 0 ? C.or : C.g2}` }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
                 <div>
@@ -3461,7 +3508,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                     ? <span onClick={() => irAlApto(r.refObra, r.refPiso, r.refApto)} title="Abrir este apartamento"
                         style={{ fontWeight: 600, color: C.or, cursor: "pointer", textDecoration: "underline" }}>Apto {r.apto} ↗</span>
                     : <span style={{ fontWeight: 500 }}>Apto {r.apto}</span>}
-                  <span style={{ flex: 1 }}>{r.el}{r.desc && <span style={{ color: C.g5, fontStyle: "italic" }}> — {r.desc}</span>}{r.adj && !r.apr && <span style={{ marginLeft: 6, ...bdg("amber"), fontSize: 10 }}>pendiente</span>}</span>
+                  <span style={{ flex: 1 }}>{r.el}{r.desc && <span style={{ color: C.g5, fontStyle: "italic" }}> — {r.desc}</span>}{r.arrastrada && <span title="Se marcó después de cerrar el corte pasado, así que entra en este" style={{ marginLeft: 6, ...bdg("amber"), fontSize: 10 }}>del corte anterior</span>}{r.adj && !r.apr && <span style={{ marginLeft: 6, ...bdg("amber"), fontSize: 10 }}>pendiente</span>}</span>
                   <span style={{ fontWeight: 700, minWidth: 90, textAlign: "right" }}>{fmt(r.precio * r.cant)}</span>
                   {/* La ✕ solo cuando el corte está cerrado y sin aprobar, y solo gerencia.
                       Pide un segundo clic: desmarca en el apto, no es solo quitar de la lista. */}
@@ -3509,6 +3556,13 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                 );
               })()}
 
+              {arr?.bloqueado && esOficina(user) && (
+                <div style={{ fontSize: 11.5, color: C.orD, background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 8, padding: "8px 12px", marginBottom: 10 }}>
+                  El corte anterior ({arr.ant.label}) se cerró sin los identificadores de fila, así que
+                  no se puede saber qué quedó sin pagar allá. Por eso no se arrastra nada: antes que
+                  arriesgar un pago doble, revísalo a mano si crees que quedó trabajo suelto.
+                </div>
+              )}
               {cerr && cerr.estado !== "pagado" && esSuper && rows.some(r => !r.adj && !r.refApto) && (
                 <div style={{ fontSize: 12, color: C.orD, background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 8, padding: "8px 12px", marginBottom: 10 }}>
                   Este corte se cerró antes de que las filas guardaran de qué apartamento salieron,
@@ -3648,7 +3702,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                       </div>
                     )}
                     {esSuper && pagado && <div style={{ fontSize: 11.5, color: C.g5, marginTop: 6, textAlign: "right" }}>
-                      Corte aprobado: el abono queda quieto. Si hay que corregir, regístralo en Préstamos.
+                      Corte aprobado. Para cambiarle algo, quítale la aprobación y ahí se puede reabrir.
                     </div>}
                     {!esSuper && !pagado && <div style={{ fontSize: 11.5, color: C.g5, marginTop: 6, textAlign: "right" }}>
                       El descuento lo maneja gerencia.
@@ -3670,6 +3724,15 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                   <span style={{ fontSize: 11.5, color: C.g5, alignSelf: "center" }}>Con abono aplicado, lo reabre gerencia</span>}
                 {cerr && cerr.estado !== "pagado" && esSuper &&
                   <Btn variant="success" onClick={() => aprobarCorte(cerr)}>✓ Aprobar corte</Btn>}
+                {cerr && cerr.estado === "pagado" && esSuper && (
+                  desaprobar === cerr.id
+                    ? <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                        <span style={{ fontSize: 11.5, color: C.g5 }}>¿Quitar la aprobación?</span>
+                        <button onClick={() => quitarAprobacion(cerr)} style={{ ...bdg("red"), cursor: "pointer", fontWeight: 700 }}>Sí</button>
+                        <button onClick={() => setDesaprobar(null)} style={{ ...bdg("gray"), cursor: "pointer" }}>No</button>
+                      </span>
+                    : <Btn onClick={() => setDesaprobar(cerr.id)}>↩ Quitar aprobación</Btn>
+                )}
               </div>}
             </div>;
           })}
