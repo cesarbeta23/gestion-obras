@@ -193,6 +193,85 @@ function saldoPrestamo(movs, uid) {
     .reduce((s, m) => s + (m.tipo === "abono" ? -Number(m.valor || 0) : Number(m.valor || 0)), 0);
 }
 
+// Las filas de ajuste (pasajes, bonificación, día laborado) no causan retenido:
+// el 10% se le saca a lo que se hizo en la obra, no a lo que se le reconoce aparte.
+const esAdjRow = r => !!r.adj || r.el === "Día laborado";
+
+// Reparte una liquidación cerrada por obra y le saca el 10%. Vive acá porque lo
+// usan Reportes y la pantalla de Retenidos; antes estaba adentro de Reportes y
+// la segunda habría tenido que hacer su propia copia.
+function porObraDeLiq(l) {
+  const m = {};
+  for (const r of l.rows || []) {
+    if (esAdjRow(r)) continue;
+    const k = r.obra || "—";
+    m[k] = (m[k] || 0) + Number(r.precio || 0) * Number(r.cant || 1);
+  }
+  return Object.entries(m).map(([obra, causado]) => ({ obra, causado, ret: Math.round(causado * 0.1) }));
+}
+
+// Dos obras son la misma si se escriben igual sin tildes, sin espacios de sobra
+// y sin importar mayúsculas. Así "Polanco", "POLANCO " y "polanco" no salen como
+// tres obras distintas en el informe de retenidos.
+const claveObra = s => String(s || "—").trim().toLowerCase()
+  .normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ");
+
+// Lee un valor copiado de Excel. El Excel de acá usa el punto para los miles y la
+// coma para los decimales, pero los archivos del sistema viejo pueden venir al
+// revés. La regla: el separador que aparezca de último es el decimal; el otro son
+// miles. Si solo hay uno y lo que le sigue no son exactamente 3 dígitos, también
+// es decimal ("1,5" es uno y medio; "1,500" son mil quinientos).
+function aNumero(txt) {
+  let s = String(txt ?? "").replace(/[^\d,.-]/g, "").trim();
+  if (!s) return 0;
+  const neg = s.startsWith("-");
+  s = s.replace(/-/g, "");
+  const ic = s.lastIndexOf(","), ip = s.lastIndexOf(".");
+  let dec = -1;
+  if (ic >= 0 && ip >= 0) dec = Math.max(ic, ip);
+  else if (ic >= 0 || ip >= 0) {
+    const i = Math.max(ic, ip);
+    if (s.length - i - 1 !== 3) dec = i;              // no son miles
+  }
+  const entero = (dec >= 0 ? s.slice(0, dec) : s).replace(/[.,]/g, "");
+  const resto = dec >= 0 ? s.slice(dec + 1).replace(/[.,]/g, "") : "";
+  const n = Number(`${entero || "0"}.${resto || "0"}`);
+  return Number.isFinite(n) ? (neg ? -n : n) : 0;
+}
+
+// Saldo de retenido de una persona, obra por obra.
+//   inicial + causado en la app - anticipos - devoluciones + ajustes
+// Lo causado NO se guarda en la tabla: se saca de las liquidaciones cerradas, para
+// que al reabrir o corregir un corte el saldo se mueva solo y nada quede contado
+// dos veces.
+function retenidosDePersona(uid, liqs, movRet) {
+  const porObra = new Map();
+  const tocar = (nombre, campo, valor) => {
+    const k = claveObra(nombre);
+    if (!porObra.has(k)) porObra.set(k, { obra: String(nombre || "—").trim(), inicial: 0, causado: 0, appRet: 0, anticipos: 0, devoluciones: 0, ajustes: 0 });
+    porObra.get(k)[campo] += valor;
+  };
+  for (const l of (liqs || []).filter(x => x.inst_id === uid)) {
+    for (const o of porObraDeLiq(l)) { tocar(o.obra, "causado", o.causado); tocar(o.obra, "appRet", o.ret); }
+  }
+  for (const m of (movRet || []).filter(x => x.usuario_id === uid)) {
+    const v = Number(m.valor || 0);
+    const campo = m.tipo === "inicial" ? "inicial"
+      : m.tipo === "anticipo" ? "anticipos"
+      : m.tipo === "devolucion" ? "devoluciones" : "ajustes";
+    tocar(m.obra_nombre, campo, v);
+  }
+  const filas = [...porObra.values()].map(f => ({
+    ...f, saldo: f.inicial + f.appRet - f.anticipos - f.devoluciones + f.ajustes,
+  })).sort((a, b) => cmpTxt(a.obra, b.obra));
+  const tot = filas.reduce((s, f) => ({
+    inicial: s.inicial + f.inicial, causado: s.causado + f.causado, appRet: s.appRet + f.appRet,
+    anticipos: s.anticipos + f.anticipos, devoluciones: s.devoluciones + f.devoluciones,
+    ajustes: s.ajustes + f.ajustes, saldo: s.saldo + f.saldo,
+  }), { inicial: 0, causado: 0, appRet: 0, anticipos: 0, devoluciones: 0, ajustes: 0, saldo: 0 });
+  return { filas, tot };
+}
+
 // Vuelve a sacar los totales de una liquidación a partir de sus filas. Lo usan
 // Historial (al editar una liquidación vieja) y la pantalla de Liquidación (al
 // quitar una fila de un corte cerrado), así que vive acá y no dentro de una.
@@ -468,6 +547,7 @@ export default function App() {
   const [users, setUsers] = useState([]);
   const [liqs, setLiqs] = useState([]);
   const [movPres, setMovPres] = useState([]);   // préstamos y abonos de los instaladores
+  const [movRet, setMovRet] = useState([]);     // saldos iniciales y anticipos de retenido
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("obras");
   const [selObra, setSelObra] = useState(null);
@@ -496,25 +576,28 @@ export default function App() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [u, e, o, l, mp] = await Promise.all([
+      const [u, e, o, l, mp, mr] = await Promise.all([
         dbGet("usuarios", "id,nombre,email,rol,oficio,cedula,telefono,banco,cuenta,ajustes"),   // sin PIN
         dbGet("elementos"), dbGet("obras"), dbGet("liquidaciones"),
         dbGet("movimientos_prestamo").catch(() => []),   // si la tabla aún no existe, se sigue sin ella
+        dbGet("movimientos_retenido").catch(() => []),   // idem, mientras no se corra retenidos.sql
       ]);
       setUsers(ordNom(u));
       setMovPres(Array.isArray(mp) ? mp : []);
+      setMovRet(Array.isArray(mr) ? mr : []);
       if (!e.length) { await Promise.all(ELEMENTOS_DEF.map(x => dbUpsert("elementos", x))); setElems(ELEMENTOS_DEF); } else setElems(ordNom(e));
       setObras(ordNom(o.map(mapObra)));
       setLiqs(l.map(mapLiq));
       // Copia en el teléfono, para poder abrir la app en un sótano sin señal
-      localSet("datos", { u, e: e.length ? e : ELEMENTOS_DEF, o, l, mp: Array.isArray(mp) ? mp : [], fecha: Date.now() });
+      localSet("datos", { u, e: e.length ? e : ELEMENTOS_DEF, o, l, mp: Array.isArray(mp) ? mp : [],
+        mr: Array.isArray(mr) ? mr : [], fecha: Date.now() });
       setDesdeLocal(null);
       despacharCola();          // por si quedaron marcas de la última vez sin señal
     } catch (err) {
       // Sin línea: se abre con lo último que se alcanzó a guardar
       const g = await localGet("datos");
       if (g) {
-        setUsers(ordNom(g.u)); setElems(ordNom(g.e)); setObras(ordNom((g.o || []).map(mapObra))); setLiqs((g.l || []).map(mapLiq)); setMovPres(g.mp || []);
+        setUsers(ordNom(g.u)); setElems(ordNom(g.e)); setObras(ordNom((g.o || []).map(mapObra))); setLiqs((g.l || []).map(mapLiq)); setMovPres(g.mp || []); setMovRet(g.mr || []);
         setDesdeLocal(g.fecha || Date.now());
         toast("Sin señal: mostrando los últimos datos guardados", "info");
       } else {
@@ -852,7 +935,7 @@ export default function App() {
   );
   if (!user) return <LoginScreen login={login} setLogin={setLogin} doLogin={doLogin} err={loginErr} />;
 
-  const sh = { obras, setObras, updateObra, saveObra, elems, setElems, users, setUsers, liqs, setLiqs, movPres, setMovPres, openM, closeM, modals, toast, user, getPrecio, llevaDetallado, avanceApto, detListo };
+  const sh = { obras, setObras, updateObra, saveObra, elems, setElems, users, setUsers, liqs, setLiqs, movPres, setMovPres, movRet, setMovRet, openM, closeM, modals, toast, user, getPrecio, llevaDetallado, avanceApto, detListo };
 
   return (
     <div style={{ fontFamily: "system-ui,sans-serif", maxWidth: 920, margin: "0 auto", padding: "1rem", background: C.g0, minHeight: "100vh" }}>
@@ -890,6 +973,7 @@ export default function App() {
       }} />}
       {view === "reportes" && esOficina(user) && <Reportes obras={obras} elems={elems} users={users} user={user} getPrecio={getPrecio} avanceObra={avanceObra} liqs={liqs} movPres={movPres} />}
       {view === "prestamos" && user.rol === ROLES.SA && <Prestamos {...sh} />}
+      {view === "retenidos" && user.rol === ROLES.SA && <Retenidos {...sh} liqs={liqs} />}
       {view === "users" && esOficina(user) && <Usuarios {...sh} />}
     </div>
   );
@@ -968,6 +1052,7 @@ function Header({ user, doLogout, view, setView, selObra, setSelObra, setSelPiso
     { k: "liqs", l: "Liquidación", r: [ROLES.SA, ROLES.SV, ROLES.AX, ROLES.IN] },
     { k: "reportes", l: "Reportes", r: [ROLES.SA, ROLES.SV, ROLES.AX] },
     { k: "prestamos", l: "Préstamos", r: [ROLES.SA] },
+    { k: "retenidos", l: "Retenidos", r: [ROLES.SA] },
     { k: "users", l: "Usuarios", r: [ROLES.SA, ROLES.SV, ROLES.AX] }
   ];
   return (
@@ -3982,7 +4067,6 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
   // ── Informes sobre los cortes ya cerrados (tabla liquidaciones) ──
   // Cada liquidación guarda sus filas con la obra, así que se puede repartir
   // lo causado y el retenido (10%) obra por obra.
-  const esAdjRow = r => !!r.adj || r.el === "Día laborado";
   const cortes = [...new Set(liqs.map(l => l.corte))].sort().reverse();
 
   // ── Quién falta en un corte ────────────────────────────────
@@ -4014,15 +4098,6 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
     return { sinCerrar, sinAprobar, sinFechas: false };
   }
 
-  function porObraDeLiq(l) {
-    const m = {};
-    for (const r of l.rows || []) {
-      if (esAdjRow(r)) continue;
-      const k = r.obra || "—";
-      m[k] = (m[k] || 0) + Number(r.precio || 0) * Number(r.cant || 1);
-    }
-    return Object.entries(m).map(([obra, causado]) => ({ obra, causado, ret: Math.round(causado * 0.1) }));
-  }
 
   // Retenidos de un instalador, corte por corte y obra por obra
   function retenidosDe(iId) {
@@ -4977,6 +5052,429 @@ function Prestamos({ users, movPres, setMovPres, user, toast, liqs }) {
           </div>
         </Modal>
       )}
+    </div>
+  );
+}
+
+// ── RETENIDOS ─────────────────────────────────────────────
+// El 10% que se le retiene a cada persona de lo que hace en la obra. Lo que pasó
+// dentro de la aplicación sale solo de las liquidaciones cerradas; lo que viene de
+// atrás (el Excel y el sistema viejo) se carga acá, y acá mismo se registran los
+// anticipos y las devoluciones.
+function Retenidos({ users, movRet, setMovRet, liqs, obras = [], user, toast, openM, closeM, modals }) {
+  const [form, setForm] = useState(null);
+  const [verDe, setVerDe] = useState(null);
+  const [busca, setBusca] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [pegado, setPegado] = useState(null);     // carga masiva: texto pegado del Excel
+
+  const INs = users.filter(u => u.rol === ROLES.IN);
+  const hoy = () => new Date().toISOString().slice(0, 10);
+  const oL = { instalador: "Instalador", detallador: "Detallador", ambos: "Ambos" };
+
+  // Nombres de obra que ya se han usado: las de Gestión más las que se hayan escrito
+  // a mano en algún movimiento. Así la segunda vez se escoge de lista y no se vuelve
+  // a escribir distinto.
+  const obrasSugeridas = (() => {
+    const m = new Map();
+    for (const o of obras) m.set(claveObra(o.nombre), o.nombre);
+    for (const mv of (movRet || [])) if (mv.obra_nombre && !m.has(claveObra(mv.obra_nombre))) m.set(claveObra(mv.obra_nombre), mv.obra_nombre);
+    return [...m.values()].sort(cmpTxt);
+  })();
+
+  const filas = INs.map(u => ({ u, ...retenidosDePersona(u.id, liqs, movRet) }))
+    .filter(f => f.tot.saldo !== 0 || f.filas.length)
+    .sort((a, b) => b.tot.saldo - a.tot.saldo);
+  const q = busca.trim().toLowerCase();
+  const visibles = q ? filas.filter(f => (f.u.nombre || "").toLowerCase().includes(q)) : filas;
+  const granTotal = filas.reduce((s, f) => s + f.tot.saldo, 0);
+
+  const movsDe = uid => (movRet || []).filter(m => m.usuario_id === uid)
+    .sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")) || String(b.id).localeCompare(String(a.id)));
+
+  function abrir(tipo, uid) {
+    setForm({ usuario_id: uid || "", tipo, valor: "", obra: "", concepto: "", fecha: hoy() });
+  }
+
+  function nuevoMov(usuario_id, tipo, valor, obraNom, fecha, concepto) {
+    const enGestion = obras.find(o => claveObra(o.nombre) === claveObra(obraNom));
+    return {
+      id: `mr${Date.now()}${Math.floor(Math.random() * 100000)}`,
+      usuario_id, tipo, valor: Number(valor) || 0,
+      obra_id: enGestion?.id || null,
+      obra_nombre: String(obraNom || "").trim(),
+      fecha: fecha || hoy(),
+      concepto: (concepto || "").trim() || null,
+      corte: null, registrado_por: user.nombre,
+    };
+  }
+
+  async function guardar() {
+    const val = Number(form.valor) || 0;
+    if (!form.usuario_id) { toast("Elige la persona", "err"); return; }
+    if (!String(form.obra || "").trim()) { toast("Falta decir de qué obra viene", "err"); return; }
+    if (form.tipo !== "ajuste" && val <= 0) { toast("El valor debe ser mayor que cero", "err"); return; }
+    if (form.tipo === "ajuste" && val === 0) { toast("Un ajuste en cero no hace nada", "err"); return; }
+    // No se puede adelantar ni devolver más de lo que hay en esa obra.
+    if (form.tipo === "anticipo" || form.tipo === "devolucion") {
+      const r = retenidosDePersona(form.usuario_id, liqs, movRet);
+      const enObra = r.filas.find(f => claveObra(f.obra) === claveObra(form.obra));
+      const disp = enObra?.saldo || 0;
+      if (val > disp) {
+        toast(`En esa obra solo hay ${fmt(disp)} de retenido${disp <= 0 ? "" : " disponible"}`, "err");
+        return;
+      }
+    }
+    setSaving(true);
+    const mov = nuevoMov(form.usuario_id, form.tipo, val, form.obra, form.fecha, form.concepto);
+    const r = await dbInsert("movimientos_retenido", mov);
+    setSaving(false);
+    if (!r.ok) {
+      console.error("retenido:", r.status, await r.text().catch(() => ""));
+      toast("No se pudo guardar. ¿Ya corriste retenidos.sql?", "err"); return;
+    }
+    setMovRet(x => [...x, mov]);
+    setForm(null);
+    toast("Movimiento registrado", "ok");
+  }
+
+  async function borrar(m) {
+    if (!window.confirm(`Borrar este movimiento de ${fmt(m.valor)} en ${m.obra_nombre}?`)) return;
+    const r = await dbDel("movimientos_retenido", m.id);
+    if (!r.ok) { toast("No se pudo borrar", "err"); return; }
+    setMovRet(x => x.filter(y => y.id !== m.id));
+    toast("Movimiento borrado", "ok");
+  }
+
+  // ── Carga masiva ──────────────────────────────────────────
+  // Se pega de Excel: persona, obra, valor. El nombre se busca por parecido para no
+  // obligar a que esté escrito igualito, y lo que no cuadre se marca ANTES de guardar.
+  function analizar(texto) {
+    const norm = s => String(s || "").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    const lineas = String(texto || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    return lineas.map((linea, i) => {
+      // Se acepta lo que pega Excel (tabulador) y también punto y coma o coma.
+      const celdas = linea.split(/\t|;/).map(c => c.trim());
+      const [nom = "", obra = "", val = ""] = celdas;
+      const valor = Math.round(aNumero(val));
+      const nq = norm(nom);
+      const candidatos = INs.filter(u => norm(u.nombre) === nq);
+      const parecidos = candidatos.length ? candidatos
+        : INs.filter(u => nq && (norm(u.nombre).includes(nq) || nq.includes(norm(u.nombre))));
+      let error = null;
+      if (celdas.length < 3) error = "Faltan columnas: se esperan persona, obra y valor";
+      else if (!nom) error = "Sin nombre";
+      else if (!parecidos.length) error = "No encontré esa persona";
+      else if (parecidos.length > 1) error = `Hay ${parecidos.length} personas que coinciden`;
+      else if (!obra) error = "Sin obra";
+      else if (!valor) error = "Valor en cero o ilegible";
+      return { linea: i + 1, nom, obra, valor, usuario: parecidos.length === 1 ? parecidos[0] : null, error };
+    });
+  }
+
+  async function guardarPegado() {
+    const buenas = (pegado.filas || []).filter(f => !f.error);
+    if (!buenas.length) { toast("No hay ninguna línea utilizable", "err"); return; }
+    setSaving(true);
+    const movs = buenas.map(f => nuevoMov(f.usuario.id, "inicial", f.valor, f.obra, pegado.fecha, pegado.concepto));
+    // De a bloques: un insert de 400 filas de una puede pasarse del tamaño de la petición.
+    const lotes = [];
+    for (let i = 0; i < movs.length; i += 100) lotes.push(movs.slice(i, i + 100));
+    const guardados = [];
+    for (const lote of lotes) {
+      const r = await dbInsert("movimientos_retenido", lote);
+      if (!r.ok) {
+        console.error("carga masiva:", r.status, await r.text().catch(() => ""));
+        setSaving(false);
+        setMovRet(x => [...x, ...guardados]);
+        toast(`Se guardaron ${guardados.length} de ${movs.length}. El resto falló; revisá y volvé a pegar solo esas.`, "err");
+        setPegado(null);
+        return;
+      }
+      guardados.push(...lote);
+    }
+    setSaving(false);
+    setMovRet(x => [...x, ...guardados]);
+    setPegado(null);
+    toast(`${guardados.length} saldo(s) inicial(es) cargados`, "ok");
+  }
+
+  function exportar() {
+    const aoa = [
+      ["RETENIDOS POR PERSONA Y OBRA"],
+      [`Generado el ${new Date().toLocaleDateString("es-CO")}`],
+      [],
+      ["Persona", "Oficio", "Obra", "Saldo inicial", "Causado en la app", "Retenido app (10%)", "Anticipos", "Devoluciones", "Ajustes", "Saldo"],
+    ];
+    for (const f of filas) {
+      for (const x of f.filas) {
+        aoa.push([f.u.nombre, oL[f.u.oficio || "instalador"], x.obra, x.inicial, x.causado, x.appRet, x.anticipos, x.devoluciones, x.ajustes, x.saldo]);
+      }
+      aoa.push([`TOTAL ${f.u.nombre}`, "", "", f.tot.inicial, f.tot.causado, f.tot.appRet, f.tot.anticipos, f.tot.devoluciones, f.tot.ajustes, f.tot.saldo]);
+      aoa.push([]);
+    }
+    aoa.push(["GRAN TOTAL", "", "", "", "", "", "", "", "", granTotal]);
+    const hoja = XLSX.utils.aoa_to_sheet(aoa);
+    hoja["!cols"] = [26, 12, 26, 14, 16, 16, 14, 14, 12, 14].map(w => ({ wch: w }));
+    const rg = XLSX.utils.decode_range(hoja["!ref"]);
+    for (let R = 4; R <= rg.e.r; R++) {
+      for (let C = 3; C <= 9; C++) {
+        const c = hoja[XLSX.utils.encode_cell({ r: R, c: C })];
+        if (c && typeof c.v === "number") c.z = '"$"#,##0';
+      }
+    }
+    const lb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(lb, hoja, "Retenidos");
+    XLSX.writeFile(lb, `retenidos_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
+  const th = { padding: "9px 12px", textAlign: "left", fontSize: 11, color: C.g5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", borderBottom: `1px solid ${C.g2}` };
+  const td = { padding: "9px 12px", fontSize: 13, borderBottom: `1px solid ${C.g1}` };
+  const tdN = { ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, gap: 12, flexWrap: "wrap" }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>Retenidos</h2>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Btn onClick={() => setPegado({ texto: "", filas: [], fecha: hoy(), concepto: "Saldo inicial" })}>⇪ Cargar desde Excel</Btn>
+          <Btn onClick={exportar}>⇓ Excel</Btn>
+          <Btn variant="primary" onClick={() => abrir("inicial")}>+ Registrar</Btn>
+        </div>
+      </div>
+      <p style={{ fontSize: 12.5, color: C.g5, margin: "0 0 16px", lineHeight: 1.5, maxWidth: 760 }}>
+        El retenido que causa la aplicación sale solo de los cortes cerrados, obra por obra.
+        Lo que viene del Excel o del sistema viejo se carga como <strong>saldo inicial</strong>.
+        Ojo con contar dos veces: si una obra ya se liquidó acá, su retenido no debe ir también en el saldo inicial.
+      </p>
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
+        <input placeholder="Buscar persona…" value={busca} onChange={e => setBusca(e.target.value)}
+          style={{ flex: 1, minWidth: 220, padding: "9px 12px", border: `1px solid ${C.g2}`, borderRadius: 10, fontSize: 14, fontFamily: "system-ui" }} />
+        <span style={{ fontSize: 13, color: C.g5 }}>
+          Retenido total en poder de la empresa: <strong style={{ color: C.bk }}>{fmt(granTotal)}</strong>
+        </span>
+      </div>
+
+      {!filas.length ? (
+        <div style={{ ...card, textAlign: "center", padding: "34px 20px", color: C.g5, fontSize: 14 }}>
+          Todavía no hay retenidos. Cargá los saldos iniciales desde el Excel o registrá uno a mano.
+        </div>
+      ) : (
+        <div style={{ ...card, padding: 0, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
+            <thead><tr>
+              <th style={th}>Persona</th><th style={th}>Oficio</th>
+              <th style={{ ...th, textAlign: "right" }}>Inicial</th>
+              <th style={{ ...th, textAlign: "right" }}>Causado acá</th>
+              <th style={{ ...th, textAlign: "right" }}>Anticipos</th>
+              <th style={{ ...th, textAlign: "right" }}>Devuelto</th>
+              <th style={{ ...th, textAlign: "right" }}>Saldo</th>
+              <th style={th} />
+            </tr></thead>
+            <tbody>
+              {visibles.map(f => (
+                <tr key={f.u.id}>
+                  <td style={{ ...td, fontWeight: 600 }}>{f.u.nombre}</td>
+                  <td style={td}><span style={{ ...bdg("gray"), fontSize: 11 }}>{oL[f.u.oficio || "instalador"]}</span></td>
+                  <td style={tdN}>{f.tot.inicial ? fmt(f.tot.inicial) : "—"}</td>
+                  <td style={tdN}>{f.tot.appRet ? fmt(f.tot.appRet) : "—"}</td>
+                  <td style={{ ...tdN, color: f.tot.anticipos ? C.rd : C.g3 }}>{f.tot.anticipos ? `- ${fmt(f.tot.anticipos)}` : "—"}</td>
+                  <td style={{ ...tdN, color: f.tot.devoluciones ? C.rd : C.g3 }}>{f.tot.devoluciones ? `- ${fmt(f.tot.devoluciones)}` : "—"}</td>
+                  <td style={{ ...tdN, fontWeight: 700 }}>{fmt(f.tot.saldo)}</td>
+                  <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
+                    <Btn onClick={() => setVerDe(verDe === f.u.id ? null : f.u.id)}>{verDe === f.u.id ? "Cerrar" : "Ver"}</Btn>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {verDe && (() => {
+        const f = filas.find(x => x.u.id === verDe);
+        if (!f) return null;
+        const movs = movsDe(verDe);
+        const tL = { inicial: "Saldo inicial", anticipo: "Anticipo", devolucion: "Devolución", ajuste: "Ajuste" };
+        return (
+          <div style={{ ...card, marginTop: 16, borderLeft: `4px solid ${C.or}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10, flexWrap: "wrap" }}>
+              <strong style={{ fontSize: 15 }}>{f.u.nombre}</strong>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <Btn onClick={() => abrir("inicial", f.u.id)}>+ Saldo inicial</Btn>
+                <Btn onClick={() => abrir("anticipo", f.u.id)}>+ Anticipo</Btn>
+                <Btn onClick={() => abrir("devolucion", f.u.id)}>+ Devolución</Btn>
+                <Btn onClick={() => abrir("ajuste", f.u.id)}>+ Ajuste</Btn>
+              </div>
+            </div>
+
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.g5, textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 8 }}>Por obra</div>
+            <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", marginBottom: 18 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 680 }}>
+                <thead><tr>
+                  <th style={th}>Obra</th>
+                  <th style={{ ...th, textAlign: "right" }}>Inicial</th>
+                  <th style={{ ...th, textAlign: "right" }}>Causado acá</th>
+                  <th style={{ ...th, textAlign: "right" }}>Retenido acá</th>
+                  <th style={{ ...th, textAlign: "right" }}>Anticipos</th>
+                  <th style={{ ...th, textAlign: "right" }}>Devuelto</th>
+                  <th style={{ ...th, textAlign: "right" }}>Saldo</th>
+                </tr></thead>
+                <tbody>
+                  {f.filas.map(x => (
+                    <tr key={x.obra}>
+                      <td style={td}>{x.obra}</td>
+                      <td style={tdN}>{x.inicial ? fmt(x.inicial) : "—"}</td>
+                      <td style={{ ...tdN, color: C.g5 }}>{x.causado ? fmt(x.causado) : "—"}</td>
+                      <td style={tdN}>{x.appRet ? fmt(x.appRet) : "—"}</td>
+                      <td style={{ ...tdN, color: x.anticipos ? C.rd : C.g3 }}>{x.anticipos ? `- ${fmt(x.anticipos)}` : "—"}</td>
+                      <td style={{ ...tdN, color: x.devoluciones ? C.rd : C.g3 }}>{x.devoluciones ? `- ${fmt(x.devoluciones)}` : "—"}</td>
+                      <td style={{ ...tdN, fontWeight: 700 }}>{fmt(x.saldo)}</td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td style={{ ...td, fontWeight: 700 }}>Total</td>
+                    <td style={{ ...tdN, fontWeight: 700 }}>{fmt(f.tot.inicial)}</td>
+                    <td style={{ ...tdN, fontWeight: 700, color: C.g5 }}>{fmt(f.tot.causado)}</td>
+                    <td style={{ ...tdN, fontWeight: 700 }}>{fmt(f.tot.appRet)}</td>
+                    <td style={{ ...tdN, fontWeight: 700, color: C.rd }}>{f.tot.anticipos ? `- ${fmt(f.tot.anticipos)}` : "—"}</td>
+                    <td style={{ ...tdN, fontWeight: 700, color: C.rd }}>{f.tot.devoluciones ? `- ${fmt(f.tot.devoluciones)}` : "—"}</td>
+                    <td style={{ ...tdN, fontWeight: 800 }}>{fmt(f.tot.saldo)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.g5, textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 8 }}>
+              Movimientos registrados ({movs.length})
+            </div>
+            {!movs.length ? (
+              <p style={{ fontSize: 13, color: C.g4 }}>Ninguno. Lo que se ve arriba en "causado acá" sale de los cortes cerrados.</p>
+            ) : (
+              <div style={{ display: "grid", gap: 5 }}>
+                {movs.map(m => (
+                  <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: C.g0, borderRadius: 8, fontSize: 13, flexWrap: "wrap" }}>
+                    <span style={{ ...bdg(m.tipo === "inicial" ? "blue" : m.tipo === "ajuste" ? "amber" : "red"), fontSize: 11 }}>{tL[m.tipo] || m.tipo}</span>
+                    <span style={{ flex: 1, minWidth: 140 }}>{m.obra_nombre}{m.concepto ? ` · ${m.concepto}` : ""}</span>
+                    <span style={{ color: C.g4, fontSize: 12 }}>{m.fecha}</span>
+                    <strong style={{ fontVariantNumeric: "tabular-nums" }}>{fmt(m.valor)}</strong>
+                    <span onClick={() => borrar(m)} title="Borrar este movimiento"
+                      style={{ cursor: "pointer", color: C.rd, fontWeight: 700, padding: "0 4px" }}>✕</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {form && (() => {
+        const tL = { inicial: "saldo inicial", anticipo: "anticipo", devolucion: "devolución", ajuste: "ajuste" };
+        const ayuda = {
+          inicial: "Lo que esa persona ya tenía retenido en esa obra antes de entrar a la aplicación.",
+          anticipo: "Plata del retenido que ya se le entregó. Baja el saldo y no toca la liquidación del corte.",
+          devolucion: "Entrega del retenido, normalmente al terminar la obra.",
+          ajuste: "Corrección puntual. Admite valor negativo para bajar el saldo.",
+        };
+        return (
+          <Modal title={`Registrar ${tL[form.tipo]}`} onClose={() => setForm(null)} wide>
+            <p style={{ fontSize: 13, color: C.g5, marginTop: -4, marginBottom: 14 }}>{ayuda[form.tipo]}</p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+              <Sel label="Persona" value={form.usuario_id} onChange={e => setForm(f => ({ ...f, usuario_id: e.target.value }))}>
+                <option value="">— Elegir —</option>
+                {ordNom(INs).map(u => <option key={u.id} value={u.id}>{u.nombre} · {oL[u.oficio || "instalador"]}</option>)}
+              </Sel>
+              <Sel label="Tipo" value={form.tipo} onChange={e => setForm(f => ({ ...f, tipo: e.target.value }))}>
+                <option value="inicial">Saldo inicial</option>
+                <option value="anticipo">Anticipo</option>
+                <option value="devolucion">Devolución</option>
+                <option value="ajuste">Ajuste</option>
+              </Sel>
+            </div>
+            <Inp label="Obra" value={form.obra} list="obras-retenido" placeholder="Escribí o elegí de la lista"
+              onChange={e => setForm(f => ({ ...f, obra: e.target.value }))} />
+            <datalist id="obras-retenido">
+              {obrasSugeridas.map(n => <option key={n} value={n} />)}
+            </datalist>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+              <Inp label={form.tipo === "ajuste" ? "Valor (puede ser negativo)" : "Valor ($)"} type="number"
+                value={form.valor} onChange={e => setForm(f => ({ ...f, valor: e.target.value }))} />
+              <Inp label="Fecha" type="date" value={form.fecha} onChange={e => setForm(f => ({ ...f, fecha: e.target.value }))} />
+            </div>
+            <Inp label="Concepto (opcional)" value={form.concepto} onChange={e => setForm(f => ({ ...f, concepto: e.target.value }))} />
+            {form.usuario_id && String(form.obra || "").trim() && (() => {
+              const r = retenidosDePersona(form.usuario_id, liqs, movRet);
+              const enObra = r.filas.find(x => claveObra(x.obra) === claveObra(form.obra));
+              return (
+                <div style={{ fontSize: 12.5, color: C.g5, background: C.g0, borderRadius: 8, padding: "9px 12px", marginBottom: 12 }}>
+                  {enObra
+                    ? <>Hoy en esa obra: <strong style={{ color: C.bk }}>{fmt(enObra.saldo)}</strong> de retenido.</>
+                    : <>Esa obra todavía no tiene retenido registrado para esa persona.</>}
+                </div>
+              );
+            })()}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Btn onClick={() => setForm(null)}>Cancelar</Btn>
+              <Btn variant="primary" disabled={saving} onClick={guardar}>{saving ? "Guardando…" : "Guardar"}</Btn>
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {pegado && (() => {
+        const buenas = pegado.filas.filter(f => !f.error).length;
+        const malas = pegado.filas.length - buenas;
+        return (
+          <Modal title="Cargar saldos iniciales desde Excel" onClose={() => setPegado(null)} wide>
+            <p style={{ fontSize: 13, color: C.g5, marginTop: -4, marginBottom: 12, lineHeight: 1.5 }}>
+              En Excel seleccioná tres columnas —<strong>persona, obra, valor</strong>— y pegalas acá.
+              El nombre no tiene que estar escrito igualito: se busca por parecido. Nada se guarda hasta que
+              revises el cuadro de abajo.
+            </p>
+            <textarea value={pegado.texto} rows={7} placeholder={"Juan Pérez\tPolanco\t1250000\nMaría Gómez\tPalma\t840000"}
+              onChange={e => setPegado(p => ({ ...p, texto: e.target.value, filas: analizar(e.target.value) }))}
+              style={{ width: "100%", padding: "10px 12px", border: `1px solid ${C.g2}`, borderRadius: 10, fontSize: 13, fontFamily: "ui-monospace, monospace", marginBottom: 12 }} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 16px" }}>
+              <Inp label="Fecha para todos" type="date" value={pegado.fecha} onChange={e => setPegado(p => ({ ...p, fecha: e.target.value }))} />
+              <Inp label="Concepto para todos" value={pegado.concepto} onChange={e => setPegado(p => ({ ...p, concepto: e.target.value }))} />
+            </div>
+            {pegado.filas.length > 0 && (
+              <>
+                <div style={{ fontSize: 13, marginBottom: 8 }}>
+                  <strong style={{ color: buenas ? C.gnD : C.g5 }}>{buenas} lista(s) para cargar</strong>
+                  {malas > 0 && <span style={{ color: C.rd }}> · {malas} con problema, esas no se cargan</span>}
+                </div>
+                <div style={{ maxHeight: 280, overflowY: "auto", overflowX: "auto", border: `1px solid ${C.g2}`, borderRadius: 8, marginBottom: 14 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
+                    <thead><tr>
+                      <th style={th}>#</th><th style={th}>Persona</th><th style={th}>Obra</th>
+                      <th style={{ ...th, textAlign: "right" }}>Valor</th><th style={th}>Estado</th>
+                    </tr></thead>
+                    <tbody>
+                      {pegado.filas.map(f => (
+                        <tr key={f.linea} style={{ background: f.error ? C.rdL : "transparent" }}>
+                          <td style={{ ...td, color: C.g4 }}>{f.linea}</td>
+                          <td style={td}>{f.usuario ? f.usuario.nombre : f.nom || "—"}</td>
+                          <td style={td}>{f.obra || "—"}</td>
+                          <td style={tdN}>{f.valor ? fmt(f.valor) : "—"}</td>
+                          <td style={{ ...td, fontSize: 12, color: f.error ? C.rd : C.gnD }}>{f.error || "✓"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Btn onClick={() => setPegado(null)}>Cancelar</Btn>
+              <Btn variant="primary" disabled={saving || !buenas} onClick={guardarPegado}>
+                {saving ? "Cargando…" : `Cargar ${buenas || ""}`}
+              </Btn>
+            </div>
+          </Modal>
+        );
+      })()}
     </div>
   );
 }
