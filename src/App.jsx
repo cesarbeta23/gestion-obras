@@ -193,6 +193,30 @@ function saldoPrestamo(movs, uid) {
     .reduce((s, m) => s + (m.tipo === "abono" ? -Number(m.valor || 0) : Number(m.valor || 0)), 0);
 }
 
+// Anticipo a corte: plata adelantada para descontar del corte siguiente. Va en su
+// propia tabla y con su propio saldo, aparte del préstamo.
+//   lo entregado - lo ya descontado en cortes
+function saldoAnticipo(movs, uid) {
+  return (movs || []).filter(m => m.usuario_id === uid)
+    .reduce((s, m) => s + (m.tipo === "descuento" ? -Number(m.valor || 0) : Number(m.valor || 0)), 0);
+}
+
+// Cuánto se puede descontar en UN corte. Un anticipo que se dio durante ese mismo
+// corte no cuenta: la gracia es adelantarle algo en una quincena floja y recuperarlo
+// en la siguiente, no quitárselo del mismo pago.
+// En las filas de tipo 'anticipo', la columna 'corte' dice en cuál se entregó; si se
+// registró desde Préstamos va vacía y entonces sirve para cualquier corte.
+// Se mira el corte de origen y no la fecha porque un corte se puede revisar días
+// después de cerrado, y ahí la fecha engañaría.
+function pendienteAnticipo(movs, uid, corteLabel) {
+  const mios = (movs || []).filter(m => m.usuario_id === uid);
+  const dados = mios.filter(m => m.tipo === "anticipo" && m.corte !== corteLabel)
+    .reduce((s, m) => s + Number(m.valor || 0), 0);
+  const descontados = mios.filter(m => m.tipo === "descuento")
+    .reduce((s, m) => s + Number(m.valor || 0), 0);
+  return dados - descontados;
+}
+
 // Las filas de ajuste (pasajes, bonificación, día laborado) no causan retenido:
 // el 10% se le saca a lo que se hizo en la obra, no a lo que se le reconoce aparte.
 const esAdjRow = r => !!r.adj || r.el === "Día laborado";
@@ -548,6 +572,7 @@ export default function App() {
   const [liqs, setLiqs] = useState([]);
   const [movPres, setMovPres] = useState([]);   // préstamos y abonos de los instaladores
   const [movRet, setMovRet] = useState([]);     // saldos iniciales y anticipos de retenido
+  const [movAnt, setMovAnt] = useState([]);     // anticipos a corte, con saldo propio
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("obras");
   const [selObra, setSelObra] = useState(null);
@@ -576,28 +601,30 @@ export default function App() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [u, e, o, l, mp, mr] = await Promise.all([
+      const [u, e, o, l, mp, mr, ma] = await Promise.all([
         dbGet("usuarios", "id,nombre,email,rol,oficio,cedula,telefono,banco,cuenta,ajustes"),   // sin PIN
         dbGet("elementos"), dbGet("obras"), dbGet("liquidaciones"),
         dbGet("movimientos_prestamo").catch(() => []),   // si la tabla aún no existe, se sigue sin ella
         dbGet("movimientos_retenido").catch(() => []),   // idem, mientras no se corra retenidos.sql
+        dbGet("movimientos_anticipo").catch(() => []),   // idem, mientras no se corra anticipos.sql
       ]);
       setUsers(ordNom(u));
       setMovPres(Array.isArray(mp) ? mp : []);
       setMovRet(Array.isArray(mr) ? mr : []);
+      setMovAnt(Array.isArray(ma) ? ma : []);
       if (!e.length) { await Promise.all(ELEMENTOS_DEF.map(x => dbUpsert("elementos", x))); setElems(ELEMENTOS_DEF); } else setElems(ordNom(e));
       setObras(ordNom(o.map(mapObra)));
       setLiqs(l.map(mapLiq));
       // Copia en el teléfono, para poder abrir la app en un sótano sin señal
       localSet("datos", { u, e: e.length ? e : ELEMENTOS_DEF, o, l, mp: Array.isArray(mp) ? mp : [],
-        mr: Array.isArray(mr) ? mr : [], fecha: Date.now() });
+        mr: Array.isArray(mr) ? mr : [], ma: Array.isArray(ma) ? ma : [], fecha: Date.now() });
       setDesdeLocal(null);
       despacharCola();          // por si quedaron marcas de la última vez sin señal
     } catch (err) {
       // Sin línea: se abre con lo último que se alcanzó a guardar
       const g = await localGet("datos");
       if (g) {
-        setUsers(ordNom(g.u)); setElems(ordNom(g.e)); setObras(ordNom((g.o || []).map(mapObra))); setLiqs((g.l || []).map(mapLiq)); setMovPres(g.mp || []); setMovRet(g.mr || []);
+        setUsers(ordNom(g.u)); setElems(ordNom(g.e)); setObras(ordNom((g.o || []).map(mapObra))); setLiqs((g.l || []).map(mapLiq)); setMovPres(g.mp || []); setMovRet(g.mr || []); setMovAnt(g.ma || []);
         setDesdeLocal(g.fecha || Date.now());
         toast("Sin señal: mostrando los últimos datos guardados", "info");
       } else {
@@ -935,7 +962,7 @@ export default function App() {
   );
   if (!user) return <LoginScreen login={login} setLogin={setLogin} doLogin={doLogin} err={loginErr} />;
 
-  const sh = { obras, setObras, updateObra, saveObra, elems, setElems, users, setUsers, liqs, setLiqs, movPres, setMovPres, movRet, setMovRet, openM, closeM, modals, toast, user, getPrecio, llevaDetallado, avanceApto, detListo };
+  const sh = { obras, setObras, updateObra, saveObra, elems, setElems, users, setUsers, liqs, setLiqs, movPres, setMovPres, movRet, setMovRet, movAnt, setMovAnt, openM, closeM, modals, toast, user, getPrecio, llevaDetallado, avanceApto, detListo };
 
   return (
     <div style={{ fontFamily: "system-ui,sans-serif", maxWidth: 920, margin: "0 auto", padding: "1rem", background: C.g0, minHeight: "100vh" }}>
@@ -971,7 +998,7 @@ export default function App() {
         if (!o || !p || !a) { toast("Ese apartamento ya no está en la obra", "error"); return; }
         setSelObra(o); setSelPiso(p); setSelApto(a); setView("apto");
       }} />}
-      {view === "reportes" && esOficina(user) && <Reportes obras={obras} elems={elems} users={users} user={user} getPrecio={getPrecio} avanceObra={avanceObra} liqs={liqs} movPres={movPres} />}
+      {view === "reportes" && esOficina(user) && <Reportes obras={obras} elems={elems} users={users} user={user} getPrecio={getPrecio} avanceObra={avanceObra} liqs={liqs} movPres={movPres} movAnt={movAnt} />}
       {view === "prestamos" && user.rol === ROLES.SA && <Prestamos {...sh} />}
       {view === "retenidos" && user.rol === ROLES.SA && <Retenidos {...sh} liqs={liqs} />}
       {view === "users" && esOficina(user) && <Usuarios {...sh} />}
@@ -3082,7 +3109,7 @@ function Elementos({ elems, setElems, obras = [], openM, closeM, modals }) {
 }
 
 // ── LIQUIDACIÓN ───────────────────────────────────────────
-function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPres, setMovPres, getPrecio, updateObra, irAlApto, toast }) {
+function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPres, setMovPres, movAnt = [], setMovAnt, getPrecio, updateObra, irAlApto, toast }) {
   const cortes = getCorteFechas();
   // Arranca en el corte donde cae hoy, no en el primero de la lista: la lista trae
   // también los que vienen, y abrir en una quincena futura hace creer que no hay nada.
@@ -3235,9 +3262,76 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
   const [reabrirM, setReabrirM] = useState(null);   // corte que se está por reabrir
   const [quitConf, setQuitConf] = useState(null);   // fila armada para quitar (segundo clic)
   const [desaprobar, setDesaprobar] = useState(null);   // corte armado para quitarle la aprobación
+  const [dando, setDando] = useState(null);             // { instId, valor } entregando anticipo
   const abonoDelCorte = iid => (movPres || [])
     .filter(m => m.usuario_id === iid && m.tipo === "abono" && m.corte === corte.label)
     .reduce((s, m) => s + Number(m.valor || 0), 0);
+
+  // Lo ya descontado de anticipo en ESTE corte, y lo que queda pendiente de antes.
+  const anticipoDelCorte = iid => (movAnt || [])
+    .filter(m => m.usuario_id === iid && m.tipo === "descuento" && m.corte === corte.label)
+    .reduce((s, m) => s + Number(m.valor || 0), 0);
+  // Tope de este corte = lo que queda por descontar más lo que ya se descontó acá,
+  // que es justamente lo que se está decidiendo.
+  const anticipoPendiente = iid => pendienteAnticipo(movAnt, iid, corte.label) + anticipoDelCorte(iid);
+
+  // Entregar un anticipo desde la misma revisión del corte. Queda marcado con este
+  // corte, así que no se puede descontar acá: aparece para descontar del siguiente.
+  async function darAnticipo(inst, valor) {
+    const val = Math.round(Number(valor) || 0);
+    if (val <= 0) { toast("El valor debe ser mayor que cero", "err"); return; }
+    const mov = {
+      id: `ma${Date.now()}${Math.floor(Math.random() * 100000)}`, usuario_id: inst.id,
+      tipo: "anticipo", valor: val, fecha: new Date().toISOString().slice(0, 10),
+      concepto: `Anticipo entregado en el corte ${corte.label}`,
+      corte: corte.label, registrado_por: user.nombre,
+    };
+    const r = await dbInsert("movimientos_anticipo", mov);
+    if (!r.ok) {
+      console.error("anticipo:", r.status, await r.text().catch(() => ""));
+      toast("No se pudo guardar. ¿Ya corriste anticipos.sql?", "err"); return;
+    }
+    setMovAnt(x => [...x, mov]);
+    setDando(null);
+    toast(`Anticipo de ${fmt(val)} entregado. Se descuenta a partir del próximo corte.`, "ok");
+  }
+
+  // Mismo camino del abono: se corrige reemplazando, para que una liquidación cerrada
+  // nunca cambie de número y el saldo del anticipo se pueda recalcular solo.
+  async function aplicarAnticipo(inst, valor, ev) {
+    const actual = anticipoDelCorte(inst.id);
+    const nuevo = Math.max(0, Number(valor) || 0);
+    if (nuevo === actual) return;
+    const cerr = cerrada(inst.id);
+    if (!cerr) return;
+    if (cerr.estado === "pagado") { toast("Ese corte ya está aprobado: el anticipo no se cambia desde aquí", "err"); if (ev) ev.target.value = actual || ""; return; }
+    const tope = anticipoPendiente(inst.id);
+    if (nuevo > tope) { toast(`Solo quedan ${fmt(tope)} de anticipo por descontar`, "err"); if (ev) ev.target.value = actual || ""; return; }
+    // Entre abono y anticipo no se pueden llevar más de lo que da el corte: si no,
+    // el instalador terminaría con un pago negativo.
+    const abono = abonoDelCorte(inst.id);
+    if (nuevo + abono > Number(cerr.total || 0)) {
+      toast(`Entre abono y anticipo no se puede pasar del total del corte (${fmt(cerr.total)})`, "err");
+      if (ev) ev.target.value = actual || ""; return;
+    }
+    const viejos = (movAnt || []).filter(m => m.usuario_id === inst.id && m.tipo === "descuento" && m.corte === corte.label);
+    for (const m of viejos) {
+      const rd = await dbDel("movimientos_anticipo", m.id);
+      if (!rd.ok) { toast("No se pudo corregir el anticipo anterior", "err"); return; }
+    }
+    let creado = null;
+    if (nuevo > 0) {
+      creado = {
+        id: `ma${Date.now()}${Math.floor(Math.random() * 100000)}`, usuario_id: inst.id, tipo: "descuento",
+        valor: nuevo, fecha: new Date().toISOString().slice(0, 10),
+        concepto: `Descontado en el corte ${corte.label}`, corte: corte.label, registrado_por: user.nombre,
+      };
+      const ri = await dbInsert("movimientos_anticipo", creado);
+      if (!ri.ok) { toast("No se pudo guardar el anticipo", "err"); setMovAnt(x => x.filter(m => !viejos.some(v2 => v2.id === m.id))); return; }
+    }
+    setMovAnt(x => [...x.filter(m => !viejos.some(v2 => v2.id === m.id)), ...(creado ? [creado] : [])]);
+    toast(nuevo > 0 ? `Anticipo de ${fmt(nuevo)} descontado` : "Descuento de anticipo retirado", "ok");
+  }
 
   async function aplicarAbono(inst, valor, ev) {
     const actual = abonoDelCorte(inst.id);
@@ -3249,7 +3343,13 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
     // Lo que ya está abonado en este corte no cuenta como deuda para el tope
     const tope = saldoPrestamo(movPres, inst.id) + actual;
     if (nuevo > tope) { toast(`No puede abonar más de lo que debe (${fmt(tope)})`, "err"); if (ev) ev.target.value = actual || ""; return; }
-    if (nuevo > Number(cerr.total || 0)) { toast(`El abono no puede superar el total del corte (${fmt(cerr.total)})`, "err"); if (ev) ev.target.value = actual || ""; return; }
+    const antic = anticipoDelCorte(inst.id);
+    if (nuevo + antic > Number(cerr.total || 0)) {
+      toast(antic > 0
+        ? `Entre abono y anticipo no se puede pasar del total del corte (${fmt(cerr.total)})`
+        : `El abono no puede superar el total del corte (${fmt(cerr.total)})`, "err");
+      if (ev) ev.target.value = actual || ""; return;
+    }
 
     // Se corrige reemplazando: se borran los abonos de este corte y se pone el nuevo
     const viejos = (movPres || []).filter(m => m.usuario_id === inst.id && m.tipo === "abono" && m.corte === corte.label);
@@ -3285,9 +3385,18 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
       const rd = await dbDel("movimientos_prestamo", m.id);
       if (!rd.ok) { toast("No se pudo retirar el abono: el corte no se reabrió", "err"); return; }
     }
+    // El descuento de anticipo también se retira: era una decisión de pago sobre un
+    // corte que deja de existir. Si se quedara, el saldo del anticipo bajaría sin
+    // respaldo y esa plata se perdería de vista.
+    const antics = (movAnt || []).filter(m => m.usuario_id === liq.inst_id && m.tipo === "descuento" && m.corte === liq.corte);
+    for (const m of antics) {
+      const rd = await dbDel("movimientos_anticipo", m.id);
+      if (!rd.ok) { toast("No se pudo retirar el anticipo: el corte no se reabrió", "err"); return; }
+    }
     const r = await dbDel("liquidaciones", liq.id);
     if (!r.ok) { toast("No se pudo reabrir el corte", "err"); return; }
     if (abonos.length) setMovPres(x => x.filter(m => !abonos.some(v => v.id === m.id)));
+    if (antics.length) setMovAnt(x => x.filter(m => !antics.some(v => v.id === m.id)));
     setLiqs(x => x.filter(l => l.id !== liq.id));
     setReabrirM(null);
     toast("Corte reabierto: vuelve a calcularse con todo lo marcado", "ok");
@@ -3376,11 +3485,15 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
     // el PDF y el visor —que es lo que recibe el instalador— también lo muestren: antes
     // solo salía en el recuadro de gerencia y el papel decía otro número.
     const abono = cerr ? abonoDelCorte(inst.id) : 0;
+    // Lo descontado de anticipo en este corte, y lo que quedaría por descontar. Van
+    // al PDF y al visor, que es lo que recibe el instalador.
+    const antic = cerr ? anticipoDelCorte(inst.id) : 0;
+    const anticPend = cerr ? anticipoPendiente(inst.id) - antic : 0;
     // "otros" se lee en vivo de los ajustes, no de la foto del corte: así se puede
     // digitar antes o después de cerrar y el pago siempre queda con el valor bueno.
     const ajI = ajusteDe(users, inst.id, corte.label);
-    const res = { ...base, abono, otros: ajI.otros, otrosNota: ajI.otrosNota,
-                  neto: Number(base.total || 0) - abono + ajI.otros };
+    const res = { ...base, abono, antic, anticPend, otros: ajI.otros, otrosNota: ajI.otrosNota,
+                  neto: Number(base.total || 0) - abono - antic + ajI.otros };
     return { inst, cerr, rows, res, arr: cerr ? null : arrastreDe(inst.id) };
   });
 
@@ -3517,6 +3630,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
       ...((res.abono > 0 || res.otros)
         ? [["Total del corte", fmt(res.total)],
            ...(res.abono > 0 ? [["Abono a préstamo", `- ${fmt(res.abono)}`]] : []),
+           ...(res.antic > 0 ? [["Anticipo a corte", `- ${fmt(res.antic)}`]] : []),
            ["Valor a pagar", fmt(res.neto ?? (res.total - (res.abono || 0)))]]
         : [["Total a pagar", fmt(res.total)]]),
     ];
@@ -3582,7 +3696,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
             <tbody>{expM.rows.filter(r => !r.adj).map((r, i) => <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : C.g0 }}><td style={{ padding: "5px 8px" }}>{r.obra}</td><td style={{ padding: "5px 8px" }}>{r.apto}</td><td style={{ padding: "5px 8px" }}>{r.el}{r.desc && <span style={{ color: "#8E8E93", fontStyle: "italic" }}> — {r.desc}</span>}</td><td style={{ padding: "5px 8px", textAlign: "center" }}>{r.cant}</td><td style={{ padding: "5px 8px", textAlign: "right" }}>{fmt(r.precio)}</td><td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700 }}>{fmt(r.precio * r.cant)}</td><td style={{ padding: "5px 8px" }}>{r.fecha}</td></tr>)}</tbody>
           </table>
           <div style={{ background: C.g0, borderRadius: 8, padding: "12px 16px" }}>
-            {[["Total bruto", expM.res.bruto], ["Retención 10%", -expM.res.ret], ["Subtotal", expM.res.sub], expM.res.pas > 0 ? ["Pasajes", expM.res.pas] : null, expM.res.bon > 0 ? ["Bonificación", expM.res.bon] : null, ...lineasDias(expM.rows), ...(expM.res.otros ? [[`Otros cortes${expM.res.otrosNota ? ` · ${expM.res.otrosNota}` : ""}`, expM.res.otros]] : []), ...((expM.res.abono > 0 || expM.res.otros) ? [["Total del corte", expM.res.total], ...(expM.res.abono > 0 ? [["Abono a préstamo", -expM.res.abono]] : []), ["Valor a pagar", expM.res.neto]] : [["Total a pagar", expM.res.total]])].filter(Boolean).map(([l, v], i, a) => (
+            {[["Total bruto", expM.res.bruto], ["Retención 10%", -expM.res.ret], ["Subtotal", expM.res.sub], expM.res.pas > 0 ? ["Pasajes", expM.res.pas] : null, expM.res.bon > 0 ? ["Bonificación", expM.res.bon] : null, ...lineasDias(expM.rows), ...(expM.res.otros ? [[`Otros cortes${expM.res.otrosNota ? ` · ${expM.res.otrosNota}` : ""}`, expM.res.otros]] : []), ...((expM.res.abono > 0 || expM.res.antic > 0 || expM.res.otros) ? [["Total del corte", expM.res.total], ...(expM.res.abono > 0 ? [["Abono a préstamo", -expM.res.abono]] : []), ...(expM.res.antic > 0 ? [["Anticipo a corte", -expM.res.antic]] : []), ["Valor a pagar", expM.res.neto]] : [["Total a pagar", expM.res.total]])].filter(Boolean).map(([l, v], i, a) => (
               <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: i < a.length - 1 ? `1px solid ${C.g2}` : "none", fontWeight: i === a.length - 1 ? 700 : 400, fontSize: i === a.length - 1 ? 16 : 13, color: i === a.length - 1 ? C.gnD : C.bk, marginTop: i === a.length - 1 ? 6 : 0 }}><span>{l}</span><span>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>
             ))}
           </div>
@@ -3760,7 +3874,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                 </div>
               )}
               {rows.length > 0 && <div style={{ background: C.g0, borderRadius: 8, padding: "10px 14px", fontSize: 13, marginBottom: 12 }}>
-                {[[["Total bruto", res.bruto]], [["Retención 10%", -res.ret]], [["Subtotal", res.sub]], res.pas > 0 ? [["Pasajes", res.pas]] : [], res.bon > 0 ? [["Bonificación", res.bon]] : [], lineasDias(rows), res.otros ? [[`Otros cortes${res.otrosNota ? ` · ${res.otrosNota}` : ""}`, res.otros]] : [], res.abono > 0 ? [["Abono a préstamo", -res.abono]] : []].flat().filter(Boolean).map(([l, v]) => (
+                {[[["Total bruto", res.bruto]], [["Retención 10%", -res.ret]], [["Subtotal", res.sub]], res.pas > 0 ? [["Pasajes", res.pas]] : [], res.bon > 0 ? [["Bonificación", res.bon]] : [], lineasDias(rows), res.otros ? [[`Otros cortes${res.otrosNota ? ` · ${res.otrosNota}` : ""}`, res.otros]] : [], res.abono > 0 ? [["Abono a préstamo", -res.abono]] : [], res.antic > 0 ? [["Anticipo a corte", -res.antic]] : []].flat().filter(Boolean).map(([l, v]) => (
                   <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: `1px solid ${C.g2}` }}><span style={{ color: C.g5 }}>{l}</span><span style={{ fontWeight: 500 }}>{v < 0 ? `— ${fmt(Math.abs(v))}` : fmt(v)}</span></div>
                 ))}
                 <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0 0", fontWeight: 700, fontSize: 16, color: C.gnD }}><span>Total a pagar</span><span>{fmt(res.neto ?? res.total)}</span></div>
@@ -3845,12 +3959,16 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
               {cerr && (() => {
                 const deuda = saldoPrestamo(movPres, inst.id);
                 const abonado = abonoDelCorte(inst.id);
+                const anticD = anticipoDelCorte(inst.id);
+                const anticP = anticipoPendiente(inst.id) - anticD;   // lo que quedaría pendiente
                 const pagado = cerr.estado === "pagado";
-                const neto = Number(cerr.total || 0) - abonado;
-                // El recuadro es solo para el préstamo. Si la persona no debe nada, sobra:
-                // el estado ya lo dice el badge de arriba y el botón de pago vive abajo,
-                // con los demás. Antes repetía "pendiente de pago" y el mismo monto.
-                if (!abonado && deuda <= 0) return null;
+                const neto = Number(cerr.total || 0) - abonado - anticD;
+                // El recuadro es para el préstamo y el anticipo. Si no debe nada ni tiene
+                // anticipo, sobra: el estado ya lo dice el badge de arriba y el botón de
+                // pago vive abajo. Antes repetía "pendiente de pago" y el mismo monto.
+                // Si es gerencia y el corte no está aprobado, el recuadro siempre se muestra:
+                // es donde se entrega el anticipo, y eso puede pasar sin que haya deuda.
+                if (!esSuper || pagado) { if (!abonado && deuda <= 0 && !anticD && anticP <= 0) return null; }
                 return (
                   <div style={{ marginTop: 10, padding: "10px 14px", borderRadius: 10,
                     background: pagado ? C.gnL : "#EFF6FF", border: `1px solid ${pagado ? "#BBF7D0" : "#BFDBFE"}` }}>
@@ -3863,14 +3981,21 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
 
                     {/* El desglose solo tiene sentido si hay algo que descontar. Sin abono,
                         las tres líneas repiten el mismo número que ya está en el resumen. */}
-                    {abonado > 0 && (
+                    {(abonado > 0 || anticD > 0) && (
                       <div style={{ display: "grid", gap: 3, fontSize: 13, maxWidth: 420, marginLeft: "auto" }}>
                         <div style={{ display: "flex", justifyContent: "space-between" }}>
                           <span style={{ color: C.g5 }}>Total a pagar</span><strong>{fmt(cerr.total)}</strong>
                         </div>
-                        <div style={{ display: "flex", justifyContent: "space-between", color: C.rd }}>
-                          <span>Abono a préstamo</span><strong>− {fmt(abonado)}</strong>
-                        </div>
+                        {abonado > 0 && (
+                          <div style={{ display: "flex", justifyContent: "space-between", color: C.rd }}>
+                            <span>Abono a préstamo</span><strong>− {fmt(abonado)}</strong>
+                          </div>
+                        )}
+                        {anticD > 0 && (
+                          <div style={{ display: "flex", justifyContent: "space-between", color: C.rd }}>
+                            <span>Anticipo a corte</span><strong>− {fmt(anticD)}</strong>
+                          </div>
+                        )}
                         <div style={{ display: "flex", justifyContent: "space-between", borderTop: `1px solid ${C.g2}`, paddingTop: 3, fontWeight: 800 }}>
                           <span>Valor a pagar neto</span><span style={{ color: C.gnD }}>{fmt(neto)}</span>
                         </div>
@@ -3878,12 +4003,56 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                     )}
 
                     {esSuper && !pagado && (
-                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 10, justifyContent: "flex-end" }}>
-                        <span style={{ fontSize: 13, color: C.g5 }}>Abonar al préstamo</span>
-                        <input type="number" min="0" placeholder="0" defaultValue={abonado || ""}
-                          onBlur={e => aplicarAbono(inst, Number(e.target.value) || 0, e)}
-                          style={{ width: 120, padding: "6px 8px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 13, textAlign: "right" }} />
-                      </div>
+                      <>
+                        {deuda > 0 && (
+                          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 10, justifyContent: "flex-end" }}>
+                            <span style={{ fontSize: 13, color: C.g5 }}>Abonar al préstamo</span>
+                            <input type="number" min="0" placeholder="0" defaultValue={abonado || ""}
+                              onBlur={e => aplicarAbono(inst, Number(e.target.value) || 0, e)}
+                              style={{ width: 120, padding: "6px 8px", border: `1px solid ${C.g2}`, borderRadius: 6, fontSize: 13, textAlign: "right" }} />
+                          </div>
+                        )}
+                        {/* DESCONTAR: recupera un anticipo de un corte anterior. Resta del pago. */}
+                        {(anticD > 0 || anticP > 0) && (
+                          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8, justifyContent: "flex-end" }}>
+                            {anticP > 0 && (
+                              <span onClick={() => aplicarAnticipo(inst, Math.min(anticipoPendiente(inst.id), Number(cerr.total || 0) - abonado))}
+                                title="Descontar todo lo que se pueda de una"
+                                style={{ ...bdg("red"), fontSize: 11, cursor: "pointer" }}>
+                                pendiente {fmt(anticP)} · descontar todo
+                              </span>
+                            )}
+                            <span style={{ fontSize: 13, color: C.rd, fontWeight: 600 }}>↓ Descontar anticipo</span>
+                            <input type="number" min="0" placeholder="0" defaultValue={anticD || ""}
+                              onBlur={e => aplicarAnticipo(inst, Number(e.target.value) || 0, e)}
+                              style={{ width: 120, padding: "6px 8px", border: `1px solid #FECACA`, borderRadius: 6, fontSize: 13, textAlign: "right" }} />
+                          </div>
+                        )}
+
+                        {/* ENTREGAR: plata que sale hoy. Queda marcada con este corte, así que
+                            no se puede descontar acá; aparece para el siguiente. Va en caja
+                            aparte y con otro color para que no se confunda con la de arriba. */}
+                        <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end" }}>
+                          {dando?.instId !== inst.id ? (
+                            <span onClick={() => setDando({ instId: inst.id, valor: "" })}
+                              style={{ ...bdg("amber"), fontSize: 11, cursor: "pointer" }}>↑ Dar anticipo</span>
+                          ) : (
+                            <div style={{ background: C.amL, border: `1px solid #FDE68A`, borderRadius: 8, padding: "9px 12px", maxWidth: 420 }}>
+                              <div style={{ fontSize: 11.5, color: "#B45309", marginBottom: 7, lineHeight: 1.4 }}>
+                                <strong>Entregar plata hoy.</strong> No toca el pago de este corte:
+                                queda pendiente y se descuenta del próximo.
+                              </div>
+                              <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap" }}>
+                                <input type="number" min="0" placeholder="0" autoFocus value={dando.valor}
+                                  onChange={e => setDando(d => ({ ...d, valor: e.target.value }))}
+                                  style={{ width: 120, padding: "6px 8px", border: `1px solid #FDE68A`, borderRadius: 6, fontSize: 13, textAlign: "right" }} />
+                                <Btn size="sm" onClick={() => setDando(null)}>Cancelar</Btn>
+                                <Btn size="sm" variant="amber" onClick={() => darAnticipo(inst, dando.valor)}>Entregar</Btn>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </>
                     )}
                     {esSuper && pagado && <div style={{ fontSize: 11.5, color: C.g5, marginTop: 6, textAlign: "right" }}>
                       Corte aprobado. Para cambiarle algo, quítale la aprobación y ahí se puede reabrir.
@@ -4047,7 +4216,7 @@ function Historial({ liqs, setLiqs, user, users, toast }) {
 }
 
 // ── REPORTES ──────────────────────────────────────────────
-function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [], movPres = [] }) {
+function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [], movPres = [], movAnt = [] }) {
   const [tipo, setTipo] = useState("resumen");
   const [obraId, setObraId] = useState("");
   const [instId, setInstId] = useState("");
@@ -4189,14 +4358,19 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
         .reduce((x, m) => x + Number(m.valor || 0), 0);
       // Valor neto de cortes viejos que todavía se llevan en Excel: se digita en la
       // liquidación y se suma acá, que es la hoja de donde sale el pago.
+      // Lo mismo con el anticipo a corte: vive en movimientos_anticipo amarrado a este
+      // corte, y esta hoja es la que manda la plata al banco.
+      const antic = (movAnt || [])
+        .filter(m => m.usuario_id === l.inst_id && m.tipo === "descuento" && m.corte === label)
+        .reduce((x, m) => x + Number(m.valor || 0), 0);
       const ajo = ajusteDe(users, l.inst_id, label);
       return {
         id: l.id, inst: l.inst_nombre || "—", cedula: l.inst_cedula || "",
         obras: obrasDeEl, causado: Number(l.bruto || 0), ret: Number(l.ret || 0),
         sub: Number(l.sub || 0), pas: Number(l.pas || 0), bon: Number(l.bon || 0),
         dias, total: Number(l.total || 0),
-        abono, otros: ajo.otros, otrosNota: ajo.otrosNota,
-        neto: Number(l.total || 0) - abono + ajo.otros,
+        abono, antic, otros: ajo.otros, otrosNota: ajo.otrosNota,
+        neto: Number(l.total || 0) - abono - antic + ajo.otros,
       };
     // Alfabético por instalador: así se lee igual en pantalla, en el PDF y en el Excel,
     // y cuadra con cualquier lista de pago ordenada por nombre.
@@ -4205,7 +4379,8 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
     return {
       filas,
       tot: { causado: suma("causado"), ret: suma("ret"), sub: suma("sub"), pas: suma("pas"), bon: suma("bon"),
-             dias: suma("dias"), total: suma("total"), abono: suma("abono"), otros: suma("otros"), neto: suma("neto") },
+             dias: suma("dias"), total: suma("total"), abono: suma("abono"), antic: suma("antic"),
+             otros: suma("otros"), neto: suma("neto") },
     };
   }
 
@@ -4358,6 +4533,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
       ...((res.abono > 0 || res.otros)
         ? [["Total del corte", fmt(res.total)],
            ...(res.abono > 0 ? [["Abono a préstamo", `- ${fmt(res.abono)}`]] : []),
+           ...(res.antic > 0 ? [["Anticipo a corte", `- ${fmt(res.antic)}`]] : []),
            ["Valor a pagar", fmt(res.neto ?? (res.total - (res.abono || 0)))]]
         : [["Total a pagar", fmt(res.total)]]),
     ];
@@ -4753,17 +4929,17 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
             {label && porInst && (
               <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
                 <Btn onClick={() => pdfTabla("Pagos del corte por instalador", label,
-                  ["Instalador", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonif.", "Días", "Total corte", "Abono préstamo", "Otros cortes", "Neto a pagar"],
-                  [...fInst.map(f => [f.inst, f.obras.join(", ") || "—", fmt(f.causado), `−${fmt(f.ret)}`, fmt(f.sub), f.pas ? `+${fmt(f.pas)}` : "—", f.bon ? `+${fmt(f.bon)}` : "—", f.dias ? `+${fmt(f.dias)}` : "—", fmt(f.total), f.abono ? `−${fmt(f.abono)}` : "—", f.otros ? `+${fmt(f.otros)}` : "—", fmt(f.neto)]),
-                   ["TOTALES", "", fmt(tInst.causado), `−${fmt(tInst.ret)}`, fmt(tInst.sub), `+${fmt(tInst.pas)}`, `+${fmt(tInst.bon)}`, `+${fmt(tInst.dias)}`, fmt(tInst.total), `−${fmt(tInst.abono)}`, `+${fmt(tInst.otros)}`, fmt(tInst.neto)]],
+                  ["Instalador", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonif.", "Días", "Total corte", "Abono préstamo", "Anticipo", "Otros cortes", "Neto a pagar"],
+                  [...fInst.map(f => [f.inst, f.obras.join(", ") || "—", fmt(f.causado), `−${fmt(f.ret)}`, fmt(f.sub), f.pas ? `+${fmt(f.pas)}` : "—", f.bon ? `+${fmt(f.bon)}` : "—", f.dias ? `+${fmt(f.dias)}` : "—", fmt(f.total), f.abono ? `−${fmt(f.abono)}` : "—", f.antic ? `−${fmt(f.antic)}` : "—", f.otros ? `+${fmt(f.otros)}` : "—", fmt(f.neto)]),
+                   ["TOTALES", "", fmt(tInst.causado), `−${fmt(tInst.ret)}`, fmt(tInst.sub), `+${fmt(tInst.pas)}`, `+${fmt(tInst.bon)}`, `+${fmt(tInst.dias)}`, fmt(tInst.total), `−${fmt(tInst.abono)}`, `−${fmt(tInst.antic)}`, `+${fmt(tInst.otros)}`, fmt(tInst.neto)]],
                   `Pagos corte por instalador ${label}.pdf`,
-                  { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right" }, 8: { halign: "right" }, 9: { halign: "right" }, 10: { halign: "right" }, 11: { halign: "right", fontStyle: "bold" } })}>📄 PDF</Btn>
+                  { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right" }, 8: { halign: "right" }, 9: { halign: "right" }, 10: { halign: "right" }, 11: { halign: "right" }, 12: { halign: "right", fontStyle: "bold" } })}>📄 PDF</Btn>
                 <Btn variant="success" onClick={() => excel("Pagos corte instalador", [
                   [`Pagos del corte por instalador — ${label}`], [`Generado el ${hoyStr()}`], [],
-                  ["Instalador", "Cédula", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonificación", "Días", "Total corte", "Abono préstamo", "Otros cortes", "Concepto otros", "NETO A PAGAR"],
-                  ...fInst.map(f => [f.inst, f.cedula, f.obras.join(", "), f.causado, -f.ret, f.sub, f.pas, f.bon, f.dias, f.total, -f.abono, f.otros, f.otrosNota || "", f.neto]),
-                  [], ["TOTALES", "", "", tInst.causado, -tInst.ret, tInst.sub, tInst.pas, tInst.bon, tInst.dias, tInst.total, -tInst.abono, tInst.otros, "", tInst.neto],
-                ], [26, 14, 30, 16, 14, 16, 14, 14, 12, 16, 16, 16, 24, 18], [3, 4, 5, 6, 7, 8, 9, 10, 11, 13], `Pagos corte por instalador ${label}.xlsx`)}>📊 Excel</Btn>
+                  ["Instalador", "Cédula", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonificación", "Días", "Total corte", "Abono préstamo", "Anticipo a corte", "Otros cortes", "Concepto otros", "NETO A PAGAR"],
+                  ...fInst.map(f => [f.inst, f.cedula, f.obras.join(", "), f.causado, -f.ret, f.sub, f.pas, f.bon, f.dias, f.total, -f.abono, -f.antic, f.otros, f.otrosNota || "", f.neto]),
+                  [], ["TOTALES", "", "", tInst.causado, -tInst.ret, tInst.sub, tInst.pas, tInst.bon, tInst.dias, tInst.total, -tInst.abono, -tInst.antic, tInst.otros, "", tInst.neto],
+                ], [26, 14, 30, 16, 14, 16, 14, 14, 12, 16, 16, 16, 16, 24, 18], [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14], `Pagos corte por instalador ${label}.xlsx`)}>📊 Excel</Btn>
               </div>
             )}
             {label && !porInst && obrasCorte.length > 0 && (
@@ -4800,7 +4976,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
               <div style={{ ...card, padding: 0, display: "block", maxWidth: "100%", minWidth: 0, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead><tr style={{ background: C.orL }}>
-                    {["Instalador", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonif.", "Días", "Total corte", "Abono préstamo", "Otros cortes", "NETO A PAGAR"].map(h => (
+                    {["Instalador", "Obras", "Causado", "Retenido 10%", "Subtotal", "Pasajes", "Bonif.", "Días", "Total corte", "Abono préstamo", "Anticipo", "Otros cortes", "NETO A PAGAR"].map(h => (
                       <th key={h} style={{ padding: "7px 10px", textAlign: h === "Instalador" || h === "Obras" ? "left" : "right", fontSize: 10, fontWeight: 700, color: C.orD, textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr></thead>
@@ -4817,11 +4993,12 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
                         <td style={{ padding: "6px 10px", textAlign: "right", color: f.dias ? C.or : C.g3 }}>{f.dias ? `+${fmt(f.dias)}` : "—"}</td>
                         <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmt(f.total)}</td>
                         <td style={{ padding: "6px 10px", textAlign: "right", color: f.abono ? C.rd : C.g3 }}>{f.abono ? `−${fmt(f.abono)}` : "—"}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", color: f.antic ? C.rd : C.g3 }}>{f.antic ? `−${fmt(f.antic)}` : "—"}</td>
                         <td style={{ padding: "6px 10px", textAlign: "right", color: f.otros ? C.or : C.g3 }} title={f.otrosNota || ""}>{f.otros ? `+${fmt(f.otros)}` : "—"}</td>
                         <td style={{ padding: "6px 10px", textAlign: "right", fontWeight: 700, color: C.gnD }}>{fmt(f.neto)}</td>
                       </tr>
                     ))}
-                    {fInst.length === 0 && <tr><td colSpan={12} style={{ padding: "14px 10px", color: C.g4, fontSize: 13 }}>Nadie tiene liquidación cerrada en este corte.</td></tr>}
+                    {fInst.length === 0 && <tr><td colSpan={13} style={{ padding: "14px 10px", color: C.g4, fontSize: 13 }}>Nadie tiene liquidación cerrada en este corte.</td></tr>}
                     <tr style={{ background: C.g1, fontWeight: 700 }}>
                       <td colSpan={2} style={{ padding: "8px 10px", textAlign: "right" }}>TOTALES</td>
                       <td style={{ padding: "8px 10px", textAlign: "right" }}>{fmt(tInst.causado)}</td>
@@ -4832,6 +5009,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
                       <td style={{ padding: "8px 10px", textAlign: "right", color: C.or }}>+{fmt(tInst.dias)}</td>
                       <td style={{ padding: "8px 10px", textAlign: "right" }}>{fmt(tInst.total)}</td>
                       <td style={{ padding: "8px 10px", textAlign: "right", color: C.rd }}>−{fmt(tInst.abono)}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right", color: C.rd }}>−{fmt(tInst.antic)}</td>
                       <td style={{ padding: "8px 10px", textAlign: "right", color: C.or }}>+{fmt(tInst.otros)}</td>
                       <td style={{ padding: "8px 10px", textAlign: "right", color: C.gnD }}>{fmt(tInst.neto)}</td>
                     </tr>
@@ -4888,7 +5066,7 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
 // Un solo saldo consolidado por instalador. El desembolso no entra al corte
 // (va como egreso aparte); lo que toca el corte es el abono, que se descuenta
 // del total a pagar y se registra aquí automáticamente al cerrar la liquidación.
-function Prestamos({ users, movPres, setMovPres, user, toast, liqs }) {
+function Prestamos({ users, movPres, setMovPres, movAnt = [], setMovAnt, user, toast, liqs }) {
   const [form, setForm] = useState(null);      // { usuario_id, tipo, valor, concepto, fecha }
   const [verDe, setVerDe] = useState(null);    // instalador cuyo historial se está mirando
   const [busca, setBusca] = useState("");
@@ -4897,15 +5075,22 @@ function Prestamos({ users, movPres, setMovPres, user, toast, liqs }) {
   const INs = users.filter(u => u.rol === ROLES.IN);
   const hoy = () => new Date().toISOString().slice(0, 10);
 
-  const filas = INs.map(u => ({ u, saldo: saldoPrestamo(movPres, u.id) }))
-    .filter(f => f.saldo !== 0 || (movPres || []).some(m => m.usuario_id === f.u.id))
-    .sort((a, b) => b.saldo - a.saldo);
+  const filas = INs.map(u => ({ u, saldo: saldoPrestamo(movPres, u.id), antic: saldoAnticipo(movAnt, u.id) }))
+    .filter(f => f.saldo !== 0 || f.antic !== 0
+      || (movPres || []).some(m => m.usuario_id === f.u.id)
+      || (movAnt || []).some(m => m.usuario_id === f.u.id))
+    .sort((a, b) => b.saldo - a.saldo || b.antic - a.antic);
+  const totalAntic = filas.reduce((s, f) => s + Math.max(0, f.antic), 0);
   const q = busca.trim().toLowerCase();
   const visibles = q ? filas.filter(f => (f.u.nombre || "").toLowerCase().includes(q)) : filas;
   const totalDeuda = filas.reduce((s, f) => s + Math.max(0, f.saldo), 0);
 
-  const movsDe = uid => (movPres || []).filter(m => m.usuario_id === uid)
-    .sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")) || String(b.id).localeCompare(String(a.id)));
+  // Los dos tipos de movimiento se muestran juntos, marcados con de qué tabla salen,
+  // para no tener que mirar en dos lados quién debe qué.
+  const movsDe = uid => [
+    ...(movPres || []).filter(m => m.usuario_id === uid).map(m => ({ ...m, _t: "pres" })),
+    ...(movAnt || []).filter(m => m.usuario_id === uid).map(m => ({ ...m, _t: "ant" })),
+  ].sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")) || String(b.id).localeCompare(String(a.id)));
 
   function abrir(tipo, uid) {
     setForm({ usuario_id: uid || "", tipo, valor: "", concepto: tipo === "prestamo" ? "" : "Abono", fecha: hoy() });
@@ -4920,25 +5105,34 @@ function Prestamos({ users, movPres, setMovPres, user, toast, liqs }) {
       if (val > deuda) { toast(`No puede abonar más de lo que debe (${fmt(deuda)})`, "err"); return; }
     }
     setSaving(true);
+    // El anticipo a corte vive en su propia tabla: si entrara a movimientos_prestamo,
+    // le subiría la deuda del préstamo a alguien que no la debe.
+    const esAnt = form.tipo === "anticipo";
+    const tabla = esAnt ? "movimientos_anticipo" : "movimientos_prestamo";
     const mov = {
-      id: `mp${Date.now()}${Math.floor(Math.random() * 1000)}`,
+      id: `${esAnt ? "ma" : "mp"}${Date.now()}${Math.floor(Math.random() * 100000)}`,
       usuario_id: form.usuario_id, tipo: form.tipo, valor: val,
       fecha: form.fecha || hoy(), concepto: (form.concepto || "").trim() || null,
       corte: null, registrado_por: user.nombre,
     };
-    const r = await dbInsert("movimientos_prestamo", mov);
+    const r = await dbInsert(tabla, mov);
     setSaving(false);
-    if (!r.ok) { console.error("prestamo:", r.status, await r.text().catch(() => "")); toast("No se pudo guardar", "err"); return; }
-    setMovPres(x => [...x, mov]);
+    if (!r.ok) {
+      console.error(tabla + ":", r.status, await r.text().catch(() => ""));
+      toast(esAnt ? "No se pudo guardar. ¿Ya corriste anticipos.sql?" : "No se pudo guardar", "err");
+      return;
+    }
+    (esAnt ? setMovAnt : setMovPres)(x => [...x, mov]);
     setForm(null);
-    toast(form.tipo === "prestamo" ? "Préstamo registrado" : "Abono registrado", "ok");
+    toast(esAnt ? "Anticipo registrado" : form.tipo === "prestamo" ? "Préstamo registrado" : "Abono registrado", "ok");
   }
 
   async function borrar(m) {
-    if (m.corte) { toast("Ese abono salió de un corte cerrado. No se borra desde aquí.", "err"); return; }
-    const r = await dbDel("movimientos_prestamo", m.id);
+    if (m.corte) { toast("Ese movimiento salió de un corte cerrado. No se borra desde aquí.", "err"); return; }
+    const esAnt = m._t === "ant";
+    const r = await dbDel(esAnt ? "movimientos_anticipo" : "movimientos_prestamo", m.id);
     if (!r.ok) { toast("No se pudo borrar", "err"); return; }
-    setMovPres(x => x.filter(y => y.id !== m.id));
+    (esAnt ? setMovAnt : setMovPres)(x => x.filter(y => y.id !== m.id));
     toast("Movimiento borrado", "ok");
   }
 
@@ -4946,7 +5140,10 @@ function Prestamos({ users, movPres, setMovPres, user, toast, liqs }) {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.bk }}>Préstamos y anticipos</h2>
-        <Btn variant="primary" onClick={() => abrir("prestamo")}>+ Registrar préstamo</Btn>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Btn onClick={() => abrir("anticipo")}>+ Anticipo a corte</Btn>
+          <Btn variant="primary" onClick={() => abrir("prestamo")}>+ Registrar préstamo</Btn>
+        </div>
       </div>
 
       <div style={{ ...card, padding: "12px 16px", marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
@@ -4954,9 +5151,14 @@ function Prestamos({ users, movPres, setMovPres, user, toast, liqs }) {
           <div style={{ fontSize: 11, color: C.g5, textTransform: "uppercase", letterSpacing: ".06em" }}>Total prestado sin recuperar</div>
           <div style={{ fontSize: 22, fontWeight: 800, color: totalDeuda > 0 ? C.rd : C.gnD }}>{fmt(totalDeuda)}</div>
         </div>
+        <div>
+          <div style={{ fontSize: 11, color: C.g5, textTransform: "uppercase", letterSpacing: ".06em" }}>Anticipos sin descontar</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: totalAntic > 0 ? C.or : C.gnD }}>{fmt(totalAntic)}</div>
+        </div>
         <div style={{ fontSize: 12, color: C.g5, maxWidth: 380 }}>
-          El desembolso va como egreso aparte, no entra en el corte. Lo que toca la liquidación
-          es el abono, que se descuenta del total a pagar.
+          El desembolso del préstamo va como egreso aparte, no entra en el corte; lo que toca la
+          liquidación es el abono. El anticipo a corte es otra cosa: lo que quede pendiente se
+          ofrece para descontar en el corte siguiente.
         </div>
       </div>
 
@@ -4969,7 +5171,7 @@ function Prestamos({ users, movPres, setMovPres, user, toast, liqs }) {
         </div>
       ) : (
         <div style={{ display: "grid", gap: 8 }}>
-          {visibles.map(({ u, saldo }) => (
+          {visibles.map(({ u, saldo, antic }) => (
             <div key={u.id} style={{ ...card, padding: "12px 16px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <div style={{ flex: 1, minWidth: 180 }}>
@@ -4980,9 +5182,14 @@ function Prestamos({ users, movPres, setMovPres, user, toast, liqs }) {
                   <div style={{ fontSize: 11, color: C.g5 }}>Debe</div>
                   <div style={{ fontSize: 18, fontWeight: 800, color: saldo > 0 ? C.rd : C.gnD }}>{fmt(saldo)}</div>
                 </div>
-                <div style={{ display: "flex", gap: 6 }}>
+                <div style={{ textAlign: "right", minWidth: 120 }}>
+                  <div style={{ fontSize: 11, color: C.g5 }}>Anticipo pendiente</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: antic > 0 ? C.or : C.g3 }}>{antic ? fmt(antic) : "—"}</div>
+                </div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   <Btn size="sm" onClick={() => setVerDe(verDe === u.id ? null : u.id)}>{verDe === u.id ? "Ocultar" : "Ver"}</Btn>
                   <Btn size="sm" onClick={() => abrir("prestamo", u.id)}>+ Préstamo</Btn>
+                  <Btn size="sm" onClick={() => abrir("anticipo", u.id)}>+ Anticipo</Btn>
                   {saldo > 0 && <Btn size="sm" variant="success" onClick={() => abrir("abono", u.id)}>Abonar</Btn>}
                 </div>
               </div>
@@ -4999,13 +5206,13 @@ function Prestamos({ users, movPres, setMovPres, user, toast, liqs }) {
                         <tr key={m.id} style={{ borderTop: `1px solid ${C.g1}` }}>
                           <td style={{ padding: "5px 8px", whiteSpace: "nowrap" }}>{m.fecha}</td>
                           <td style={{ padding: "5px 8px" }}>
-                            <span style={{ ...bdg(m.tipo === "abono" ? "green" : "orange"), fontSize: 10 }}>
-                              {m.tipo === "abono" ? "Abono" : "Préstamo"}
+                            <span style={{ ...bdg(m.tipo === "abono" || m.tipo === "descuento" ? "green" : m._t === "ant" ? "amber" : "orange"), fontSize: 10 }}>
+                              {{ abono: "Abono", prestamo: "Préstamo", anticipo: "Anticipo a corte", descuento: "Anticipo descontado" }[m.tipo] || m.tipo}
                             </span>
                           </td>
                           <td style={{ padding: "5px 8px", color: C.g5 }}>{m.concepto || "—"}</td>
-                          <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700, color: m.tipo === "abono" ? C.gnD : C.bk }}>
-                            {m.tipo === "abono" ? "−" : "+"}{fmt(m.valor)}
+                          <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700, color: (m.tipo === "abono" || m.tipo === "descuento") ? C.gnD : C.bk }}>
+                            {(m.tipo === "abono" || m.tipo === "descuento") ? "−" : "+"}{fmt(m.valor)}
                           </td>
                           <td style={{ padding: "5px 8px", textAlign: "center" }}>
                             {!m.corte && <span onClick={() => borrar(m)} title="Borrar movimiento"
@@ -5024,7 +5231,7 @@ function Prestamos({ users, movPres, setMovPres, user, toast, liqs }) {
       )}
 
       {form && (
-        <Modal title={form.tipo === "prestamo" ? "Registrar préstamo" : "Registrar abono"} onClose={() => setForm(null)}>
+        <Modal title={{ prestamo: "Registrar préstamo", abono: "Registrar abono", anticipo: "Registrar anticipo a corte" }[form.tipo]} onClose={() => setForm(null)}>
           <Sel label="Instalador" value={form.usuario_id} onChange={e => setForm(f => ({ ...f, usuario_id: e.target.value }))}>
             <option value="">— Elegir —</option>
             {INs.map(u => <option key={u.id} value={u.id}>{u.nombre}</option>)}
@@ -5032,6 +5239,7 @@ function Prestamos({ users, movPres, setMovPres, user, toast, liqs }) {
           {form.usuario_id && (
             <div style={{ fontSize: 13, color: C.g5, margin: "-4px 0 10px" }}>
               Debe hoy: <strong style={{ color: C.rd }}>{fmt(saldoPrestamo(movPres, form.usuario_id))}</strong>
+              {" · "}Anticipo sin descontar: <strong style={{ color: C.or }}>{fmt(saldoAnticipo(movAnt, form.usuario_id))}</strong>
             </div>
           )}
           <Inp label="Valor ($)" type="number" min="0" value={form.valor}
@@ -5040,7 +5248,14 @@ function Prestamos({ users, movPres, setMovPres, user, toast, liqs }) {
             onChange={e => setForm(f => ({ ...f, fecha: e.target.value }))} />
           <Inp label="Concepto" value={form.concepto}
             onChange={e => setForm(f => ({ ...f, concepto: e.target.value }))}
-            placeholder={form.tipo === "prestamo" ? "Ej: Saldo inicial, anticipo, préstamo personal…" : "Ej: Abono en efectivo"} />
+            placeholder={{ prestamo: "Ej: Saldo inicial, préstamo personal…", abono: "Ej: Abono en efectivo", anticipo: "Ej: Adelanto para el mercado" }[form.tipo]} />
+          {form.tipo === "anticipo" && (
+            <div style={{ fontSize: 12, color: C.orD, background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 8, padding: "8px 10px", marginBottom: 12 }}>
+              Esto no es un préstamo y no le mueve la deuda. Al cerrar el próximo corte, en la
+              liquidación se ofrece este valor para descontarlo; ahí podés dejarlo completo o
+              bajarlo para repartirlo en varios cortes. Lo que no descuentes queda pendiente.
+            </div>
+          )}
           {form.tipo === "prestamo" && (
             <div style={{ fontSize: 12, color: C.g5, background: C.g0, border: `1px solid ${C.g2}`, borderRadius: 8, padding: "8px 10px", marginBottom: 12 }}>
               Para arrancar con lo que ya deben, registra un préstamo con concepto <strong>“Saldo inicial”</strong> y la fecha de hoy.
