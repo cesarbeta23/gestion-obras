@@ -1390,43 +1390,79 @@ const [nuevoPisoF, setNuevoPisoF] = useState({ numero: "", aptos: 1 });
     const desde = Number(repNom.desde), hasta = Number(repNom.hasta);
     if (!desde || !hasta || hasta < desde) { toast("Revisa el rango de pisos", "error"); return; }
 
-    // Sufijo de cada apto: lo que queda al quitarle el número del piso al nombre
-    const sufijos = (origen.aptos || []).map(a => {
-      const nom = String(a.nombre || "");
-      const pref = String(origen.numero);
-      return nom.startsWith(pref) ? nom.slice(pref.length) : nom;
-    });
-    if (!sufijos.length) { toast("Ese piso no tiene aptos", "error"); return; }
+    // Sufijo de cada apto: lo que queda al quitarle el número del piso al nombre.
+    // Las letras de clasificación (A, B, C, A1, A2…) viajan dentro del sufijo, así que
+    // cada posición del piso destino recibe la que le corresponde.
+    // Ej: piso 12 con "1201 A", "1202 B" → sufijos " A" tras "01"… o sea "01 A", "02 B".
+    const pref = String(origen.numero);
+    if (!(origen.aptos || []).length) { toast("Ese piso no tiene aptos", "error"); return; }
+    const sufijos = (origen.aptos || []).map(a => String(a.nombre || "").slice(pref.length));
 
-    let creados = 0, tocados = 0;
+    // Si un apto del molde no empieza por el número de su piso, no se le puede sacar
+    // el sufijo: antes se usaba el nombre entero y salían engendros tipo "14 1105 A",
+    // que además se agravaban en cada corrida. Mejor parar y decir cuál está torcido.
+    const malos = (origen.aptos || []).filter(a => {
+      const nom = String(a.nombre || "");
+      return !(nom.startsWith(pref) && nom.length > pref.length);
+    });
+    if (malos.length) {
+      toast(`El piso molde tiene ${malos.length} apto(s) que no empiezan por ${pref}: `
+        + `${malos.slice(0, 3).map(a => a.nombre || "(sin nombre)").join(", ")}`
+        + `${malos.length > 3 ? "…" : ""}. Corregí esos nombres antes de replicar.`, "error");
+      return;
+    }
+
+    let creados = 0, tocados = 0, renombrados = 0, agregados = 0, sinTocar = 0;
+    const sello = Date.now();          // un solo sello para toda la corrida
     updateObra(cur.id, o => {
       const pisos = [...(o.pisos || [])];
       for (let n = desde; n <= hasta; n++) {
         if (n === origen.numero) continue;
-        let piso = pisos.find(p => String(p.numero) === String(n));
-        if (!piso) {
+        let idx = pisos.findIndex(p => String(p.numero) === String(n));
+        if (idx < 0) {
           if (!repNom.crear) continue;
-          piso = { id: `p${Date.now()}${n}`, numero: n, aptos: [] };
-          pisos.push(piso); creados++;
+          pisos.push({ id: `p${sello}-${n}`, numero: n, aptos: [] });
+          idx = pisos.length - 1;
+          creados++;
         }
+        const piso = pisos[idx];
         const existentes = piso.aptos || [];
-        const nuevos = sufijos.map((suf, i) => {
+        // Renombrar EN SU POSICIÓN. El apto que ya está conserva su id, su tipología
+        // y lo que tenga marcado; solo le cambia el nombre. Antes se buscaba un apto
+        // que ya se llamara igual y, si no aparecía, se botaba el viejo y se creaba
+        // uno nuevo con id nuevo: al agregarle la letra (1206 → 1206 A) el nombre
+        // nunca coincidía, así que se perdía la tipología del piso entero.
+        const aptos = sufijos.map((suf, i) => {
           const nombre = `${n}${suf}`;
-          const ya = existentes.find(a => String(a.nombre) === nombre);
-          return ya || {
-            id: `a${Date.now()}${n}${i}`, numero: i + 1, nombre,
+          const ya = existentes[i];
+          if (ya) {
+            if (String(ya.nombre) === nombre) return ya;
+            renombrados++;
+            return { ...ya, nombre };
+          }
+          agregados++;
+          return {
+            id: `a${sello}-${n}-${i}`, numero: i + 1, nombre,
             tipologia: "", elementos: [], instaladorAsignado: null, observaciones: "",
           };
         });
-        // los aptos que ya tenían trabajo marcado no se tocan
-        const conDatos = existentes.filter(a =>
-          !nuevos.some(x => x.id === a.id) && (a.elementos?.some(e => e.completado || e.detCompletado)));
-        piso.aptos = [...nuevos, ...conDatos];
+        // Si el piso tenía MÁS aptos que el molde, los de más se dejan como están.
+        // Borrar apartamentos en silencio no es trabajo de esta función.
+        const sobrantes = existentes.slice(sufijos.length);
+        sinTocar += sobrantes.length;
+        // Objeto nuevo: NO se le escribe encima al piso del estado anterior. Esa
+        // mutación era la que dejaba ciego al comparador y hacía que no se guardara
+        // nada (ver el comentario de arriba).
+        pisos[idx] = { ...piso, aptos: [...aptos, ...sobrantes] };
         tocados++;
       }
-      return { ...o, pisos: pisos.sort((a, b) => a.numero - b.numero) };
+      return { ...o, pisos: [...pisos].sort((a, b) => a.numero - b.numero) };
     });
-    toast(`Nomenclatura replicada en ${tocados} piso(s)${creados ? `, ${creados} creados` : ""}`, "ok");
+    toast(`Nomenclatura replicada en ${tocados} piso(s)`
+      + (creados ? ` · ${creados} piso(s) creados` : "")
+      + (renombrados ? ` · ${renombrados} renombrados` : "")
+      + (agregados ? ` · ${agregados} agregados` : "")
+      + (sinTocar ? ` · ${sinTocar} sin tocar` : ""), "ok");
     setRepNom(null);
   }
 
