@@ -1555,6 +1555,39 @@ const [dupPrecios, setDupPrecios] = useState({});
   setAsign(null);
 }
 
+  // Cambiar la tipología BASE de un apto por otra.
+  // Antes no existía: el desplegable decía "Cambiar..." pero por dentro llamaba a
+  // asignarTip, que al ver una tipología distinta a la base la metía como EXTRA.
+  // O sea que si uno se equivocaba al escoger la base, quedaba pegado con ella y
+  // tocaba borrar el apartamento y volverlo a crear.
+  function cambiarBase(pisoId, aptoId, tipId) {
+    // Se lee de `cur`, que es la obra viva; `obra` es la prop y puede venir vieja.
+    const apto = (cur.pisos || []).find(p => p.id === pisoId)?.aptos?.find(a => a.id === aptoId);
+    const tipNueva = tips.find(t => t.id === tipId);
+    if (!apto || !tipNueva) return;
+    const marcados = (apto.elementos || []).filter(e => e.completado || e.detCompletado).length;
+    if (marcados > 0 && !window.confirm(
+      `Cambiar la tipología base de ${apto.nombre} a "${tipNueva.nombre}".\n\n`
+      + `Ese apartamento tiene ${marcados} elemento(s) ya marcados en la tipología de ahora. `
+      + `Al cambiar la base se reemplazan por los de la nueva y esas marcas se pierden.\n\n`
+      + `Las tipologías extra y lo marcado en ellas no se tocan.\n`
+      + `Los cortes ya cerrados tampoco: esos son foto.`)) return;
+    const els = (tipNueva.elementoIds || []).map(eid => ({
+      elementoId: eid, completado: false, instaladorId: null, fecha: null,
+      cantidad: tipNueva.cantidades?.[eid] || 1, tipologiaId: tipId,
+    }));
+    updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== pisoId ? p : {
+      ...p, aptos: p.aptos.map(a => a.id !== aptoId ? a : ({
+        ...a, tipologia: tipId, elementos: els,
+        // Si la nueva base venía puesta como extra, se saca de extras: si no,
+        // el apto quedaría con la misma tipología contada dos veces.
+        tipologiasExtra: (a.tipologiasExtra || []).filter(t => t !== tipId),
+        elementosExtra: (a.elementosExtra || []).filter(e => e.tipologiaId !== tipId),
+      })),
+    }) }));
+    toast(`${apto.nombre}: tipología base ${tipNueva.nombre}`, "ok");
+  }
+
   // Cambia una tipología por otra en TODOS los aptos que la tengan.
   // Los aptos quedan con los elementos de la tipología nueva, sin marcar.
   function reemplazarTipologia(desdeId, haciaId) {
@@ -1804,7 +1837,12 @@ const disponibles = misHabilitados.filter(a => {
                 const av = avanceApto(apto);
                 const tip = tips.find(t => t.id === apto.tipologia);
                 const instAsig = apto.instaladorAsignado ? users.find(u => u.id === apto.instaladorAsignado) : null;
-                const canEnter = apto.tipologia && instAsig;
+                // Para entrar al apto basta con que tenga tipología. Antes exigía
+                // además un instalador asignado, y eso obligaba a asignarle a
+                // alguien un apartamento solo para poder abrirlo y mirarlo.
+                // Esta rejilla es solo de oficina: el instalador tiene su propia
+                // vista más arriba, con sus reglas de habilitado y de "tomar".
+                const canEnter = !!apto.tipologia;
                 const habPara = Object.entries(cur.aptosHabilitados || {}).filter(([, ids]) => ids.includes(apto.id)).map(([iid]) => users.find(u => u.id === iid)?.nombre?.split(" ")[0]).filter(Boolean);
                 return (
                   <div key={apto.id} onClick={() => canEnter ? goApto(apto, piso) : null} style={{ ...card, cursor: canEnter ? "pointer" : "default", padding: "10px 12px" }} onMouseEnter={e => canEnter && (e.currentTarget.style.borderColor = C.or)} onMouseLeave={e => (e.currentTarget.style.borderColor = C.g2)}>
@@ -1838,10 +1876,27 @@ const disponibles = misHabilitados.filter(a => {
                       </div>
                       {user.rol !== ROLES.AX && (
                         <div style={{ display: "flex", gap: 3 }} onClick={e => e.stopPropagation()}>
-                          <select style={{ fontSize: 9, padding: "2px 3px", border: `1px solid ${C.g2}`, borderRadius: 4, flex: 1, color: C.g5 }} defaultValue="" onChange={e => { if (e.target.value) asignarTip(piso.id, apto.id, e.target.value); }}>
+                          {/* El desplegable ahora separa las dos cosas que antes se
+                              confundían: cambiar la tipología base (reemplaza) y
+                              agregar una extra (suma). El valor lleva el modo
+                              adelante para que no haya forma de equivocarse. */}
+                          <select style={{ fontSize: 9, padding: "2px 3px", border: `1px solid ${C.g2}`, borderRadius: 4, flex: 1, color: C.g5 }}
+                            value="" onChange={e => {
+                              const [modo, tid] = (e.target.value || "").split(":");
+                              if (!tid) return;
+                              if (modo === "base") cambiarBase(piso.id, apto.id, tid);
+                              else asignarTip(piso.id, apto.id, tid);   // rest y extra
+                            }}>
                             <option value="">Cambiar...</option>
-                            {apto.tipologia && <option value={apto.tipologia}>↺ Restaurar tipología</option>}
-                            {tips.filter(t => t.id !== apto.tipologia).map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                            {apto.tipologia && <option value={`rest:${apto.tipologia}`}>↺ Restaurar faltantes</option>}
+                            <optgroup label="Cambiar la base a">
+                              {tips.filter(t => t.id !== apto.tipologia)
+                                .map(t => <option key={`b${t.id}`} value={`base:${t.id}`}>{t.nombre}</option>)}
+                            </optgroup>
+                            <optgroup label="Agregar como extra">
+                              {tips.filter(t => t.id !== apto.tipologia && !(apto.tipologiasExtra || []).includes(t.id))
+                                .map(t => <option key={`e${t.id}`} value={`extra:${t.id}`}>+ {t.nombre}</option>)}
+                            </optgroup>
                           </select>
                           <button onClick={e => { e.stopPropagation(); quitarTip(piso.id, apto.id, apto.tipologia); }} style={{ fontSize: 9, background: C.rdL, border: "1px solid #FECACA", color: C.rd, borderRadius: 4, padding: "2px 5px", cursor: "pointer" }}>✕</button>
                         </div>
