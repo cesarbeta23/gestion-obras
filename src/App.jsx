@@ -5127,8 +5127,15 @@ function Prestamos({ users, movPres, setMovPres, movAnt = [], setMovAnt, user, t
     toast(esAnt ? "Anticipo registrado" : form.tipo === "prestamo" ? "Préstamo registrado" : "Abono registrado", "ok");
   }
 
+  // Lo que no se puede borrar desde acá es lo que SALIÓ de la liquidación de un corte:
+  // el abono al préstamo y el descuento de anticipo. Eso se quita en la liquidación,
+  // que es donde se decidió.
+  // El anticipo entregado sí se borra, aunque lleve corte: ese corte no es de donde
+  // salió, es en cuál se dio (sirve para no descontarlo en ese mismo corte).
+  const vieneDeCorte = m => (m.tipo === "abono" || m.tipo === "descuento") && !!m.corte;
+
   async function borrar(m) {
-    if (m.corte) { toast("Ese movimiento salió de un corte cerrado. No se borra desde aquí.", "err"); return; }
+    if (vieneDeCorte(m)) { toast("Eso salió de la liquidación de un corte. Se quita desde allá.", "err"); return; }
     const esAnt = m._t === "ant";
     const r = await dbDel(esAnt ? "movimientos_anticipo" : "movimientos_prestamo", m.id);
     if (!r.ok) { toast("No se pudo borrar", "err"); return; }
@@ -5215,7 +5222,7 @@ function Prestamos({ users, movPres, setMovPres, movAnt = [], setMovAnt, user, t
                             {(m.tipo === "abono" || m.tipo === "descuento") ? "−" : "+"}{fmt(m.valor)}
                           </td>
                           <td style={{ padding: "5px 8px", textAlign: "center" }}>
-                            {!m.corte && <span onClick={() => borrar(m)} title="Borrar movimiento"
+                            {!vieneDeCorte(m) && <span onClick={() => borrar(m)} title="Borrar movimiento"
                               style={{ cursor: "pointer", color: C.g3, fontWeight: 700 }}>✕</span>}
                           </td>
                         </tr>
