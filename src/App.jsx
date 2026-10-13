@@ -3108,6 +3108,48 @@ function Elementos({ elems, setElems, obras = [], openM, closeM, modals }) {
   );
 }
 
+// ── Tope de lo ya pagado ──────────────────────────────────
+//
+// Lo que ya se liquidó y se pagó no se vuelve a cobrar, caiga la fecha donde caiga.
+//
+// El control del arrastre no alcanza: ese solo mira UN corte atrás y solo para marcas
+// con fecha del corte anterior. Una marca que se rehace hoy (se corrige la tipología de
+// 6 a 7 puertas, se desmarca con la ✕ y se vuelve a marcar 6) queda con fecha de hoy,
+// entra al corte actual como si fuera nueva y se paga dos veces.
+//
+// Por eso este tope NO mira fechas. Mira cantidades: de este elemento, en este apto,
+// ¿cuántas unidades ya se pagaron en cortes cerrados? Esas no se cobran otra vez.
+//
+// Va por CANTIDAD y no por fila porque la fila se parte y se vuelve a armar: al marcar
+// 6 de 7 el elemento se divide en dos y las posiciones se corren, así que una misma
+// marca cambia de fila. La cantidad pagada, en cambio, es la misma siempre.
+//
+// La posición (refIdx) queda fuera de la llave por esa misma razón.
+const llaveMarca = r => `${r.refObra}|${r.refApto}|${r.refLista}|${r.refElem}|${r.refTipo}`;
+
+// Cuántas unidades de cada marca ya pagó la empresa, sumando TODAS las liquidaciones
+// cerradas. Se suma sin mirar a quién se le pagó: si el trabajo ya se pagó, pagarlo
+// otra vez a otro instalador también es un pago doble.
+//
+// Solo cuenta lo que trae identificadores. Los cortes cerrados antes del 29/9/2026 no
+// los tienen y no se pueden topar — por eso `conIds`, para poder avisarlo en pantalla
+// en vez de dar una garantía que no existe.
+function pagadoPorMarca(liqs, salvoCorte) {
+  const m = new Map();
+  let conIds = 0, sinIds = 0;
+  (liqs || []).forEach(l => {
+    if (salvoCorte && l.corte === salvoCorte) return;    // el corte que se está armando no se topa a sí mismo
+    (l.rows || []).forEach(r => {
+      if (r.adj) return;                                  // pasajes, bonificación, préstamos: no son marcas
+      if (!r.refApto) { sinIds++; return; }
+      conIds++;
+      const k = llaveMarca(r);
+      m.set(k, (m.get(k) || 0) + (Number(r.cant) || 0));
+    });
+  });
+  return { tope: m, conIds, sinIds };
+}
+
 // ── LIQUIDACIÓN ───────────────────────────────────────────
 function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPres, setMovPres, movAnt = [], setMovAnt, getPrecio, updateObra, irAlApto, toast }) {
   const cortes = getCorteFechas();
@@ -3133,6 +3175,9 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
   // Se compara por los identificadores que guardan las filas desde el 29/9/2026.
   const llaveFila = r => `${r.refObra}|${r.refApto}|${r.refLista}|${r.refIdx}|${r.refElem}|${r.refTipo}`;
 
+  // Tope duro: unidades ya pagadas en cortes cerrados. Ver pagadoPorMarca arriba.
+  const pagado = pagadoPorMarca(liqs, corte?.label);
+
   // Arrastre: lo que quedó marcado en el corte anterior DESPUÉS de que se le cerró
   // a esa persona no se pierde — entra a este corte. Es la regla acordada: cerrado el
   // corte, todo lo que se marque cuenta para el siguiente, sea 29, 30 o el día que sea.
@@ -3155,6 +3200,9 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
   function detalle(iid, d, h) {
     const rows = [];
     const arr = arrastreDe(iid);
+    // Copia del tope para esta pasada: cada unidad ya pagada se puede descontar una
+    // sola vez, aunque la marca haya quedado repartida en varias filas del apto.
+    const porCobrar = new Map(pagado.tope);
     // Cada fila guarda de dónde salió: obra, piso, apto, en cuál lista del apto y en
     // qué posición, más el elemento. Sin esto, una fila solo dice "Apto 913 · Closet
     // alc 3" y para desmarcarla habría que adivinar por nombre — y un apto puede
@@ -3162,6 +3210,16 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
     const proc = (o, p, a, el, esExtra, i) => {
       const ref = { refObra: o.id, refPiso: p.id, refApto: a.id,
                     refLista: esExtra ? "ex" : "el", refIdx: i, refElem: el.elementoId };
+      // Cuánto de esta marca queda por cobrar después de descontar lo ya pagado.
+      // Devuelve 0 cuando todo eso ya se pagó: ahí la fila no se arma siquiera.
+      const cobrable = (tipo, cant) => {
+        const k = llaveMarca({ ...ref, refTipo: tipo });
+        const saldo = porCobrar.get(k);
+        if (!saldo || saldo <= 0) return cant;
+        const tapa = Math.min(cant, saldo);
+        porCobrar.set(k, saldo - tapa);
+        return cant - tapa;
+      };
       // Entra si la marca cae en este corte, o si cayó en el anterior y allá no se pagó.
       const entra = (fecha, tipo) => {
         if (enCorte(fecha, d, h)) return { ok: true, arrastrada: false };
@@ -3179,9 +3237,11 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
         // Sin precio no hay detallado que cobrar: la chapa y la moldura de una puerta
         // van en cero porque el detallado de la puerta ya está en el elemento principal.
         // Incluirlas sería una lista eterna de ceros en la liquidación.
-        if (precioD > 0) {
+        const cantD = el.cantidad || 1;
+        const nD = cobrable("det", cantD);
+        if (precioD > 0 && nD > 0) {
           rows.push({ ...ref, refTipo: "det", arrastrada: eDet.arrastrada, obra: o.nombre, apto: a.nombre, el: `[Detallado] ${elemD?.nombre || el.elementoId}`, actividad: "Detallado",
-            cant: el.cantidad || 1, precio: precioD, fecha: el.detFecha, adj: false, apr: true });
+            cant: nD, yaPago: cantD - nD, precio: precioD, fecha: el.detFecha, adj: false, apr: true });
         }
       }
       // yaPagado: avance cargado de una obra anterior, ya pagado. Alimenta el ERP, no se liquida.
@@ -3190,12 +3250,18 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
         if (el.elementoId === "__pasajes__" || el.elementoId === "__bonificacion__") return; // migrados a user.ajustes
         if (el.esAdicional) {
           if (el.responsable === "obra" && !String(el.memorando || "").trim()) return;   // sin memorando no se paga
-          rows.push({ ...ref, refTipo: "ad", arrastrada: eIns.arrastrada, obra: o.nombre, apto: a.nombre, el: `[Adicional] ${el.descripcion}`, responsable: el.responsable || null, memorando: el.memorando || null, cant: el.cantidad || 1, precio: el.valorUnitario || 0, fecha: el.fecha, adj: false, apr: true });
+          const cantA = el.cantidad || 1;
+          const nA = cobrable("ad", cantA);
+          if (nA <= 0) return;                                                            // ese adicional ya se pagó
+          rows.push({ ...ref, refTipo: "ad", arrastrada: eIns.arrastrada, obra: o.nombre, apto: a.nombre, el: `[Adicional] ${el.descripcion}`, responsable: el.responsable || null, memorando: el.memorando || null, cant: nA, yaPago: cantA - nA, precio: el.valorUnitario || 0, fecha: el.fecha, adj: false, apr: true });
           return;
         }
         const elem = elems.find(e => e.id === el.elementoId);
         const tip = esExtra ? el.tipologiaId : (el.tipologiaId || a.tipologia);
-        rows.push({ ...ref, refTipo: "inst", arrastrada: eIns.arrastrada, obra: o.nombre, apto: a.nombre, el: elem?.nombre, actividad: "Instalación", cant: el.cantidad || 1, precio: getPrecio(el.elementoId, o.id, corte.label, a.id, tip), fecha: el.fecha, adj: false, apr: true });
+        const cantI = el.cantidad || 1;
+        const nI = cobrable("inst", cantI);
+        if (nI <= 0) return;                                                              // esas unidades ya se pagaron
+        rows.push({ ...ref, refTipo: "inst", arrastrada: eIns.arrastrada, obra: o.nombre, apto: a.nombre, el: elem?.nombre, actividad: "Instalación", cant: nI, yaPago: cantI - nI, precio: getPrecio(el.elementoId, o.id, corte.label, a.id, tip), fecha: el.fecha, adj: false, apr: true });
       }
     };
     obras.forEach(o => o.pisos?.forEach(p => p.aptos?.forEach(a => {
@@ -3806,7 +3872,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                     ? <span onClick={() => irAlApto(r.refObra, r.refPiso, r.refApto)} title="Abrir este apartamento"
                         style={{ fontWeight: 600, color: C.or, cursor: "pointer", textDecoration: "underline" }}>Apto {r.apto} ↗</span>
                     : <span style={{ fontWeight: 500 }}>Apto {r.apto}</span>}
-                  <span style={{ flex: 1 }}>{r.el}{r.desc && <span style={{ color: C.g5, fontStyle: "italic" }}> — {r.desc}</span>}{r.arrastrada && <span title="Se marcó después de cerrar el corte pasado, así que entra en este" style={{ marginLeft: 6, ...bdg("amber"), fontSize: 10 }}>del corte anterior</span>}{r.adj && !r.apr && <span style={{ marginLeft: 6, ...bdg("amber"), fontSize: 10 }}>pendiente</span>}</span>
+                  <span style={{ flex: 1 }}>{r.el}{r.desc && <span style={{ color: C.g5, fontStyle: "italic" }}> — {r.desc}</span>}{r.arrastrada && <span title="Se marcó después de cerrar el corte pasado, así que entra en este" style={{ marginLeft: 6, ...bdg("amber"), fontSize: 10 }}>del corte anterior</span>}{r.yaPago > 0 && <span title={`De esta marca ya se pagaron ${r.yaPago} en un corte cerrado. Solo se cobra el resto.`} style={{ marginLeft: 6, ...bdg("amber"), fontSize: 10 }}>{r.yaPago} ya pagada(s)</span>}{r.adj && !r.apr && <span style={{ marginLeft: 6, ...bdg("amber"), fontSize: 10 }}>pendiente</span>}</span>
                   <span style={{ fontWeight: 700, minWidth: 90, textAlign: "right" }}>{fmt(r.precio * r.cant)}</span>
                   {/* La ✕ solo cuando el corte está cerrado y sin aprobar, y solo gerencia.
                       Pide un segundo clic: desmarca en el apto, no es solo quitar de la lista. */}
@@ -3854,6 +3920,13 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                 );
               })()}
 
+              {pagado.sinIds > 0 && esOficina(user) && (
+                <div style={{ fontSize: 11.5, color: C.orD, background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 8, padding: "8px 12px", marginBottom: 10 }}>
+                  Hay {pagado.sinIds} fila(s) en cortes cerrados viejos que no dicen de qué apartamento
+                  salieron. Lo que se pagó en esas filas no se puede topar automáticamente: si corriges
+                  una tipología de un apto que ya se liquidó allá, revisa a mano antes de aprobar.
+                </div>
+              )}
               {arr?.bloqueado && esOficina(user) && (
                 <div style={{ fontSize: 11.5, color: C.orD, background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 8, padding: "8px 12px", marginBottom: 10 }}>
                   El corte anterior ({arr.ant.label}) se cerró sin los identificadores de fila, así que
