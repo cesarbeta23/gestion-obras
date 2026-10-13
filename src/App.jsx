@@ -2490,6 +2490,32 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
     toast("Guardado", "ok"); setPend({}); setCnts({}); setInstSel({}); setParcial({});
   }
 
+  // Corregir CUÁNTAS unidades se instalaron, sin tocar la fecha ni el instalador.
+  //
+  // Es la operación que faltaba. Cuando una tipología cambia (de 6 a 7 puertas) el apto
+  // queda mostrando como instalado algo que no se hizo, y hasta ahora el único camino era
+  // darle ✕ y volver a marcar. Eso borraba la marca entera y la volvía a estampar con la
+  // fecha de hoy: para la liquidación era trabajo nuevo y lo cobraba otra vez.
+  //
+  // Acá la marca original se queda quieta —misma fecha, mismo instalador, mismo detallado—
+  // y solo se le baja la cantidad. Lo que falta sale como una fila aparte, pendiente.
+  function corregirCantidad(idx, n) {
+    const el = curA.elementos?.[idx];
+    if (!el || !el.completado) return;
+    const total = Number(el.cantidad || 1);
+    const q = Math.max(1, Math.min(total, Number(n) || 0));
+    if (q === total) return;
+    updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => {
+      if (a.id !== apto.id) return a;
+      return { ...a, elementos: a.elementos.flatMap((x, i) => i !== idx ? [x] : [
+        { ...x, cantidad: q },
+        { ...x, cantidad: total - q, completado: false, instaladorId: null, fecha: null, yaPagado: false,
+          detCompletado: false, detId: null, detFecha: null, detYaPagado: false },
+      ]) };
+    }) }) }));
+    toast(`Quedan ${q} instalada(s) con su fecha original y ${total - q} pendiente(s)`, "ok");
+  }
+
   // Al desmarcar la instalación también se cae el detallado (no puede quedar detallado sin instalar).
   const desmarcar = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, completado: false, instaladorId: null, fecha: null, yaPagado: false, detCompletado: false, detId: null, detFecha: null, detYaPagado: false }) }) }) }));
   const desmarcarDet = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, detCompletado: false, detId: null, detFecha: null, detYaPagado: false }) }) }) }));
@@ -2659,7 +2685,7 @@ const totLiq = totNorm + totAd + totExtra;
           </div>
         ))}
       </div>
-      {canEdit && <div style={{ marginBottom: 14, padding: "10px 14px", background: C.amL, border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#B45309", fontWeight: 500 }}>Puedes desmarcar elementos con ✕.</div>}
+      {canEdit && <div style={{ marginBottom: 14, padding: "10px 14px", background: C.amL, border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#B45309", fontWeight: 500 }}>Puedes desmarcar elementos con ✕. Si la tipología cambió y solo sobra cantidad, usa el selector <strong>"N de M"</strong>: corrige lo instalado sin cambiarle la fecha ni el instalador a lo que ya estaba marcado.</div>}
       {user.rol === ROLES.IN && <div style={{ marginBottom: 14, padding: "10px 14px", background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 10, fontSize: 13, color: C.orD, fontWeight: 500 }}>Marca los elementos terminados y presiona <strong>Guardar</strong>.{hayPend && <span style={{ marginLeft: 8 }}>+{fmt(totPend)}</span>}</div>}
 
       {canAct && faltantes > 0 && (
@@ -2739,6 +2765,15 @@ const totLiq = totNorm + totAd + totExtra;
                 <div style={{ fontSize: 11, color: C.g4 }}>{esPorUnidad(elem?.unidad) && Number(ca) > 1 ? `${ca} ${elem.unidad}` : elem?.unidad}</div>
               </div>
               {canEdit && !esDet && !el.completado && <button onClick={e => { e.stopPropagation(); updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.filter((_, i) => i !== idx) }) }) })); toast("Elemento eliminado", "ok"); }} style={{ marginLeft: 4, width: 28, height: 28, borderRadius: 6, ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14, fontWeight: 700 }}>🗑</button>}
+{canEdit && hecho && !esDet && !el.esAdicional && puedePartirse(elem?.unidad, el.cantidad) && (
+                <select onClick={e => e.stopPropagation()} value={el.cantidad || 1}
+                  title="Corregir cuántas se instalaron de verdad. No le cambia la fecha ni el instalador a lo que ya estaba marcado."
+                  onChange={e => { e.stopPropagation(); corregirCantidad(idx, e.target.value); }}
+                  style={{ fontSize: 12, padding: "3px 6px", border: `1px solid ${C.g2}`, borderRadius: 6, marginLeft: 4 }}>
+                  {Array.from({ length: Number(el.cantidad || 1) }, (_, k) => k + 1).map(n =>
+                    <option key={n} value={n}>{n} de {el.cantidad}</option>)}
+                </select>
+              )}
 {canEdit && hecho && <button onClick={e => { e.stopPropagation(); esDet ? desmarcarDet(idx) : desmarcar(idx); }} style={{ marginLeft: 4, width: 28, height: 28, borderRadius: 6, ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14, fontWeight: 700 }}>✕</button>}
             </div>
           );
@@ -3132,22 +3167,23 @@ const llaveMarca = r => `${r.refObra}|${r.refApto}|${r.refLista}|${r.refElem}|${
 // otra vez a otro instalador también es un pago doble.
 //
 // Solo cuenta lo que trae identificadores. Los cortes cerrados antes del 29/9/2026 no
-// los tienen y no se pueden topar — por eso `conIds`, para poder avisarlo en pantalla
-// en vez de dar una garantía que no existe.
+// los tienen y no se pueden topar.
+//
+// Lo que queda ciego se devuelve como la LISTA DE CORTES, no como un conteo de filas:
+// "3649 filas" es todo el histórico junto, no se puede revisar y en dos días es paisaje.
+// La lista de cortes sí es finita y se puede mirar uno por uno si hace falta.
 function pagadoPorMarca(liqs, salvoCorte) {
   const m = new Map();
-  let conIds = 0, sinIds = 0;
+  const ciegos = new Set();
   (liqs || []).forEach(l => {
     if (salvoCorte && l.corte === salvoCorte) return;    // el corte que se está armando no se topa a sí mismo
     (l.rows || []).forEach(r => {
       if (r.adj) return;                                  // pasajes, bonificación, préstamos: no son marcas
-      if (!r.refApto) { sinIds++; return; }
-      conIds++;
-      const k = llaveMarca(r);
-      m.set(k, (m.get(k) || 0) + (Number(r.cant) || 0));
+      if (!r.refApto) { ciegos.add(l.corte); return; }
+      m.set(llaveMarca(r), (m.get(llaveMarca(r)) || 0) + (Number(r.cant) || 0));
     });
   });
-  return { tope: m, conIds, sinIds };
+  return { tope: m, ciegos: [...ciegos] };
 }
 
 // ── LIQUIDACIÓN ───────────────────────────────────────────
@@ -3920,12 +3956,17 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                 );
               })()}
 
-              {pagado.sinIds > 0 && esOficina(user) && (
-                <div style={{ fontSize: 11.5, color: C.orD, background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 8, padding: "8px 12px", marginBottom: 10 }}>
-                  Hay {pagado.sinIds} fila(s) en cortes cerrados viejos que no dicen de qué apartamento
-                  salieron. Lo que se pagó en esas filas no se puede topar automáticamente: si corriges
-                  una tipología de un apto que ya se liquidó allá, revisa a mano antes de aprobar.
-                </div>
+              {pagado.ciegos.length > 0 && esOficina(user) && (
+                <details style={{ fontSize: 11.5, color: C.g5, marginBottom: 10 }}>
+                  <summary style={{ cursor: "pointer" }}>
+                    {pagado.ciegos.length} corte(s) viejo(s) quedan fuera del tope de lo ya pagado
+                  </summary>
+                  <div style={{ marginTop: 6, paddingLeft: 14 }}>
+                    Esos cortes se cerraron antes de que las filas guardaran de qué apartamento salieron,
+                    así que lo pagado allá no se puede topar solo. Solo importa si corriges la tipología
+                    de un apto que se liquidó en alguno de ellos: {pagado.ciegos.join(" · ")}
+                  </div>
+                </details>
               )}
               {arr?.bloqueado && esOficina(user) && (
                 <div style={{ fontSize: 11.5, color: C.orD, background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 8, padding: "8px 12px", marginBottom: 10 }}>
