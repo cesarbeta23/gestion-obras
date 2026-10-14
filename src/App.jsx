@@ -4338,9 +4338,13 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
   const INs = users.filter(u => u.rol === ROLES.IN);
   const [corteSel, setCorteSel] = useState("");
   const [corteVista, setCorteVista] = useState("obra");   // "obra" | "inst"
+  // "pagado" = lo que salió en cortes cerrados (plata que ya salió de caja)
+  // "instalado" = todo lo marcado en las obras, se haya liquidado o no
+  const [fuente, setFuente] = useState("pagado");
   const tabs = [
     { k: "resumen", l: "Resumen por obra" },
     { k: "detalle", l: "Detalle por obra" },
+    { k: "elemento", l: "Por elemento" },
     { k: "instalador", l: "Por instalador" },
     { k: "retenidos", l: "Retenidos" },
     { k: "cortes", l: "Pagos por corte" },
@@ -4392,6 +4396,90 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
       }
     }
     return filas.sort((a, b) => String(b.corte).localeCompare(String(a.corte)) || String(a.obra).localeCompare(String(b.obra)));
+  }
+
+  // ── Totales por elemento ──────────────────────────────────
+  //
+  // Cuántas puertas, cuántos metros de zócalo. Dos fuentes, a elección:
+  //
+  //  "pagado"    — las filas de los cortes cerrados. Es la plata que ya salió de caja.
+  //  "instalado" — las marcas de las obras. Es lo que está puesto, se haya liquidado o no.
+  //                Siempre da más que "pagado": incluye el corte en curso.
+  //
+  // No se fusionan nombres parecidos. Si un elemento se renombró en el catálogo, las
+  // filas viejas (que solo guardan el nombre, no el identificador) salen aparte con el
+  // nombre con el que se pagaron. Juntarlas por parecido sería adivinar, y una cifra
+  // que nadie puede auditar después no sirve para nada.
+  function porElemento() {
+    const mapa = new Map();
+    const obraSel = obras.find(o => o.id === obraId);
+    const claveSel = obraSel ? claveObra(obraSel.nombre) : "";
+
+    // La unidad sale del catálogo: por identificador cuando la fila lo trae, y si no,
+    // por nombre. Donde no se pueda amarrar va vacía — mejor sin unidad que con una inventada.
+    const unidadDe = (eid, nombre) => {
+      const porId = eid && elems.find(e => e.id === eid);
+      if (porId) return porId.unidad || "";
+      const limpio = String(nombre || "").replace(/^\[(Detallado|Adicional)\]\s*/, "").trim().toLowerCase();
+      return elems.find(e => String(e.nombre || "").trim().toLowerCase() === limpio)?.unidad || "";
+    };
+
+    const suma = (nombre, act, cant, valor, eid) => {
+      const k = `${act}|${nombre}`;
+      const y = mapa.get(k) || { nombre, act, cant: 0, valor: 0, unidad: unidadDe(eid, nombre) };
+      y.cant += Number(cant) || 0;
+      y.valor += Number(valor) || 0;
+      if (!y.unidad) y.unidad = unidadDe(eid, nombre);
+      mapa.set(k, y);
+    };
+
+    // Los adicionales son descripciones libres, una distinta por cada uno. Listarlos
+    // sueltos serían cientos de renglones de uno; se agrupan para que la plata cuadre
+    // con la liquidación sin volver ilegible el informe.
+    const AD = "Adicionales (varios)";
+
+    if (fuente === "pagado") {
+      for (const l of liqs) for (const r of (l.rows || [])) {
+        if (esAdjRow(r)) continue;                                   // pasajes, bonificación, días
+        if (claveSel && claveObra(r.obra) !== claveSel) continue;
+        const esAd  = r.refTipo === "ad"  || String(r.el || "").startsWith("[Adicional]");
+        const esDetR = r.refTipo === "det" || String(r.el || "").startsWith("[Detallado]");
+        const nombre = esAd ? AD : String(r.el || "—").replace(/^\[Detallado\]\s*/, "").trim() || "—";
+        const cant = Number(r.cant) || 0;
+        suma(nombre, esAd ? "Adicional" : esDetR ? "Detallado" : "Instalación",
+             cant, cant * (Number(r.precio) || 0), esAd ? null : r.refElem);
+      }
+    } else {
+      // Valor a precio de HOY: es una estimación, no lo que se pagó. Lo marcado como
+      // "ya pagado" cuenta en cantidad (está instalado) pero en cero plata (se pagó en otra obra).
+      const lbl = getCorteFechas()[0]?.label;
+      for (const o of obras) {
+        if (obraId && o.id !== obraId) continue;
+        for (const p of (o.pisos || [])) for (const a of (p.aptos || [])) {
+          const proc = (el, esExtra) => {
+            if (el.elementoId === "__pasajes__" || el.elementoId === "__bonificacion__") return;
+            const cant = Number(el.cantidad) || 0;
+            if (el.esAdicional) {
+              if (el.completado) suma(AD, "Adicional", cant, cant * (Number(el.valorUnitario) || 0), null);
+              return;
+            }
+            const tip = esExtra ? el.tipologiaId : (el.tipologiaId || a.tipologia);
+            const nom = elems.find(e => e.id === el.elementoId)?.nombre || el.elementoId;
+            if (el.completado)
+              suma(nom, "Instalación", cant, el.yaPagado ? 0 : cant * getPrecio(el.elementoId, o.id, lbl, a.id, tip), el.elementoId);
+            if (el.detCompletado)
+              suma(nom, "Detallado", cant, el.detYaPagado ? 0 : cant * getPrecio(el.elementoId, o.id, lbl, a.id, tip, "det"), el.elementoId);
+          };
+          (a.elementos || []).forEach(el => proc(el, false));
+          (a.elementosExtra || []).forEach(el => proc(el, true));
+        }
+      }
+    }
+
+    const filas = [...mapa.values()].filter(f => f.cant > 0)
+      .sort((x, y) => y.valor - x.valor || String(x.nombre).localeCompare(String(y.nombre)));
+    const tot = filas.reduce((s, f) => s + f.valor, 0);
+    return { filas, tot };
   }
 
   // ── Exportables ───────────────────────────────────────────
@@ -4765,6 +4853,86 @@ function Reportes({ obras, elems, users, user, getPrecio, avanceObra, liqs = [],
           })()}
         </div>
       )}
+
+      {tipo === "elemento" && (() => {
+        const { filas, tot } = porElemento();
+        const obraSel = obras.find(o => o.id === obraId);
+        const sub = `${fuente === "pagado" ? "Pagado en cortes cerrados" : "Todo lo instalado"} · ${obraSel ? obraSel.nombre : "Todas las obras"}`;
+        const cant = n => Number(n) % 1 === 0 ? String(n) : Number(n).toFixed(2);
+        return (
+          <div>
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 14 }}>
+              <div style={{ maxWidth: 300, flex: 1, minWidth: 230 }}>
+                <Sel label="Qué contar" value={fuente} onChange={e => setFuente(e.target.value)}>
+                  <option value="pagado">Pagado en cortes cerrados</option>
+                  <option value="instalado">Todo lo instalado</option>
+                </Sel>
+              </div>
+              <div style={{ maxWidth: 320, flex: 1, minWidth: 230 }}>
+                <Sel label="Obra" value={obraId} onChange={e => setObraId(e.target.value)}>
+                  <option value="">Todas las obras</option>
+                  {obras.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
+                </Sel>
+              </div>
+            </div>
+
+            <div style={{ fontSize: 12, color: C.g5, marginBottom: 12, lineHeight: 1.5 }}>
+              {fuente === "pagado"
+                ? "Sale de las liquidaciones cerradas: es la plata que ya salió. No incluye el corte en curso."
+                : "Sale de las marcas en las obras: incluye lo que todavía no se liquida. El valor es a precio de hoy, es una estimación — lo que se pagó de verdad está en la otra vista."}
+              {" "}Un elemento que se renombró puede aparecer en dos renglones, uno por cada nombre con el que se pagó.
+            </div>
+
+            {filas.length > 0 && (
+              <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                <Btn onClick={() => pdfTabla("Totales por elemento", sub,
+                  ["Elemento", "Actividad", "Cantidad", "Unidad", "Valor"],
+                  [...filas.map(f => [f.nombre, f.act, cant(f.cant), f.unidad || "—", fmt(f.valor)]),
+                   ["TOTAL", "", "", "", fmt(tot)]],
+                  `Totales por elemento${obraSel ? " " + obraSel.nombre : ""}.pdf`,
+                  { 2: { halign: "right" }, 3: { halign: "center" }, 4: { halign: "right", fontStyle: "bold" } })}>📄 PDF</Btn>
+                <Btn variant="success" onClick={() => excel("Totales por elemento", [
+                  ["Totales por elemento"], [sub], [`Generado el ${hoyStr()}`], [],
+                  ["Elemento", "Actividad", "Cantidad", "Unidad", "Valor"],
+                  ...filas.map(f => [f.nombre, f.act, f.cant, f.unidad || "", f.valor]),
+                  [], ["TOTAL", "", "", "", tot],
+                ], [40, 14, 12, 10, 16], [4], `Totales por elemento${obraSel ? " " + obraSel.nombre : ""}.xlsx`)}>📊 Excel</Btn>
+              </div>
+            )}
+
+            <div style={card}>
+              {filas.length === 0 ? (
+                <div style={{ padding: 24, textAlign: "center", color: C.g4, fontSize: 14 }}>
+                  {fuente === "pagado" ? "No hay cortes cerrados con esta selección." : "No hay nada marcado con esta selección."}
+                </div>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+                  <thead><tr style={{ background: C.g0 }}>
+                    {["Elemento", "Actividad", "Cantidad", "Valor"].map((h, i) =>
+                      <th key={h} style={{ ...thSt, textAlign: i >= 2 ? "right" : "left" }}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {filas.map(f => (
+                      <tr key={`${f.act}|${f.nombre}`}>
+                        <td style={tdSt}><span style={{ fontWeight: 600 }}>{f.nombre}</span></td>
+                        <td style={tdSt}><span style={bdg(f.act === "Instalación" ? "orange" : f.act === "Detallado" ? "amber" : "gray")}>{f.act}</span></td>
+                        <td style={{ ...tdSt, textAlign: "right", fontWeight: 700, fontSize: 15 }}>
+                          {cant(f.cant)}<span style={{ fontSize: 12, fontWeight: 400, color: C.g4 }}> {f.unidad || ""}</span>
+                        </td>
+                        <td style={{ ...tdSt, textAlign: "right", color: C.gnD, fontWeight: 600 }}>{fmt(f.valor)}</td>
+                      </tr>
+                    ))}
+                    <tr style={{ background: C.g0 }}>
+                      <td style={{ ...tdSt, fontWeight: 800 }} colSpan={3}>TOTAL</td>
+                      <td style={{ ...tdSt, textAlign: "right", fontWeight: 800, color: C.gnD, fontSize: 15 }}>{fmt(tot)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {tipo === "instalador" && (
         <div>
