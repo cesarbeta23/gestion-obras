@@ -2335,7 +2335,7 @@ const disponibles = misHabilitados.filter(a => {
 }
 
 // ── APTO ──────────────────────────────────────────────────
-function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceApto, detListo, llevaDetallado, toast, getPrecio }) {
+function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceApto, detListo, llevaDetallado, toast, getPrecio, liqs = [] }) {
   const cur = obras.find(o => o.id === obra.id);
   const curP = cur?.pisos?.find(p => p.id === piso.id);
   const curA = curP?.aptos?.find(a => a.id === apto.id) || apto;
@@ -2402,6 +2402,67 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
   const faltantes = (curA.elementos || []).filter((el, i) => canToggle(i) && !(esDet && el.esAdicional)).length
     + (curA.elementosExtra || []).filter(el => puedeExtra(el)).length;
 
+  // ── Fecha del trabajo ─────────────────────────────────────
+  //
+  // Antes la marca se fechaba el día que se digitaba. Pero el corte del instalador
+  // cierra el 14 y la oficina revisa y paga el 15, así que lo que se monta atrasado ese
+  // día caía en la quincena siguiente y había que corregirlo a mano en la base.
+  //
+  // Mover la frontera del corte no lo arregla: solo cambia de día el problema, y no
+  // cubre a quien registra el 16 algo que hizo el 13. Lo que lo arregla es que la marca
+  // lleve el día en que SE TRABAJÓ.
+  //
+  // Solo oficina. Un instalador con la fecha en la mano puede mover su propio trabajo
+  // de quincena, y eso no va.
+  const hoyISO = (() => { const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; })();
+  const minISO = (() => { const n = new Date(); n.setDate(n.getDate() - 60);
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`; })();
+  const [fTrab, setFTrab] = useState(hoyISO);
+  // Misma forma que toLocaleDateString("es-CO"), que es como está TODA la base:
+  // d/m/aaaa sin ceros a la izquierda. Si acá saliera "05/10/2026" no rompería enCorte,
+  // pero quedarían dos formatos conviviendo y algún día alguien compara textos.
+  const aFechaApp = iso => { const [y, m, d] = String(iso).split("-").map(Number); return `${d}/${m}/${y}`; };
+  const fechaMarca = () => aFechaApp(canEdit && fTrab ? fTrab : hoyISO);
+  // En qué corte cae la fecha elegida, para avisarlo antes de guardar.
+  const corteDe = iso => { const [y, m, d] = String(iso).split("-").map(Number); const f = new Date(y, m - 1, d);
+    return getCorteFechas().find(c => f >= c.desde && f <= c.hasta) || null; };
+  const aISO = f => { const [d, m, y] = String(f || "").split("/").map(Number);
+    return (d && m && y) ? `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}` : hoyISO; };
+
+  // Qué marcas de este apto ya salieron en una liquidación cerrada. Una fecha editable
+  // sería una forma de mover trabajo a un corte ya pagado, así que a lo liquidado no
+  // se le toca la fecha: se mira acá antes de dejar corregir.
+  const liquidadas = (() => {
+    const m = new Set();
+    (liqs || []).forEach(l => (l.rows || []).forEach(r => {
+      if (r.adj || r.refApto !== curA.id) return;
+      m.add(`${r.refLista}|${r.refElem}|${r.refTipo}`);
+    }));
+    return m;
+  })();
+  const yaLiquidado = (eid, tipo) => liquidadas.has(`el|${eid}|${tipo}`);
+
+  const [fEdit, setFEdit] = useState(null);   // "idx|inst" | "idx|det" que se está corrigiendo
+
+  // Corregir la fecha de una marca ya guardada. Es lo que faltaba el día que alguien
+  // monta el 15 un trabajo del 12: sin esto tocaba cirugía de jsonb sobre la obra.
+  function corregirFecha(idx, iso, esDetallado) {
+    const el = curA.elementos?.[idx];
+    if (!el) return;
+    const campo = esDetallado ? "detFecha" : "fecha";
+    if (yaLiquidado(el.elementoId, esDetallado ? "det" : "inst")) {
+      toast("Esa marca ya salió en una liquidación cerrada: no se le cambia la fecha", "error"); return;
+    }
+    const nueva = aFechaApp(iso);
+    if (!iso || nueva === el[campo]) { setFEdit(null); return; }
+    updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a =>
+      a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((x, i) => i !== idx ? x : { ...x, [campo]: nueva }) }) }) }));
+    const c = corteDe(iso);
+    toast(`Fecha cambiada a ${nueva}${c ? ` · entra al corte ${c.label}` : ""}`, "ok");
+    setFEdit(null);
+  }
+
   // "Ya pagado": para cargar avance viejo que se pagó en otra obra (duplicados de la
   // integración con el ERP). La marca alimenta el ERP igual, pero la liquidación la
   // salta y nunca la vuelve a cobrar. Solo oficina puede activarlo.
@@ -2434,7 +2495,7 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
               if (asignadosDetA.length === 1) return asignadosDetA[0];
               return user.id;
             };
-            const hoy = new Date().toLocaleDateString("es-CO");
+            const hoy = fechaMarca();
             const newEls = a.elementos.flatMap((el, i) => {
               let u = { ...el };
               if (cnts[i] !== undefined) u.cantidad = cnts[i];
@@ -2478,8 +2539,8 @@ function Apto({ apto, piso, obra, obras, updateObra, user, elems, users, avanceA
 const newElsExtra = (a.elementosExtra || []).map((el, i) => {
   let u = { ...el };
   if (cnts[`x${i}`] !== undefined) u.cantidad = cnts[`x${i}`];
-  if (pend[`x${i}`]) { u.completado = true; u.instaladorId = instaladorPara(`x${i}`); u.fecha = new Date().toLocaleDateString("es-CO"); u.yaPagado = yaPagOn; }
-  if (pend[`dx${i}`] && u.completado) { u.detCompletado = true; u.detId = detalladorPara(`dx${i}`); u.detFecha = new Date().toLocaleDateString("es-CO"); u.detYaPagado = yaPagOn; }
+  if (pend[`x${i}`]) { u.completado = true; u.instaladorId = instaladorPara(`x${i}`); u.fecha = fechaMarca(); u.yaPagado = yaPagOn; }
+  if (pend[`dx${i}`] && u.completado) { u.detCompletado = true; u.detId = detalladorPara(`dx${i}`); u.detFecha = fechaMarca(); u.detYaPagado = yaPagOn; }
   return u;
 });
 return { ...a, elementos: final, elementosExtra: newElsExtra };
@@ -2685,6 +2746,26 @@ const totLiq = totNorm + totAd + totExtra;
           </div>
         ))}
       </div>
+      {canEdit && (() => {
+        const cDe = corteDe(fTrab);
+        const esHoy = fTrab === hoyISO;
+        return (
+          <div style={{ marginBottom: 14, padding: "10px 14px", background: esHoy ? C.g0 : C.orL,
+                        border: `1.5px solid ${esHoy ? C.g2 : C.or}`, borderRadius: 10,
+                        display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: esHoy ? C.g5 : C.orD }}>Fecha del trabajo que voy a marcar</span>
+            <input type="date" value={fTrab} min={minISO} max={hoyISO}
+              onChange={e => setFTrab(e.target.value || hoyISO)}
+              style={{ padding: "5px 8px", border: `1px solid ${esHoy ? C.g2 : C.or}`, borderRadius: 7, fontSize: 13 }} />
+            {!esHoy && <Btn onClick={() => setFTrab(hoyISO)}>Volver a hoy</Btn>}
+            <span style={{ fontSize: 12, color: esHoy ? C.g4 : C.orD }}>
+              {esHoy ? "Hoy. Cámbiala si estás montando trabajo de días anteriores." :
+               cDe ? `Entra al corte ${cDe.label}. Si ya está cerrado, hay que reabrirlo.` :
+                     "Esa fecha no cae en ningún corte de la lista."}
+            </span>
+          </div>
+        );
+      })()}
       {canEdit && <div style={{ marginBottom: 14, padding: "10px 14px", background: C.amL, border: "1px solid #FDE68A", borderRadius: 10, fontSize: 13, color: "#B45309", fontWeight: 500 }}>Puedes desmarcar elementos con ✕. Si la tipología cambió y solo sobra cantidad, usa el selector <strong>"N de M"</strong>: corrige lo instalado sin cambiarle la fecha ni el instalador a lo que ya estaba marcado.</div>}
       {user.rol === ROLES.IN && <div style={{ marginBottom: 14, padding: "10px 14px", background: C.orL, border: `1px solid ${C.orM}`, borderRadius: 10, fontSize: 13, color: C.orD, fontWeight: 500 }}>Marca los elementos terminados y presiona <strong>Guardar</strong>.{hayPend && <span style={{ marginLeft: 8 }}>+{fmt(totPend)}</span>}</div>}
 
@@ -2720,7 +2801,24 @@ const totLiq = totNorm + totAd + totExtra;
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600, fontSize: 14, color: hecho ? C.gnD : eP ? C.orD : C.bk }}>{elem?.nombre || el.elementoId}</div>
                 {hecho && quien && <div style={{ fontSize: 12, color: C.gnD, fontWeight: 500 }}>
-                  {quien.nombre} · {cuando}
+                  {quien.nombre} · {(() => {
+                    const k = `${idx}|${esDet ? "det" : "inst"}`;
+                    const bloq = yaLiquidado(el.elementoId, esDet ? "det" : "inst");
+                    if (fEdit === k) return (
+                      <input type="date" autoFocus defaultValue={aISO(cuando)} min={minISO} max={hoyISO}
+                        onClick={e => e.stopPropagation()}
+                        onKeyDown={e => { if (e.key === "Escape") setFEdit(null); if (e.key === "Enter") e.currentTarget.blur(); }}
+                        onBlur={e => corregirFecha(idx, e.target.value, esDet)}
+                        style={{ padding: "2px 5px", border: `1.5px solid ${C.or}`, borderRadius: 6, fontSize: 12 }} />
+                    );
+                    return (
+                      <span onClick={e => { if (!canEdit || bloq) return; e.stopPropagation(); setFEdit(k); }}
+                        title={bloq ? "Ya salió en una liquidación cerrada: no se le cambia la fecha"
+                                    : canEdit ? "Clic para corregir la fecha del trabajo" : ""}
+                        style={{ cursor: canEdit && !bloq ? "pointer" : "default",
+                                 borderBottom: canEdit && !bloq ? `1px dashed ${C.gn}` : "none" }}>{cuando}</span>
+                    );
+                  })()}
                   {/* Sin este aviso, una marca que no se va a liquidar se ve igualita a una normal */}
                   {(esDet ? el.detYaPagado : el.yaPagado) && <span style={{ ...bdg("amber"), marginLeft: 6, fontSize: 10 }}>Ya pagado · no liquida</span>}
                 </div>}
