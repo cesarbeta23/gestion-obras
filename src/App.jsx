@@ -3331,6 +3331,14 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
   }
 
   async function cerrar(inst) {
+    // Cerrar un corte antes de que termine la quincena congela la foto ese día: todo lo
+    // que se marque después queda por fuera y no vuelve a entrar hasta reabrir. Pasó con
+    // un corte cerrado el día 1 que se quedó trece días sin recibir nada.
+    const hoyD = new Date(); const hoy0 = new Date(hoyD.getFullYear(), hoyD.getMonth(), hoyD.getDate());
+    if (hoy0 < corte.hasta && !window.confirm(
+      `El corte ${corte.label} todavía no termina (va hasta el ${corte.hasta.toLocaleDateString("es-CO")}).\n\n` +
+      `Si lo cierras hoy, lo que ${inst.nombre} marque de aquí al final de la quincena NO entra en esta liquidación ` +
+      `hasta que la reabras.\n\n¿Cerrarlo de todas formas?`)) return;
     // pendAdj no se destructura: es estado de UI, no columna.
     const { rows, bruto, ret, sub, pas, bon, dia, total } = resumen(inst.id);
     const l = {
@@ -3596,7 +3604,17 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
     const ajI = ajusteDe(users, inst.id, corte.label);
     const res = { ...base, abono, antic, anticPend, otros: ajI.otros, otrosNota: ajI.otrosNota,
                   neto: Number(base.total || 0) - abono - antic + ajI.otros };
-    return { inst, cerr, rows, res, arr: cerr ? null : arrastreDe(inst.id) };
+    // Un corte cerrado es una foto. Si después del cierre se siguió marcando en las obras,
+    // esa plata no está en la foto y nadie se entera: la pantalla se ve igual de normal.
+    // Acá se recalcula en vivo y se compara, para poder avisarlo.
+    let fuera = null;
+    if (cerr) {
+      const vivo = detalle(inst.id, corte.desde, corte.hasta).filter(r => !r.adj);
+      const vBruto = vivo.reduce((s, r) => s + (r.precio || 0) * (r.cant || 0), 0);
+      const dif = vBruto - Number(cerr.bruto || 0);
+      if (dif > 0) fuera = { valor: dif, filas: vivo.length - (cerr.rows || []).filter(r => !r.adj).length };
+    }
+    return { inst, cerr, rows, res, fuera, arr: cerr ? null : arrastreDe(inst.id) };
   });
 
   // Solo obras con trabajo real en este corte, no el catálogo completo de `obras`.
@@ -3875,8 +3893,8 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
           )}
           {visibles.length === 0 && (filtInst || filtObra) && <p style={{ fontSize: 13, color: C.g4 }}>Ningún instalador coincide con los filtros en este corte.</p>}
           {visibles.length === 0 && !filtInst && !filtObra && <p style={{ fontSize: 13, color: C.g4 }}>Nadie tiene movimientos en este corte todavía.</p>}
-          {visibles.map(({ inst, cerr, rows, res, arr }) => {
-            return <div key={inst.id} style={{ ...card, marginBottom: 16, borderLeft: `4px solid ${cerr ? C.gn : rows.length > 0 ? C.or : C.g2}` }}>
+          {visibles.map(({ inst, cerr, rows, res, arr, fuera }) => {
+            return <div key={inst.id} style={{ ...card, marginBottom: 16, borderLeft: `4px solid ${fuera ? C.rd : cerr ? C.gn : rows.length > 0 ? C.or : C.g2}` }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
                 <div>
                   <div style={{ fontWeight: 700, fontSize: 16 }}>{inst.nombre}</div>
@@ -3886,6 +3904,7 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                     <span style={bdg("green")}>Instalador</span>
                     {cerr && <span style={bdg(cerr.estado === "pagado" ? "green" : "amber")}>
                       {cerr.estado === "pagado" ? "✓ Aprobada" : "Cerrada · falta aprobar"}
+                      {cerr.fecha_cierre ? ` · cerrada el ${cerr.fecha_cierre}` : ""}
                     </span>}
                     {res.pendAdj > 0 && <span style={bdg("amber")}>{res.pendAdj} ajuste(s) pendiente(s)</span>}
                   </div>
@@ -3895,6 +3914,16 @@ function Liquidacion({ obras, elems, users, setUsers, user, liqs, setLiqs, movPr
                   <div style={{ fontSize: 24, fontWeight: 700, color: C.gnD }}>{fmt(res.total)}</div>
                 </div>
               </div>
+              {fuera && esOficina(user) && (
+                <div style={{ background: C.rdL, border: `2px solid ${C.rd}`, borderRadius: 10, padding: "12px 14px", marginBottom: 14, fontSize: 13, color: C.rd }}>
+                  <div style={{ fontWeight: 800, marginBottom: 4 }}>
+                    Hay {fmt(fuera.valor)} marcados que NO están en esta liquidación
+                  </div>
+                  Este corte se cerró el <strong>{cerr.fecha_cierre}</strong> y lo que ves es la foto de ese día.
+                  {fuera.filas > 0 ? ` Desde entonces se marcaron ${fuera.filas} línea(s) más en las obras, que no se le van a pagar` : " Desde entonces se marcó más trabajo en las obras, que no se le va a pagar"} mientras el corte siga cerrado.
+                  {esSuper ? " Reábrelo y ciérralo de nuevo para que entren." : " Avísale a gerencia para que lo reabra."}
+                </div>
+              )}
               {rows.length > 0 && <div style={{ borderTop: `1px solid ${C.g2}`, paddingTop: 12, marginBottom: 12 }}>
                 {/* Solo lo causado: este listado suma exactamente el Total bruto y es lo que
                     lleva retención. Los días laborados se detallan abajo, después del
