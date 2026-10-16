@@ -2216,15 +2216,30 @@ const disponibles = misHabilitados.filter(a => {
         <div style={{ marginBottom: 14 }}>
           {(() => {
             const propios = elems.filter(e => esDeObra(e, obra.id) && e.activo !== false).length;
+            // Cuántos generales quedan por fuera con la casilla apagada. Sin este número
+            // la lista se ve completa y no lo es: un elemento general (un zócalo viejo,
+            // una chapa del catálogo) simplemente no aparece y nada lo dice. Al editar
+            // una tipología que ya lo tiene sí se ve, porque lo ya elegido siempre se
+            // muestra — y entonces parece que el elemento "se perdió" solo al crear.
+            const qOc = buscaEl.trim().toLowerCase();
+            const ocultos = (propios > 0 && !verGenerales)
+              ? elems.filter(e => e.activo !== false && !e.obra_id && !tipForm.eids.includes(e.id)
+                  && (!qOc || (e.nombre || "").toLowerCase().includes(qOc))).length
+              : 0;
             return (
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
                 <label style={{ ...lbl(), marginBottom: 0 }}>Elementos incluidos</label>
                 <input placeholder="Buscar…" value={buscaEl} onChange={e => setBuscaEl(e.target.value)}
                   style={{ flex: 1, minWidth: 140, padding: "6px 10px", border: `1px solid ${C.g2}`, borderRadius: 8, fontSize: 13 }} />
                 {propios > 0 && (
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.g5, cursor: "pointer" }}>
+                  <label title="Los generales son los del catálogo compartido, sin obra. Con esto apagado solo ves los de esta obra."
+                    style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer",
+                             color: ocultos > 0 ? C.orD : C.g5, fontWeight: ocultos > 0 ? 700 : 400,
+                             background: ocultos > 0 ? C.orL : "transparent",
+                             border: `1px solid ${ocultos > 0 ? C.orM : "transparent"}`,
+                             borderRadius: 8, padding: "4px 8px" }}>
                     <input type="checkbox" checked={verGenerales} onChange={e => setVerGenerales(e.target.checked)} />
-                    Ver elementos generales
+                    {ocultos > 0 ? `Ver ${ocultos} elemento(s) generales ocultos` : "Ver elementos generales"}
                   </label>
                 )}
               </div>
@@ -3146,8 +3161,17 @@ function Elementos({ elems, setElems, obras = [], openM, closeM, modals }) {
     (!q || (e.nombre || "").toLowerCase().includes(q)) &&
     (filtObra === "" || (filtObra === "gen" ? !e.obra_id : esDeObra(e, filtObra)))
   );
-  const gruposUsados = [...GRUPOS, "Sin grupo"].filter(g =>
-    visibles.some(e => (e.grupo || "Sin grupo") === g));
+  // Los grupos que de verdad hay, no solo los seis de la lista. El desglose del ERP
+  // les pone al elemento la referencia del ítem del contrato ("P-01", "ZOC-02"), y con
+  // la lista fija esos elementos se contaban en el total pero NO se dibujaban: el
+  // contador decía "14 de 409" y la lista salía vacía. Más de cien elementos invisibles.
+  // Los seis de siempre van primero; lo que venga del ERP, después y en orden.
+  const gruposUsados = (() => {
+    const hay = g => visibles.some(e => (e.grupo || "Sin grupo") === g);
+    const extra = [...new Set(visibles.map(e => e.grupo || "Sin grupo"))]
+      .filter(g => !GRUPOS.includes(g) && g !== "Sin grupo").sort(cmpTxt);
+    return [...GRUPOS.filter(hay), ...extra, ...(hay("Sin grupo") ? ["Sin grupo"] : [])];
+  })();
   const inactivos = elems.filter(e => e.activo === false).length;
 
   return (
