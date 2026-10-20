@@ -2647,7 +2647,22 @@ return { ...a, elementos: final, elementosExtra: newElsExtra };
   // el instalador lo reporta sin saber a cómo se le va a pagar. Antes tocaba borrarlo
   // y volverlo a crear, lo que le cambiaba la fecha y el responsable.
   const setValorAd = (idx, campo, valor) => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.map((el, i) => i !== idx ? el : { ...el, [campo]: Math.max(0, Number(valor) || 0) }) }) }) }));
-  const elimAd = idx => updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.filter((_, i) => i !== idx) }) }) }));
+  // Borrar un adicional no es como desmarcar un elemento normal: el normal vuelve a
+  // salir de la tipología, el adicional no vuelve nunca. Su descripción, su valor y su
+  // responsable solo viven ahí. Se perdieron 17 así, $232.000 pagados sin respaldo en
+  // la obra, porque la ✕ borraba sin preguntar.
+  function elimAd(idx) {
+    const el = curA.elementos?.[idx];
+    if (!el) return;
+    if (yaLiquidado(el.elementoId, "ad")) {
+      toast("Ese adicional ya salió en una liquidación cerrada: no se borra", "error"); return;
+    }
+    const cuanto = fmt((Number(el.valorUnitario) || 0) * (Number(el.cantidad) || 1));
+    if (!window.confirm(`¿Borrar el adicional "${el.descripcion || "(sin descripción)"}" de ${cuanto}?\n\n`
+      + "Un adicional borrado no se recupera: no vuelve a salir de la tipología como los demás elementos.")) return;
+    updateObra(obra.id, o => ({ ...o, pisos: o.pisos.map(p => p.id !== piso.id ? p : { ...p, aptos: p.aptos.map(a => a.id !== apto.id ? a : { ...a, elementos: a.elementos.filter((_, i) => i !== idx) }) }) }));
+    toast("Adicional borrado", "ok");
+  }
 
   // Precio individual del apto: instalación usa apto__…, detallado usa det__apto__…
   const keyPrecioApto = eid => `${esDet ? "det__" : ""}apto__${curA.id}__${eid}`;
@@ -2794,7 +2809,17 @@ const totLiq = totNorm + totAd + totExtra;
       )}
 
       <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
-        {elsNorm.map((el, idx) => {
+        {elsNorm.map((el, pos) => {
+          // Posición REAL dentro de curA.elementos. Esta lista viene filtrada (saca los
+          // adicionales y los __pasajes__ viejos), así que su posición NO sirve para
+          // tocar el arreglo de verdad: marcar, desmarcar, corregir cantidad y el 🗑
+          // todos usan el índice contra curA.elementos.
+          //
+          // Hoy coinciden de casualidad, porque los adicionales siempre quedan al final
+          // (lo verifiqué: 0 de 2.900 aptos desalineados). El día que algo meta un
+          // elemento normal después de un adicional, se marcaría o se borraría otro
+          // elemento, en silencio y con plata de por medio.
+          const idx = curA.elementos.indexOf(el);
           const elem = elems.find(e => e.id === el.elementoId);
           const hecho = esDet ? !!el.detCompletado : !!el.completado;
           const quien = users.find(u => u.id === (esDet ? el.detId : el.instaladorId));
@@ -2989,7 +3014,14 @@ const totLiq = totNorm + totAd + totExtra;
               )}
             </div>
             <div style={{ textAlign: "right", minWidth: 90 }}><div style={{ fontSize: 14, fontWeight: 700 }}>{fmt(el.valorUnitario * el.cantidad)}</div></div>
-            {canEdit && <button onClick={e => { e.stopPropagation(); el.completado ? desmarcar(ir) : elimAd(ir); }} style={{ ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, width: 28, height: 28, borderRadius: 6, fontSize: 14, fontWeight: 700 }}>✕</button>}
+            {/* Dos botones, no uno. Antes la misma ✕ desmarcaba o borraba según el
+                estado: dos clics seguidos y el adicional se iba sin preguntar. */}
+            {canEdit && el.completado && <button title="Desmarcar (no lo borra)"
+              onClick={e => { e.stopPropagation(); desmarcar(ir); }}
+              style={{ ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, width: 28, height: 28, borderRadius: 6, fontSize: 14, fontWeight: 700 }}>✕</button>}
+            {canEdit && !el.completado && <button title="Borrar este adicional"
+              onClick={e => { e.stopPropagation(); elimAd(ir); }}
+              style={{ ...bdg("red"), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, width: 28, height: 28, borderRadius: 6, fontSize: 14, fontWeight: 700 }}>🗑</button>}
           </div>;
         })}
         {elsAd.length === 0 && !addAd && <p style={{ fontSize: 13, color: C.g3, margin: 0 }}>Sin elementos adicionales.</p>}
