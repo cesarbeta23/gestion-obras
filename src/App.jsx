@@ -3049,11 +3049,15 @@ const totLiq = totNorm + totAd + totExtra;
           const kx = esDet ? `dx${irx}` : `x${irx}`;
           const eP = !!pend[kx];
           const marc = hecho || eP;
+          const ca = cnts[`x${irx}`] ?? el.cantidad ?? 1;
+          // `precio` va ANTES de sinDet: antes se declaraba debajo y sinDet lo leía
+          // en su zona muerta. En instalación el `esDet &&` cortaba antes de tocarlo,
+          // así que solo reventaba la pestaña de detallado, y solo en aptos con
+          // tipología extra ya instalada. Pantalla en blanco, sin mensaje.
+          const precio = getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, tipId, esDet ? "det" : "inst");
           const esperaInst = esDet && !el.completado;
           const sinDet = esDet && el.completado && precio === 0;
           const cT = puedeExtra(el);
-          const ca = cnts[`x${irx}`] ?? el.cantidad ?? 1;
-          const precio = getPrecio(el.elementoId, obra.id, corteAct.label, curA.id, tipId, esDet ? "det" : "inst");
           return <div key={irx} onClick={() => { if (!cT) return; setPend(p => { const c = {...p}; if (c[kx] !== undefined) delete c[kx]; else c[kx] = true; return c; }); }} style={{ display: "flex", alignItems: "center", gap: 12, opacity: (esperaInst || sinDet) ? .55 : 1, background: hecho ? C.gnL : eP ? C.orL : C.wh, border: `1.5px solid ${hecho ? "#BBF7D0" : eP ? C.orM : C.g2}`, borderRadius: 10, padding: "12px 14px", cursor: cT ? "pointer" : "default" }}>
             <div style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0, border: `2.5px solid ${hecho ? C.gn : eP ? C.or : C.g3}`, background: hecho ? C.gn : eP ? C.or : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
               {marc && <span style={{ color: C.wh, fontSize: 14, fontWeight: 700 }}>✓</span>}
